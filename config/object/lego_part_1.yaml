@@ -1,0 +1,3 @@
+name: "lego_part_1"
+# grasp_pose_delta: [ 0.01108775,  0.04693031, -0.00532306]
+grasp_pose_delta: [0, 0, -0.025]

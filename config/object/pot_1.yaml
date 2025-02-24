@@ -1,0 +1,7 @@
+name: "pot_1"
+
+grasp_pose_delta: [0.005, 0.065, -0.076]
+
+randomize_between_rollouts:
+  randomize_tra: [0.008, 0.001, 0.001] # in meters
+  randomize_rot: [3, 3, 3]  # in degrees

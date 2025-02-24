@@ -1,0 +1,7 @@
+name: "red_small_scissor"
+
+grasp_pose_delta: [0.030, -0.012, -0.042]
+
+randomize_between_rollouts:
+  randomize_tra: [0.015, 0.001, 0.010] # in meters
+  randomize_rot: [2, 6, 2]  # in degrees

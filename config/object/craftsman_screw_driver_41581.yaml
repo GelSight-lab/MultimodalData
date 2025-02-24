@@ -1,0 +1,7 @@
+name: "craftsman_screw_driver_41581"
+
+grasp_pose_delta: [0.010, -0.015, 0.020]
+
+randomize_between_rollouts:
+  randomize_tra: [0.005, 0.001, 0.015] # in meters
+  randomize_rot: [3, 6, 6]  # in degrees

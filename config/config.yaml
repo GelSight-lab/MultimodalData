@@ -1,0 +1,117 @@
+
+# when this is specified, the object specific config will be ignored and will be using the default grasp randomization
+object_overwrite: ""
+
+env:
+  init_joints: [0.00009, 0.03130, -0.00005, -2.54062, 0.00001, 2.57196, 0.78554]
+  # init_joints: [1.00012538e-01,  1.68416074e-02,  3.16297140e-05, -2.48858960e+00, 2.29497851e-05,  2.50596629e+00, 8.85363333e-01]
+  # correspond to an init_pose of approx. [4.56943282e-01 2.07164656e-05 1.20405885e-01]. Zero rotation.
+  
+  # impedances for robot control
+  use_impedance: false
+  joint_impedance: [5000, 5000, 5000, 4000, 3500, 3500, 3500] #[300, 300, 300, 250, 250, 200, 200]
+  cart_impedance: [5000, 5000, 5000, 4000, 4000, 4000] #[900.0, 900.0, 900.0, 60.0, 60.0, 60.0]
+
+  # data will be saved in the folder "data/{obj_name}_{left_sensor_type}_{right_sensor_type}_{init_pose_cnt}"
+  init_pose_cnt: 1 
+
+  # if not empty, will use "data/{saving_folder_overwrite}"
+  saving_folder_overwrite: ""
+
+  # True to record GS videos
+  record_gs_video: true
+  record_fps: 20
+
+  left_finger:
+    url: "http://tracking-pi.local"
+    digit_serial: "D20105"
+    mini_serial: "28V0MA7D"
+    type: "Wedge" # in ["Wedge", "Mini", "Digit"]
+    resolution: [640, 480]
+    format: "RGB" # in ["BGR", "RGB"]
+    verbose: true # false to suppress the camera warnings, e.g. "restarting the camera"
+  
+  right_finger:
+    url: "http://tracking-pi-1.local"
+    digit_serial: "D20179"
+    mini_serial: "28UPRYGE"
+    type: "Wedge"
+    resolution: [640, 480]
+    format: "RGB"
+    verbose: true
+
+  dry_run: false
+  save_path: "data/"
+  n_rollout: 30
+  epi_per_rollout: 20
+
+behavior_cloning:
+  save_path: "bc_data/test"
+  epi_id: 0
+  n_rollout: 10
+  external_cam:
+    device_id: 4
+    resolution: [640, 480]
+    format: "RGB"
+    verbose: true
+
+grasp:
+  # gripper current
+  min_cur: 50
+  max_cur: 70
+  # gripper position randomization between episodes, within one rollout
+  # Note that each of the three randomization ranges can be overwritten by object specific configs
+  randomize_episode:
+    randomize_tra: [0.003, 0.001, 0.003] # in meters
+    randomize_rot: [0,0,0] # [2, 4, 2]   in degrees
+
+  # gripper position randomization before the first rollout
+  randomize_init_rollout:
+    randomize_tra: [0., 0.00, 0.0] # in meters
+    randomize_rot: [0, 0, 0]  # in degrees
+
+  randomize_between_rollouts:
+    randomize_tra: [0.004, 0.003, 0.004] # in meters
+    randomize_rot: [0, 0, 0] # [3, 5, 3]  # in degrees
+
+gripper:
+  device:
+    BAUDRATE:                     57600
+    GRIPPER_ID:                   100
+    CTRL_ID:                      1
+    DEVICENAME:                   "/dev/ttyUSB0"
+    # DEVICENAME:                   "COM7"
+
+    HOMING_CURRENT:               70
+    CLOSING_CURRENT:              70
+
+  workspace:
+    thumb:                        [134, 342]
+    duo:                          [147, 238]
+    MAX_CTRL_CUR:                 100
+    # PID:                          [250, 0, 30]
+    CTRL_INIT_POS:             1700
+
+  control_table:
+    ADDR_TORQUE_ENABLE:           64
+    ADDR_LED:                     65
+    ADDR_CONTROL_MODE:            11
+    ADDR_PRESENT_POSITION:        132
+    ADDR_PRESENT_CURRENT:         126
+
+    ADDR_HOMING_OFFSET:           20
+
+
+    ADDR_GOAL_CURRENT:            102
+
+    ADDR_GOAL_POSITION:           116
+    ADDR_POSITION_P_GAIN:         84
+    ADDR_POSITION_I_GAIN:         82
+    ADDR_POSITION_D_GAIN:         80
+
+    ADDR_MAX_POSITION_LIMIT:      48
+    ADDR_MIN_POSITION_LIMIT:      52
+
+defaults:
+  - _self_
+  - object: usb_bc # vga_bc # switch_bc # lego_part_1

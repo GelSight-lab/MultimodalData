@@ -1,0 +1,7 @@
+name: "1515_extrusion"
+
+grasp_pose_delta: [0.003, -0.012, -0.025]
+
+randomize_between_rollouts:
+  randomize_tra: [0.004, 0.001, 0.010] # in meters
+  randomize_rot: [2, 10, 5]  # in degrees

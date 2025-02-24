@@ -1,0 +1,103 @@
+comment: ""
+
+bc_online_weights: ""
+
+data_dir: "bc_data/0420"
+acceptable_traj_length_range: [25, 110] # will only use trajs within this length range
+val_ratio: 0.1
+
+look_forward_step: 6 # each prediction will be made this many steps into the future
+
+# mean_delta_pose: [0.0, 0.0, 0.0]
+# std_delta_pose: [1.0, 1.0, 1.0]
+for_object: "vga" # for which object to train the model
+mean_abs_pose:  
+  switch: [0.45162369, 0.02617293, 0.06508426] # for switch
+  usb: [0.49654114, 0.03233815, 0.05703585]
+  vga: [0.44532288, 0.05251785, 0.05586839]
+
+with_state: true # whether to include state as input
+with_tactile: true # whether to include tactile as input
+
+abs_prediction: false # whether to predict absolute pose instead of delta pose
+
+max_data: -1 # maximum number of data points to load. -1 means no limit
+
+# for image preprocessing
+cam_preprocess:
+  resize_shape: 350 # first resize to this shape before center cropping to 224
+  mean: [0.485, 0.456, 0.406]
+  std: [0.229, 0.224, 0.225]
+
+leftgs_preprocess:
+  mean:
+  - 0.48467275500297546
+  - 0.44754698872566223
+  - 0.6166472434997559
+  std:
+  - 0.21966536343097687
+  - 0.1536581665277481
+  - 0.13042406737804413
+
+rightgs_preprocess:
+  mean:
+  - 0.3380172848701477
+  - 0.47884097695350647
+  - 0.6056014895439148
+  std:
+  - 0.09379439055919647
+  - 0.06792450696229935
+  - 0.09998622536659241
+
+fota_cfg:
+  weights: "../../checkpoints_supercloud/best_2024-04-19_15_22_47-taskpretrain-0.7norm-scheduled"
+  patch_size: 16
+  encoder_embed_dim: 768
+  encoder_heads: 12
+  pooling: "none"
+  encoder_depth: 3
+  trunk_depth: 9
+
+  encoders:
+    wedge:
+      _target_: fota.models.ViTEncoder
+      patch_size: ${fota_cfg.patch_size}
+      embed_dim: ${fota_cfg.encoder_embed_dim}
+      depth: ${fota_cfg.encoder_depth}
+      num_heads: ${fota_cfg.encoder_heads}
+      mlp_ratio: 4. 
+  shared_trunk:
+    _target_: fota.models.TransformerTrunk
+    embed_dim: ${fota_cfg.encoder_embed_dim}
+    depth: ${fota_cfg.trunk_depth}
+    num_heads: ${fota_cfg.encoder_heads}
+    mlp_ratio: 4.
+    pooling_type: ${fota_cfg.pooling}
+  decoders:
+    pooling:
+      _target_: fota.models.PoolingDecoder
+      pooling_type: cls
+
+train:
+  wandb: true
+  wandb_entity: "alanzhao"
+  save_model: true
+  
+  batch_size: 16
+  num_workers: 2
+  pin_memory: True
+  total_train_steps: 50000
+  test_every: 100
+  test_steps: 10
+  log_freq: 10
+
+  optimizer:
+    _target_: torch.optim.AdamW
+    lr: 1.0e-4
+    eps: 1.0e-6
+    weight_decay: 0.1
+
+  scheduler:
+    _target_: torch.optim.lr_scheduler.CosineAnnealingLR
+    T_max: ${train.total_train_steps}
+    eta_min: 1e-8

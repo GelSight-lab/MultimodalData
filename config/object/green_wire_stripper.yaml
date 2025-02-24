@@ -1,0 +1,7 @@
+name: "green_wire_stripper"
+
+grasp_pose_delta: [0.003, -0.012, -0.025]
+
+randomize_between_rollouts:
+  randomize_tra: [0.008, 0.001, 0.010] # in meters
+  randomize_rot: [2, 10, 2]  # in degrees

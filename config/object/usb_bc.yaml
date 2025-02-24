@@ -1,0 +1,4 @@
+name: "usb_bc"
+grasp_pose_abs: [0.49654114, 0.03233815, 0.05803585]
+pick_up_pose: [0.36108827, 0.02599755, 0.08388375]
+pick_up_randomization: [0.002, 0., 0.002]
