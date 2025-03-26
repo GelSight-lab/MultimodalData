@@ -1,7 +1,7 @@
 from omegaconf import OmegaConf, DictConfig
 import hydra
 import os
-from probing_panda import DispCollection
+from MultimodalData.camera_steam import DispCollection
 
 @hydra.main(version_base=None, config_path="../config", config_name="config")
 def main(cfg: DictConfig):

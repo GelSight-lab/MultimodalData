@@ -1,4 +1,4 @@
-from probing_panda import RaspiVideoStream
+from MultimodalData.camera_steam import RaspiVideoStream
 import cv2
 import numpy as np
 

@@ -1,7 +1,7 @@
 from probing_panda.bc_policy import BCOnlinePlanner
 import hydra
 from omegaconf import DictConfig, OmegaConf
-from probing_panda.utils import logging, color_style
+from MultimodalData.misc.utils import logging, color_style
 import numpy as np
 import time
 import cv2

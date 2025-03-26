@@ -1,4 +1,4 @@
-from probing_panda import DispCollection
+from MultimodalData.camera_steam import DispCollection
 import cv2
 import numpy as np
 

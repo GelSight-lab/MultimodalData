@@ -8,7 +8,7 @@ from omegaconf import OmegaConf
 import numpy as np
 from PIL import Image
 from natsort import natsorted
-from .utils import logging
+from ..misc.utils import logging
 from torch.utils.data import DataLoader
 from fota.models import MTHN
 from fota.models.nn_utils import makeMLP

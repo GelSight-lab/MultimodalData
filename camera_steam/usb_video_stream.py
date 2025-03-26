@@ -5,7 +5,7 @@ import threading
 import time
 import pyudev
 
-from .base_video_stream import BaseVideoStream
+from ..camera_steam.base_video_stream import BaseVideoStream
 from .utils import logging
 
 class USBVideoStream(BaseVideoStream):

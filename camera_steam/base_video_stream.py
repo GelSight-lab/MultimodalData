@@ -4,7 +4,7 @@ import threading
 import cv2
 import os
 
-from .utils import logging
+from ..misc.utils import logging
 
 class BaseVideoStream(object):
     def __init__(self, resolution: Tuple[int, int] = (640, 480), format="BGR", verbose=True):

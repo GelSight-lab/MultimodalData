@@ -4,7 +4,7 @@ from typing import Tuple
 import threading
 import time
 
-from .base_video_stream import BaseVideoStream
+from ..camera_steam.base_video_stream import BaseVideoStream
 from digit_interface import Digit
 
 class DigitVideoStream(BaseVideoStream):
