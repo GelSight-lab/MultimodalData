@@ -1,4 +1,4 @@
-from MultimodalData.camera_steam import RaspiVideoStream
+from MultimodalData.camera_stream import RaspiVideoStream
 import cv2
 import numpy as np
 

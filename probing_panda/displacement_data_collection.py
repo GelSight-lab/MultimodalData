@@ -6,7 +6,7 @@ import time
 import cv2
 import os
 import numpy as np
-from MultimodalData.camera_steam import DxlGripperInterface
+from MultimodalData.camera_stream import DxlGripperInterface
 from PIL import Image
 from ..misc.utils import sample_transformation, rotmat_to_euler, logging, calc_diff_image, color_style
 
@@ -72,13 +72,13 @@ class DispCollection():
 
         def _connect(cfg):
             if cfg.type == "Wedge":
-                from MultimodalData.camera_steam import RaspiVideoStream
+                from MultimodalData.camera_stream import RaspiVideoStream
                 return RaspiVideoStream(cfg.url, resolution=cfg.resolution, format=cfg.format, verbose=cfg.verbose)
             elif cfg.type == "Mini":
-                from MultimodalData.camera_steam import USBVideoStream
+                from MultimodalData.camera_stream import USBVideoStream
                 return USBVideoStream(cfg.mini_serial, resolution=cfg.resolution, format=cfg.format, verbose=cfg.verbose)
             elif cfg.type == "Digit":
-                from MultimodalData.camera_steam import DigitVideoStream
+                from MultimodalData.camera_stream import DigitVideoStream
                 return DigitVideoStream(cfg.digit_serial, resolution=cfg.resolution, format=cfg.format, verbose=cfg.verbose)
             else:
                 raise ValueError("Unknown tactile sensor type")
@@ -92,7 +92,7 @@ class DispCollection():
     
     def connect_to_external_cam(self):
         print("Starting External Camera")
-        from MultimodalData.camera_steam import USBVideoStream
+        from MultimodalData.camera_stream import USBVideoStream
         cam_id = self.cfg.behavior_cloning.external_cam.device_id
         resolution = self.cfg.behavior_cloning.external_cam.resolution
         cam_format = self.cfg.behavior_cloning.external_cam.format

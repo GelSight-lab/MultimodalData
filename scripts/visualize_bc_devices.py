@@ -1,4 +1,4 @@
-from MultimodalData.camera_steam import DispCollection
+from MultimodalData.camera_stream import DispCollection
 import cv2
 import numpy as np
 

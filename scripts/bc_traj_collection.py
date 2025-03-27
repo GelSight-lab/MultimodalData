@@ -1,7 +1,7 @@
 from omegaconf import DictConfig, OmegaConf
 import hydra
 
-from MultimodalData.camera_steam import DispCollection
+from MultimodalData.camera_stream import DispCollection
 from MultimodalData.misc.utils import logging, color_style
 import numpy as np
 import os
