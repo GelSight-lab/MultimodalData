@@ -5,8 +5,8 @@ import threading
 import time
 import pyudev
 
-from ..camera_steam.base_video_stream import BaseVideoStream
-from .utils import logging
+from .base_video_stream import BaseVideoStream
+from ..misc.utils import logging
 
 class USBVideoStream(BaseVideoStream):
     def __init__(self, serial: str = "", usb_id: int = 0, resolution: Tuple[int, int] = (640, 480), format="BGR", verbose=True):

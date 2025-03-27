@@ -6,7 +6,7 @@ from threading import Thread
 import time 
 from typing import Tuple
 
-from ..camera_steam.base_video_stream import BaseVideoStream
+from .base_video_stream import BaseVideoStream
 
 
 class RaspiVideoStream(BaseVideoStream):
