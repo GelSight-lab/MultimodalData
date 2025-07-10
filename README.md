@@ -1,4 +1,4 @@
-# ProbingPanda
+# Multimodal data collection pipeline on Panda
 
 Collect 6d pose displacement with a Franka Panda robot arm.
 
