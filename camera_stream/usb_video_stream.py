@@ -6,7 +6,7 @@ import time
 import pyudev
 
 from .base_video_stream import BaseVideoStream
-from ..misc.utils import logging
+from misc.utils import logging
 
 class USBVideoStream(BaseVideoStream):
     def __init__(self, serial: str = "", usb_id: int = 0, resolution: Tuple[int, int] = (640, 480), format="BGR", verbose=True):
@@ -64,7 +64,7 @@ class USBVideoStream(BaseVideoStream):
             except Exception as e: 
                 print(e)
                 print("Error reading frame. Trying to ignore...")
-                time.sleep(0.1)
+                # time.sleep(0.1)
                 continue
             if grabbed:
                 if self.resolution != (frame.shape[1], frame.shape[0]):
