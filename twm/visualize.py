@@ -3,8 +3,8 @@
 Visualize a saved TWM data collection episode.
 
 Usage:
-    python scripts/visualize_twm_data.py path/to/episode_000.h5
-    python scripts/visualize_twm_data.py path/to/episode_000.h5 --fps 15
+    python -m twm.visualize path/to/episode_000.h5
+    python -m twm.visualize path/to/episode_000.h5 --fps 15
 
 Controls:
     space       — pause / resume playback
@@ -22,8 +22,7 @@ import numpy as np
 import h5py
 import cv2
 
-sys.path.insert(0, os.path.dirname(__file__))
-from twm_data_collection import make_preview
+from twm.data_collection import make_preview
 
 
 # ──────────────────────────────────────────────────────────────────────────────
