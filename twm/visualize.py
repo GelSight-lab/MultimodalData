@@ -152,7 +152,7 @@ def main():
             optitrack_poses = optitrack_at(optitrack, cam_t)
             elapsed         = cam_t - float(timestamps[0])
 
-            # Reuse make_preview from twm_data_collection (recording=False → IDLE colours)
+            # Reuse make_preview from twm.data_collection (recording=False → IDLE colours)
             preview = make_preview(
                 color_frames, gs_frames, gs_ref,
                 optitrack_poses,
