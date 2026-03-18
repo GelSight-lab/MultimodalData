@@ -12,6 +12,8 @@ Controls:
 """
 
 import os
+import queue
+import threading
 import time
 import numpy as np
 import h5py
@@ -114,6 +116,51 @@ def flush_optitrack_to_hdf5(f, optitrack_data):
         ds_p.resize(n + len(poses),      axis=0);  ds_p[n:] = poses
 
 
+class HDF5Writer:
+    """
+    Background thread that drains a queue of camera frames and writes them to HDF5,
+    keeping the main capture loop free of disk I/O.
+    """
+
+    def __init__(self):
+        self._queue = queue.Queue()
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+
+    def _run(self):
+        while True:
+            item = self._queue.get()
+            if item is None:
+                self._queue.task_done()
+                break
+            f, color_frames, depth_frames, gs_frames, timestamp = item
+            append_camera_frame(f, color_frames, depth_frames, gs_frames, timestamp)
+            self._queue.task_done()
+
+    def enqueue(self, f, color_frames, depth_frames, gs_frames, timestamp):
+        """Non-blocking: copy frames and put on queue."""
+        self._queue.put((
+            f,
+            [c.copy() for c in color_frames],
+            [d.copy() for d in depth_frames],
+            [g.copy() for g in gs_frames],
+            timestamp,
+        ))
+
+    def flush(self):
+        """Block until all queued frames are written."""
+        self._queue.join()
+
+    def stop(self):
+        self.flush()
+        self._queue.put(None)
+        self._thread.join()
+
+    @property
+    def queue_size(self):
+        return self._queue.qsize()
+
+
 def next_episode_number(date_dir):
     """Return the next available episode number by scanning the date directory."""
     if not os.path.isdir(date_dir):
@@ -129,9 +176,9 @@ def next_episode_number(date_dir):
 # Sensor serials — update these to match your hardware
 # ──────────────────────────────────────────────────────────────────────────────
 REALSENSE_SERIALS = [
-    "REPLACE_WITH_CAM0_SERIAL",   # find with: rs-enumerate-devices
-    "REPLACE_WITH_CAM1_SERIAL",
-    "REPLACE_WITH_CAM2_SERIAL",
+    "143322063538",
+    "104122062574",
+    "217222066989",
 ]
 GELSIGHT_SERIALS = {
     "left":  "2BGLKZNT",   # /dev/video14
@@ -145,29 +192,85 @@ FPS = 30
 # Preview helpers
 # ──────────────────────────────────────────────────────────────────────────────
 
-def make_preview(color_frames, gs_frames, recording, frame_count, elapsed):
-    """Build a tiled OpenCV preview image from all camera feeds."""
+TRACKER_COLORS = {
+    "motherboard":  (255, 200,   0),
+    "sensor_left":  (  0, 255, 120),
+    "sensor_right": (  0, 180, 255),
+}
+
+
+def make_optitrack_panel(optitrack_poses, w=320, h=240):
+    """Render a text panel showing live pose (x, y, z) for each tracker."""
     import cv2
 
-    thumb_w, thumb_h = 320, 240
+    panel = np.zeros((h, w, 3), dtype=np.uint8)
+    cv2.putText(panel, "OptiTrack", (8, 20),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.55, (200, 200, 200), 1)
 
-    def thumb(img):
-        return cv2.resize(img, (thumb_w, thumb_h))
+    y = 48
+    for name, color in TRACKER_COLORS.items():
+        pose = optitrack_poses.get(name)
+        cv2.putText(panel, name, (8, y),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.45, color, 1)
+        y += 18
+        if pose is None:
+            cv2.putText(panel, "  no data", (8, y),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.4, (100, 100, 100), 1)
+        else:
+            _, xyz_quat = pose
+            x_m, y_m, z_m = xyz_quat[:3]
+            qx, qy, qz, qw = xyz_quat[3:]
+            cv2.putText(panel, f"  x={x_m:+.3f} y={y_m:+.3f} z={z_m:+.3f}", (8, y),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.38, (220, 220, 220), 1)
+            y += 16
+            cv2.putText(panel, f"  qx={qx:+.2f} qy={qy:+.2f}", (8, y),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.38, (160, 160, 160), 1)
+            y += 16
+            cv2.putText(panel, f"  qz={qz:+.2f} qw={qw:+.2f}", (8, y),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.38, (160, 160, 160), 1)
+        y += 24
+    return panel
 
-    row1 = np.hstack([thumb(f) for f in color_frames])                     # 3 RealSense
-    gs_row = [thumb(f) for f in gs_frames]
-    # Pad row2 to same width as row1 (3 × thumb_w) with a black panel
-    blank = np.zeros((thumb_h, thumb_w, 3), dtype=np.uint8)
-    row2 = np.hstack(gs_row + [blank])
+
+def make_preview(color_frames, gs_frames, gs_ref, optitrack_poses, recording, frame_count, elapsed, buf=0):
+    """Build a tiled OpenCV preview image from all camera feeds.
+
+    Row 1: [cam0] [cam1] [cam2] [optitrack text]  — 4 × 320 = 1280px
+    Row 2: [gs_l] [gs_l_diff] [gs_r] [gs_r_diff] [blank]  — 4×240 + 320 = 1280px
+    """
+    import cv2
+
+    rs_w, rs_h = 320, 240
+    gs_w, gs_h = 240, 240
+
+    def rs_thumb(img):
+        return cv2.resize(img, (rs_w, rs_h))
+
+    def gs_thumb(img):
+        return cv2.resize(img, (gs_w, gs_h))
+
+    def diff_thumb(frame, ref):
+        diff = np.clip(frame.astype(np.int16) - ref.astype(np.int16) + 128, 0, 255).astype(np.uint8)
+        return cv2.resize(diff, (gs_w, gs_h))
+
+    optitrack_panel = make_optitrack_panel(optitrack_poses, w=rs_w, h=rs_h)
+    row1 = np.hstack([rs_thumb(f) for f in color_frames] + [optitrack_panel])
+
+    gs_panels = []
+    for frame, ref in zip(gs_frames, gs_ref):
+        gs_panels.append(gs_thumb(frame))
+        gs_panels.append(diff_thumb(frame, ref))
+    blank = np.zeros((gs_h, rs_w, 3), dtype=np.uint8)
+    row2 = np.hstack(gs_panels + [blank])
 
     preview = np.vstack([row1, row2])
 
     # Status bar
     if recording:
-        status = f"[RECORDING ep_{frame_count // 1:04d} | {frame_count} frames | {elapsed:.1f}s]"
+        status = f"[RECORDING ep_{frame_count:04d} | {frame_count} frames | {elapsed:.1f}s | buf={buf}]"
         color = (0, 0, 220)
     else:
-        status = "[IDLE]  s=start  e=end  q=quit"
+        status = "[IDLE]  s=start  e=end  r=reset-ref  q=quit"
         color = (0, 200, 0)
 
     cv2.putText(preview, status, (10, preview.shape[0] - 10),
@@ -209,10 +312,12 @@ def main():
         s.get_color_frame()   # blocks until first frame arrives
     gs_left.get_frame()
     gs_right.get_frame()
+    gs_ref = [gs_left.get_frame(), gs_right.get_frame()]
     print("All sensors ready.\n")
-    print("Controls:  s = start episode   e = end episode   q = quit\n")
+    print("Controls:  s = start episode   e = end episode   r = reset diff ref   q = quit\n")
 
     # ── State ─────────────────────────────────────────────────────────────────
+    writer      = HDF5Writer()
     recording   = False
     h5_file     = None
     frame_count = 0
@@ -231,14 +336,18 @@ def main():
             gs_frames    = [gs_left.get_frame(), gs_right.get_frame()]
             t            = time.time()
 
-            # Write if recording
+            # Write if recording (non-blocking)
             if recording and h5_file is not None:
-                append_camera_frame(h5_file, color_frames, depth_frames, gs_frames, t)
+                writer.enqueue(h5_file, color_frames, depth_frames, gs_frames, t)
                 frame_count += 1
 
             # Preview
             elapsed = t - start_t if recording else 0.0
-            preview = make_preview(color_frames, gs_frames, recording, frame_count, elapsed)
+            optitrack_poses = {
+                name: optitrack.get_latest_pose(name)
+                for name in ["motherboard", "sensor_left", "sensor_right"]
+            }
+            preview = make_preview(color_frames, gs_frames, gs_ref, optitrack_poses, recording, frame_count, elapsed, writer.queue_size)
             cv2.imshow("TWM Data Collection", preview)
 
             # Keyboard
@@ -257,6 +366,8 @@ def main():
 
             elif key == ord('e') and recording:
                 recording = False
+                print(f"\nFlushing {writer.queue_size} buffered frames...")
+                writer.flush()
                 # Flush OptiTrack buffer
                 optitrack_data = {
                     name: optitrack.flush_buffer(name)
@@ -265,19 +376,25 @@ def main():
                 flush_optitrack_to_hdf5(h5_file, optitrack_data)
                 h5_file.close()
                 h5_file = None
-                print(f"\nEpisode {episode_num:03d} saved — {frame_count} frames, "
+                print(f"Episode {episode_num:03d} saved — {frame_count} frames, "
                       f"{frame_count / FPS:.1f}s")
+
+            elif key == ord('r'):
+                gs_ref = [gs_left.get_frame(), gs_right.get_frame()]
+                print("GelSight diff reference reset.")
 
             elif key == ord('q'):
                 if recording and h5_file is not None:
                     print("\nSaving in-progress episode before quit...")
                     recording = False
+                    writer.flush()
                     optitrack_data = {
                         name: optitrack.flush_buffer(name)
                         for name in ["motherboard", "sensor_left", "sensor_right"]
                     }
                     flush_optitrack_to_hdf5(h5_file, optitrack_data)
                     h5_file.close()
+                writer.stop()
                 break
 
             # Rate limiting

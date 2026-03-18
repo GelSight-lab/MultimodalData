@@ -59,9 +59,11 @@ class USBVideoStream(BaseVideoStream):
             
             while time.time() - self.last_updated < 1.0/self.fps:
                 time.sleep(0.001)
+            if not self.streaming:
+                continue
             try:
                 grabbed, frame = self.stream.read()
-            except Exception as e: 
+            except Exception as e:
                 print(e)
                 print("Error reading frame. Trying to ignore...")
                 # time.sleep(0.1)

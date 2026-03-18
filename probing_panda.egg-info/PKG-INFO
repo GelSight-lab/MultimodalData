@@ -1,0 +1,13 @@
+Metadata-Version: 2.4
+Name: probing_panda
+Version: 2024.2.5
+Requires-Python: >=3.8
+Requires-Dist: numpy
+Requires-Dist: hydra-core
+Requires-Dist: tqdm
+Requires-Dist: autolab_core
+Requires-Dist: scipy
+Requires-Dist: frankapy
+Requires-Dist: pillow
+Requires-Dist: opencv-python
+Requires-Dist: digit-interface
