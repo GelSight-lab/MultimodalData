@@ -13,11 +13,10 @@ dependencies = [
     "autolab_core",
     "scipy",
     "frankapy",
-    "gelsight",
     "pillow",
     "opencv-python",
     "digit-interface",
 ]
 
 [tool.setuptools]
-packages = ["probing_panda"]
+packages = ["probing_panda", "camera_stream", "optitrack", "ft_sensor", "misc", "twm"]

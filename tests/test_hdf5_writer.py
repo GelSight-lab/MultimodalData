@@ -5,9 +5,7 @@ import numpy as np
 import h5py
 
 # We'll import the helpers directly from the script
-import sys
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'scripts'))
-from twm_data_collection import create_episode_file, append_camera_frame, flush_optitrack_to_hdf5
+from twm.data_collection import create_episode_file, append_camera_frame, flush_optitrack_to_hdf5
 
 
 class TestHDF5Writer(unittest.TestCase):
