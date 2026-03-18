@@ -27,6 +27,49 @@ from twm_data_collection import make_preview
 
 
 # ──────────────────────────────────────────────────────────────────────────────
+# Action menu panel
+# ──────────────────────────────────────────────────────────────────────────────
+
+ACTIONS = [
+    ("SPACE",   "pause / resume"),
+    ("→ / d",   "next frame"),
+    ("← / a",   "prev frame"),
+    ("r",       "reset diff reference"),
+    ("q",       "quit"),
+]
+
+
+def make_action_menu(w=320, h=240, paused=False):
+    """Render a controls legend panel matching the blank slot in the preview grid."""
+    panel = np.zeros((h, w, 3), dtype=np.uint8)
+
+    cv2.putText(panel, "Controls", (10, 24),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (200, 200, 200), 1)
+    cv2.line(panel, (10, 32), (w - 10, 32), (80, 80, 80), 1)
+
+    y = 58
+    for key, desc in ACTIONS:
+        # Highlight the relevant play/pause entry
+        highlight = (key == "SPACE")
+        key_color  = (0, 220, 255) if highlight else (140, 200, 140)
+        desc_color = (220, 220, 220) if highlight else (160, 160, 160)
+
+        cv2.putText(panel, f"[{key}]", (10, y),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.45, key_color, 1)
+        cv2.putText(panel, desc, (110, y),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.45, desc_color, 1)
+        y += 32
+
+    # Playback state indicator
+    state_text  = "|| PAUSED" if paused else "> PLAYING"
+    state_color = (0, 140, 255) if paused else (0, 220, 80)
+    cv2.putText(panel, state_text, (10, h - 14),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.55, state_color, 2)
+
+    return panel
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 # OptiTrack helpers
 # ──────────────────────────────────────────────────────────────────────────────
 
@@ -116,6 +159,9 @@ def main():
                 optitrack_poses,
                 recording=False, frame_count=frame_idx, elapsed=elapsed,
             )
+
+            # Replace the blank slot (bottom-right 320×240) with the action menu
+            preview[240:480, 960:1280] = make_action_menu(w=320, h=240, paused=paused)
 
             # Playback status bar (top of frame, different colour to collection status)
             status = (f"[{'PAUSED' if paused else 'PLAYING'}]  "
