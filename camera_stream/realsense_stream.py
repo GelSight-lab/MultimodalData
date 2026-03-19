@@ -54,32 +54,44 @@ class RealsenseStream:
                 color = aligned.get_color_frame()
                 depth = aligned.get_depth_frame()
                 if color and depth:
-                    color_arr = np.asanyarray(color.get_data())
-                    depth_arr = np.asanyarray(depth.get_data())
                     with self._lock:
-                        self._color_frame = color_arr
-                        self._depth_frame = depth_arr
+                        self._color_frame = np.asanyarray(color.get_data()).copy()
+                        self._depth_frame = np.asanyarray(depth.get_data()).copy()
                         self._last_updated = time.time()
             except Exception as e:
                 print(f"[RealsenseStream {self.serial}] error: {e}")
                 time.sleep(0.01)
 
-    def get_color_frame(self, timeout: float = 2.0) -> np.ndarray:
-        """Block until a color frame is available, then return a copy."""
-        t0 = time.time()
-        while self._color_frame is None:
-            if time.time() - t0 > timeout:
-                raise TimeoutError(f"No color frame from RealSense serial={self.serial}")
-            time.sleep(0.01)
-        with self._lock:
-            return self._color_frame.copy()
+    def get_color_frame(self, timeout: float = 2.0, max_age: float = 0.5) -> np.ndarray:
+        """Block until a fresh color frame is available, then return a copy.
 
-    def get_depth_frame(self, timeout: float = 2.0) -> np.ndarray:
-        """Block until a depth frame is available, then return a copy."""
+        Raises TimeoutError if no fresh frame arrives within `timeout` seconds.
+        A frame is considered stale if it was captured more than `max_age` seconds ago.
+        """
         t0 = time.time()
-        while self._depth_frame is None:
+        while True:
+            with self._lock:
+                if self._color_frame is not None and time.time() - self._last_updated <= max_age:
+                    return self._color_frame.copy()
             if time.time() - t0 > timeout:
-                raise TimeoutError(f"No depth frame from RealSense serial={self.serial}")
+                age = time.time() - self._last_updated
+                raise TimeoutError(
+                    f"No fresh color frame from RealSense serial={self.serial} "
+                    f"(last updated {age:.2f}s ago)"
+                )
             time.sleep(0.01)
-        with self._lock:
-            return self._depth_frame.copy()
+
+    def get_depth_frame(self, timeout: float = 2.0, max_age: float = 0.5) -> np.ndarray:
+        """Block until a fresh depth frame is available, then return a copy."""
+        t0 = time.time()
+        while True:
+            with self._lock:
+                if self._depth_frame is not None and time.time() - self._last_updated <= max_age:
+                    return self._depth_frame.copy()
+            if time.time() - t0 > timeout:
+                age = time.time() - self._last_updated
+                raise TimeoutError(
+                    f"No fresh depth frame from RealSense serial={self.serial} "
+                    f"(last updated {age:.2f}s ago)"
+                )
+            time.sleep(0.01)
