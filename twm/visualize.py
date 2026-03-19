@@ -30,10 +30,13 @@ from twm.data_collection import make_preview
 # Action menu panel
 # ──────────────────────────────────────────────────────────────────────────────
 
+SPEEDS = [1, 2, 5, 10]   # available speed multipliers
+
 ACTIONS = [
     ("SPACE",   "pause / resume"),
     ("→ / d",   "next frame"),
     ("← / a",   "prev frame"),
+    ("1/2/3/4", "speed 1×/2×/5×/10×"),
     ("l",       "toggle loop"),
     ("r",       "reset diff reference"),
     ("q",       "quit"),
@@ -148,6 +151,7 @@ def main():
 
     paused    = False
     loop       = False
+    speed      = 1
     frame_idx  = 0
     tick_times = collections.deque(maxlen=30)
 
@@ -189,8 +193,9 @@ def main():
                           if len(tick_times) >= 2 else 0.0)
 
             # Playback status bar (top of frame, different colour to collection status)
+            speed_str = f"{speed}x" if speed > 1 else "1x"
             status = (f"[{'PAUSED' if paused else 'PLAYING'}]  "
-                      f"frame {frame_idx + 1}/{n_frames}  |  t={elapsed:.2f}s  |  {actual_fps:.1f}fps")
+                      f"frame {frame_idx + 1}/{n_frames}  |  t={elapsed:.2f}s  |  {actual_fps:.1f}fps  |  {speed_str}")
             cv2.putText(preview, status, (10, 22),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 200, 255), 2)
 
@@ -207,6 +212,14 @@ def main():
             elif key in (83, ord('d')):   # right arrow or d
                 paused    = True
                 frame_idx = min(n_frames - 1, frame_idx + 1)
+            elif key == ord('1'):
+                speed = 1
+            elif key == ord('2'):
+                speed = 2
+            elif key == ord('3'):
+                speed = 5
+            elif key == ord('4'):
+                speed = 10
             elif key == ord('l'):
                 loop = not loop
                 print(f"Loop {'ON' if loop else 'OFF'}")
@@ -234,7 +247,7 @@ def main():
                     target_dt = tick_dt
                 else:
                     target_dt = float(timestamps[frame_idx] - timestamps[frame_idx - 1]) if frame_idx > 0 else tick_dt
-                sleep_t = target_dt - (time.time() - tick_start)
+                sleep_t = target_dt / speed - (time.time() - tick_start)
                 if sleep_t > 0:
                     time.sleep(sleep_t)
 
