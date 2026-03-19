@@ -124,8 +124,8 @@ class HDF5Writer:
     keeping the main capture loop free of disk I/O.
     """
 
-    def __init__(self):
-        self._queue = queue.Queue()
+    def __init__(self, maxsize: int = 150):
+        self._queue = queue.Queue(maxsize=maxsize)
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
 
