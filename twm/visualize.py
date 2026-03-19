@@ -130,9 +130,10 @@ def main():
         f.close()
         sys.exit(1)
 
-    fps        = args.fps or float(f["metadata"].attrs.get("fps", 30))
-    task_name  = str(f["metadata"].attrs.get("task", ""))
-    tick_dt    = 1.0 / fps
+    fps          = args.fps or float(f["metadata"].attrs.get("fps", 30))
+    fps_override = args.fps is not None   # True = use fixed rate; False = use actual timestamps
+    task_name    = str(f["metadata"].attrs.get("task", ""))
+    tick_dt      = 1.0 / fps              # used only when fps_override is True
     timestamps = f["timestamps"][:]
     optitrack  = load_optitrack(f)
 
@@ -226,9 +227,14 @@ def main():
                         paused    = True
                         print("End of episode.")
 
-            # Rate-limit to playback FPS only when playing
+            # Rate-limit: use actual inter-frame interval from timestamps,
+            # or fixed tick_dt if --fps was explicitly given.
             if not paused:
-                sleep_t = tick_dt - (time.time() - tick_start)
+                if fps_override or frame_idx >= n_frames - 1:
+                    target_dt = tick_dt
+                else:
+                    target_dt = float(timestamps[frame_idx] - timestamps[frame_idx - 1]) if frame_idx > 0 else tick_dt
+                sleep_t = target_dt - (time.time() - tick_start)
                 if sleep_t > 0:
                     time.sleep(sleep_t)
 
