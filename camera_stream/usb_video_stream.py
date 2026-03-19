@@ -24,7 +24,8 @@ class USBVideoStream(BaseVideoStream):
         for device in devices:
             if serial in device.get("ID_SERIAL"):
                 matching_devices.append(int(device.sys_number))
-        assert len(matching_devices) > 0, "No matching device found with serial: {}".format(serial)
+        if len(matching_devices) == 0:
+            raise RuntimeError("No matching device found with serial: {}".format(serial))
         # one camera can have two devices, one for video, one for metadata. Use the first one
         idx = sorted(matching_devices)[0]
         logging("Found matching camera at /dev/video{} for serial {}".format(idx, serial), verbose=self.verbose, style="warning")
@@ -43,7 +44,7 @@ class USBVideoStream(BaseVideoStream):
             exit()
         self.streaming = True
         if create_thread:
-            threading.Thread(target=self.update, args=()).start()
+            threading.Thread(target=self.update, args=(), daemon=True).start()
 
     def stop(self):
         self.streaming = False
@@ -52,21 +53,19 @@ class USBVideoStream(BaseVideoStream):
             del self.stream
 
     def update(self):
-        while True:
-            if not self.streaming:
-                time.sleep(0.01)
-                continue
-            
-            while time.time() - self.last_updated < 1.0/self.fps:
+        while self.streaming:
+            while self.streaming and time.time() - self.last_updated < 1.0 / self.fps:
                 time.sleep(0.001)
             if not self.streaming:
-                continue
+                break
+            if not self.streaming:
+                return
+            grabbed, frame = None, None
             try:
                 grabbed, frame = self.stream.read()
             except Exception as e:
                 print(e)
                 print("Error reading frame. Trying to ignore...")
-                # time.sleep(0.1)
                 continue
             if grabbed:
                 if self.resolution != (frame.shape[1], frame.shape[0]):
