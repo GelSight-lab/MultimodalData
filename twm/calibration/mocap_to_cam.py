@@ -124,14 +124,9 @@ def main():
           f"cx={intrinsics.ppx:.1f}  cy={intrinsics.ppy:.1f}")
     print(f"  Depth scale: {depth_scale}  (raw × {depth_to_mm:.3f} = mm)")
     print(f"  Collecting {args.num_points} point pairs.\n")
-
-    # Warm-up
-    for _ in range(30):
-        pipeline.wait_for_frames()
-
-    win = "Calibration — OptiTrack to Camera"
-    cv2.namedWindow(win)
-    cv2.setMouseCallback(win, _on_mouse)
+    
+    win = "Calibration: OptiTrack to Camera"
+    cv2.namedWindow(win, cv2.WINDOW_NORMAL) 
 
     points_cam = []
     points_mocap = []
@@ -140,6 +135,19 @@ def main():
     global _click_xy
 
     try:
+        print("\n⏳ Initializing window... Please wait 1 second...\n")
+        for _ in range(30):
+            frames = align.process(pipeline.wait_for_frames())
+            color = np.asanyarray(frames.get_color_frame().get_data())
+            
+            cv2.putText(color, "Initializing... Do not click.", (10, 30),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+            cv2.imshow(win, color)
+            cv2.waitKey(33)
+            
+        cv2.setMouseCallback(win, _on_mouse)
+        # ====================================================
+
         for idx in range(args.num_points):
             print(f"── Point {idx + 1}/{args.num_points} ──────────────────────────")
             print(f"   Click on the ball in the camera image ...")
@@ -164,7 +172,9 @@ def main():
                     cv2.putText(disp,
                                 f"Point {idx+1}/{args.num_points}: click on the ball",
                                 (10, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+                    
                     cv2.imshow(win, disp)
+
                     if cv2.waitKey(1) & 0xFF == ord('q'):
                         print("Aborted.")
                         return
