@@ -11,6 +11,7 @@ Controls:
   q — quit
 """
 
+import collections
 import os
 import queue
 import threading
@@ -22,7 +23,7 @@ import h5py
 # HDF5 helpers
 # ──────────────────────────────────────────────────────────────────────────────
 
-def create_episode_file(date_dir, episode_num, realsense_serials, gelsight_serials, fps):
+def create_episode_file(date_dir, episode_num, realsense_serials, gelsight_serials, fps, task_name=""):
     """
     Create a new HDF5 episode file with resizable datasets.
 
@@ -38,6 +39,7 @@ def create_episode_file(date_dir, episode_num, realsense_serials, gelsight_seria
     meta.attrs["realsense_serials"] = realsense_serials
     meta.attrs["gelsight_serials"]  = gelsight_serials
     meta.attrs["created_at"] = time.strftime("%Y-%m-%dT%H:%M:%S")
+    meta.attrs["task"] = task_name
 
     # camera timestamps (one per main-loop tick)
     f.create_dataset("timestamps", shape=(0,), maxshape=(None,), dtype=np.float64)
@@ -46,17 +48,17 @@ def create_episode_file(date_dir, episode_num, realsense_serials, gelsight_seria
     for i in range(3):
         g = f.create_group(f"realsense/cam{i}")
         g.create_dataset("color", shape=(0, 480, 640, 3), maxshape=(None, 480, 640, 3),
-                         dtype=np.uint8,  compression="gzip", compression_opts=4,
+                         dtype=np.uint8,  compression="lzf",
                          chunks=(1, 480, 640, 3))
         g.create_dataset("depth", shape=(0, 480, 640),    maxshape=(None, 480, 640),
-                         dtype=np.uint16, compression="gzip", compression_opts=4,
+                         dtype=np.uint16, compression="lzf",
                          chunks=(1, 480, 640))
 
     # GelSight
     for name in ["left", "right"]:
         g = f.create_group(f"gelsight/{name}")
         g.create_dataset("frames", shape=(0, 480, 640, 3), maxshape=(None, 480, 640, 3),
-                         dtype=np.uint8, compression="gzip", compression_opts=4,
+                         dtype=np.uint8, compression="lzf",
                          chunks=(1, 480, 640, 3))
 
     # OptiTrack — per-tracker timestamps + poses
@@ -138,14 +140,8 @@ class HDF5Writer:
             self._queue.task_done()
 
     def enqueue(self, f, color_frames, depth_frames, gs_frames, timestamp):
-        """Non-blocking: copy frames and put on queue."""
-        self._queue.put((
-            f,
-            [c.copy() for c in color_frames],
-            [d.copy() for d in depth_frames],
-            [g.copy() for g in gs_frames],
-            timestamp,
-        ))
+        """Non-blocking: frames are already copies from camera getters, put directly on queue."""
+        self._queue.put((f, color_frames, depth_frames, gs_frames, timestamp))
 
     def flush(self):
         """Block until all queued frames are written."""
@@ -232,7 +228,7 @@ def make_optitrack_panel(optitrack_poses, w=320, h=240):
     return panel
 
 
-def make_preview(color_frames, gs_frames, gs_ref, optitrack_poses, recording, frame_count, elapsed, buf=0):
+def make_preview(color_frames, gs_frames, gs_ref, optitrack_poses, recording, frame_count, elapsed, buf=0, fps=0.0, task_name=""):
     """Build a tiled OpenCV preview image from all camera feeds.
 
     Row 1: [cam0] [cam1] [cam2] [optitrack text]  — 4 × 320 = 1280px
@@ -266,11 +262,12 @@ def make_preview(color_frames, gs_frames, gs_ref, optitrack_poses, recording, fr
     preview = np.vstack([row1, row2])
 
     # Status bar
+    task_prefix = f"[{task_name}]  " if task_name else ""
     if recording:
-        status = f"[RECORDING ep_{frame_count:04d} | {frame_count} frames | {elapsed:.1f}s | buf={buf}]"
+        status = f"{task_prefix}[REC ep_{frame_count:04d} | {frame_count} frames | {elapsed:.1f}s | buf={buf} | {fps:.1f}fps]"
         color = (0, 0, 220)
     else:
-        status = "[IDLE]  s=start  e=end  r=reset-ref  q=quit"
+        status = f"{task_prefix}[IDLE]  s=start  e=end  r=reset-ref  q=quit  |  {fps:.1f}fps"
         color = (0, 200, 0)
 
     cv2.putText(preview, status, (10, preview.shape[0] - 10),
@@ -283,13 +280,20 @@ def make_preview(color_frames, gs_frames, gs_ref, optitrack_poses, recording, fr
 # ──────────────────────────────────────────────────────────────────────────────
 
 def main():
+    import argparse
     import cv2
     from camera_stream.realsense_stream import RealsenseStream
     from camera_stream.usb_video_stream import USBVideoStream
     from optitrack.optitrack_stream import OptitrackStream
 
+    parser = argparse.ArgumentParser(description="TWM multimodal data collection")
+    parser.add_argument("--task", required=True, help="Task name (used as top-level folder, e.g. 'pouring', 'pick_place')")
+    args = parser.parse_args()
+    task_name = args.task
+
     date_str = time.strftime("%Y-%m-%d")
-    date_dir = os.path.join(DATA_DIR, date_str)
+    date_dir = os.path.join(DATA_DIR, task_name, date_str)
+    print(f"Task: {task_name}  |  Saving to: {date_dir}")
 
     # ── Init sensors ──────────────────────────────────────────────────────────
     print("Initializing RealSense cameras...")
@@ -325,16 +329,24 @@ def main():
     start_t     = 0.0
     tick_dt     = 1.0 / FPS
 
+    # ── FPS + timing tracking ─────────────────────────────────────────────────
+    tick_times   = collections.deque(maxlen=30)   # rolling window for FPS
+    timing_accum = collections.defaultdict(float)
+    timing_ticks = 0
+    TIMING_REPORT_INTERVAL = 60  # print breakdown every 60 ticks
+
     # ── Main loop ─────────────────────────────────────────────────────────────
     try:
         while True:
             tick_start = time.time()
 
             # Grab frames
+            t0 = time.time()
             color_frames = [s.get_color_frame() for s in rs_streams]
             depth_frames = [s.get_depth_frame() for s in rs_streams]
             gs_frames    = [gs_left.get_frame(), gs_right.get_frame()]
             t            = time.time()
+            timing_accum["grab"] += t - t0
 
             # Write if recording (non-blocking)
             if recording and h5_file is not None:
@@ -342,22 +354,41 @@ def main():
                 frame_count += 1
 
             # Preview
+            t0 = time.time()
             elapsed = t - start_t if recording else 0.0
             optitrack_poses = {
                 name: optitrack.get_latest_pose(name)
                 for name in ["motherboard", "sensor_left", "sensor_right"]
             }
-            preview = make_preview(color_frames, gs_frames, gs_ref, optitrack_poses, recording, frame_count, elapsed, writer.queue_size)
-            cv2.imshow("TWM Data Collection", preview)
+            fps = len(tick_times) / (tick_times[-1] - tick_times[0]) if len(tick_times) >= 2 else 0.0
+            preview = make_preview(color_frames, gs_frames, gs_ref, optitrack_poses, recording, frame_count, elapsed, writer.queue_size, fps, task_name=task_name)
+            timing_accum["preview"] += time.time() - t0
 
-            # Keyboard
+            t0 = time.time()
+            cv2.imshow("TWM Data Collection", preview)
+            timing_accum["display"] += time.time() - t0
+
+            # Keyboard + tick accounting
             key = cv2.waitKey(1) & 0xFF
+            tick_end = time.time()
+            tick_times.append(tick_end)
+            timing_accum["other"] += tick_end - t0 - (tick_end - t0)  # waitKey already in t0 window
+            timing_ticks += 1
+            if timing_ticks % TIMING_REPORT_INTERVAL == 0:
+                n = TIMING_REPORT_INTERVAL
+                print(f"[timing] fps={fps:.1f} | "
+                      f"grab={timing_accum['grab']/n*1000:.1f}ms | "
+                      f"preview={timing_accum['preview']/n*1000:.1f}ms | "
+                      f"display={timing_accum['display']/n*1000:.1f}ms | "
+                      f"tick={( tick_end - tick_start)*1000:.1f}ms")
+                timing_accum.clear()
 
             if key == ord('s') and not recording:
                 episode_num = next_episode_number(date_dir)
                 h5_file, path = create_episode_file(
                     date_dir, episode_num, REALSENSE_SERIALS,
                     list(GELSIGHT_SERIALS.values()), FPS,
+                    task_name=task_name,
                 )
                 recording   = True
                 frame_count = 0

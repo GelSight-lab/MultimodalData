@@ -118,6 +118,7 @@ def main():
         sys.exit(1)
 
     fps        = args.fps or float(f["metadata"].attrs.get("fps", 30))
+    task_name  = str(f["metadata"].attrs.get("task", ""))
     tick_dt    = 1.0 / fps
     timestamps = f["timestamps"][:]
     optitrack  = load_optitrack(f)
@@ -132,6 +133,7 @@ def main():
     frame_idx = 0
 
     print(f"File:     {args.file}")
+    print(f"Task:     {task_name or '(none)'}")
     print(f"Frames:   {n_frames}  |  FPS: {fps}  |  Duration: {n_frames / fps:.1f}s")
     print()
     print("Controls:  space=pause/resume  ←/a=prev  →/d=next  r=reset-ref  q=quit")
@@ -157,6 +159,7 @@ def main():
                 color_frames, gs_frames, gs_ref,
                 optitrack_poses,
                 recording=False, frame_count=frame_idx, elapsed=elapsed,
+                task_name=task_name,
             )
 
             # Replace the blank slot (bottom-right 320×240) with the action menu
