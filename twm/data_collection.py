@@ -157,6 +157,43 @@ class HDF5Writer:
         return self._queue.qsize()
 
 
+def log_episode(data_dir, task_name, episode_num, h5_path, frame_count, fps, has_optitrack=True, notes=""):
+    """
+    Append one row to data/dataset_log.csv recording metadata about a saved episode.
+    Creates the file with a header row if it doesn't exist yet.
+    """
+    import csv
+
+    log_path = os.path.join(data_dir, "dataset_log.csv")
+    file_exists = os.path.isfile(log_path)
+
+    duration_s   = round(frame_count / fps, 2) if fps > 0 else 0
+    size_mb      = round(os.path.getsize(h5_path) / 1e6, 1) if os.path.isfile(h5_path) else 0
+    date_str     = time.strftime("%Y-%m-%d")
+    saved_at     = time.strftime("%Y-%m-%dT%H:%M:%S")
+
+    row = {
+        "saved_at":    saved_at,
+        "task":        task_name,
+        "date":        date_str,
+        "episode":     f"ep_{episode_num:03d}",
+        "frames":      frame_count,
+        "duration_s":  duration_s,
+        "size_mb":     size_mb,
+        "optitrack":   "yes" if has_optitrack else "no",
+        "path":        os.path.relpath(h5_path, data_dir),
+        "notes":       notes,
+    }
+
+    with open(log_path, "a", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=list(row.keys()))
+        if not file_exists:
+            writer.writeheader()
+        writer.writerow(row)
+
+    print(f"Logged → {log_path}")
+
+
 def next_episode_number(date_dir):
     """Return the next available episode number by scanning the date directory."""
     if not os.path.isdir(date_dir):
@@ -399,13 +436,15 @@ def main():
                 recording = False
                 print(f"\nFlushing {writer.queue_size} buffered frames...")
                 writer.flush()
-                # Flush OptiTrack buffer
                 optitrack_data = {
                     name: optitrack.flush_buffer(name)
                     for name in ["motherboard", "sensor_left", "sensor_right"]
                 }
+                has_optitrack = any(len(v) > 0 for v in optitrack_data.values())
                 flush_optitrack_to_hdf5(h5_file, optitrack_data)
                 h5_file.close()
+                log_episode(DATA_DIR, task_name, episode_num, path, frame_count, FPS,
+                            has_optitrack=has_optitrack)
                 h5_file = None
                 print(f"Episode {episode_num:03d} saved — {frame_count} frames, "
                       f"{frame_count / FPS:.1f}s")
@@ -423,8 +462,11 @@ def main():
                         name: optitrack.flush_buffer(name)
                         for name in ["motherboard", "sensor_left", "sensor_right"]
                     }
+                    has_optitrack = any(len(v) > 0 for v in optitrack_data.values())
                     flush_optitrack_to_hdf5(h5_file, optitrack_data)
                     h5_file.close()
+                    log_episode(DATA_DIR, task_name, episode_num, path, frame_count, FPS,
+                                has_optitrack=has_optitrack)
                 writer.stop()
                 break
 
