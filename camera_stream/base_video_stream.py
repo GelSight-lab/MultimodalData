@@ -101,7 +101,6 @@ class BaseVideoStream(object):
             time.sleep(0.01)
         with self.lock:
             frame = self.frame.copy()
-            time.sleep(0.01)
         return frame
     
     def __del__(self):
