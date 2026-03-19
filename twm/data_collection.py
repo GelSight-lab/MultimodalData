@@ -44,22 +44,21 @@ def create_episode_file(date_dir, episode_num, realsense_serials, gelsight_seria
     # camera timestamps (one per main-loop tick)
     f.create_dataset("timestamps", shape=(0,), maxshape=(None,), dtype=np.float64)
 
-    # RealSense color + depth
+    # RealSense color + depth — no compression for real-time write throughput.
+    # At 30fps: ~190 MB/s raw; lzf compression was the bottleneck. Compress offline
+    # with h5repack if storage matters.
     for i in range(3):
         g = f.create_group(f"realsense/cam{i}")
         g.create_dataset("color", shape=(0, 480, 640, 3), maxshape=(None, 480, 640, 3),
-                         dtype=np.uint8,  compression="lzf",
-                         chunks=(1, 480, 640, 3))
+                         dtype=np.uint8,  chunks=(1, 480, 640, 3))
         g.create_dataset("depth", shape=(0, 480, 640),    maxshape=(None, 480, 640),
-                         dtype=np.uint16, compression="lzf",
-                         chunks=(1, 480, 640))
+                         dtype=np.uint16, chunks=(1, 480, 640))
 
     # GelSight
     for name in ["left", "right"]:
         g = f.create_group(f"gelsight/{name}")
         g.create_dataset("frames", shape=(0, 480, 640, 3), maxshape=(None, 480, 640, 3),
-                         dtype=np.uint8, compression="lzf",
-                         chunks=(1, 480, 640, 3))
+                         dtype=np.uint8, chunks=(1, 480, 640, 3))
 
     # OptiTrack — per-tracker timestamps + poses
     for name in ["motherboard", "sensor_left", "sensor_right"]:
@@ -71,29 +70,44 @@ def create_episode_file(date_dir, episode_num, realsense_serials, gelsight_seria
 
 
 def append_camera_frame(f, color_frames, depth_frames, gs_frames, timestamp):
-    """
-    Append one timestep of camera data to an open HDF5 file.
+    """Append one timestep — thin wrapper around the batch writer."""
+    append_camera_frames_batch(f, [(color_frames, depth_frames, gs_frames, timestamp)])
 
-    Args:
-        f:            open h5py.File
-        color_frames: list of 3 numpy arrays (480, 640, 3) uint8
-        depth_frames: list of 3 numpy arrays (480, 640) uint16
-        gs_frames:    list of 2 numpy arrays (480, 640, 3) uint8  [left, right]
-        timestamp:    float, Unix time
-    """
-    n = f["timestamps"].shape[0]
-    f["timestamps"].resize(n + 1, axis=0)
-    f["timestamps"][n] = timestamp
 
-    for i, (color, depth) in enumerate(zip(color_frames, depth_frames)):
+def append_camera_frames_batch(f, batch):
+    """
+    Write a batch of frames to HDF5 in one resize+write per dataset.
+
+    batch: list of (color_frames, depth_frames, gs_frames, timestamp) tuples
+           color_frames: list of 3 arrays (480, 640, 3) uint8
+           depth_frames: list of 3 arrays (480, 640) uint16
+           gs_frames:    list of 2 arrays (480, 640, 3) uint8
+           timestamp:    float
+
+    One resize() call per dataset instead of one per frame — reduces HDF5
+    b-tree metadata overhead by len(batch)×.
+    """
+    if not batch:
+        return
+    n  = f["timestamps"].shape[0]
+    nb = len(batch)
+
+    ts = np.array([b[3] for b in batch], dtype=np.float64)
+    f["timestamps"].resize(n + nb, axis=0)
+    f["timestamps"][n:] = ts
+
+    for i in range(3):
+        color_batch = np.stack([b[0][i] for b in batch])   # (nb, 480, 640, 3)
+        depth_batch = np.stack([b[1][i] for b in batch])   # (nb, 480, 640)
         ds_c = f[f"realsense/cam{i}/color"]
         ds_d = f[f"realsense/cam{i}/depth"]
-        ds_c.resize(n + 1, axis=0);  ds_c[n] = color
-        ds_d.resize(n + 1, axis=0);  ds_d[n] = depth
+        ds_c.resize(n + nb, axis=0);  ds_c[n:] = color_batch
+        ds_d.resize(n + nb, axis=0);  ds_d[n:] = depth_batch
 
-    for name, frame in zip(["left", "right"], gs_frames):
+    for j, name in enumerate(["left", "right"]):
+        gs_batch = np.stack([b[2][j] for b in batch])      # (nb, 480, 640, 3)
         ds = f[f"gelsight/{name}/frames"]
-        ds.resize(n + 1, axis=0);  ds[n] = frame
+        ds.resize(n + nb, axis=0);  ds[n:] = gs_batch
 
 
 def flush_optitrack_to_hdf5(f, optitrack_data):
@@ -120,31 +134,65 @@ def flush_optitrack_to_hdf5(f, optitrack_data):
 
 class HDF5Writer:
     """
-    Background thread that drains a queue of camera frames and writes them to HDF5,
-    keeping the main capture loop free of disk I/O.
+    Background thread that drains a queue of camera frames and writes them to HDF5
+    in batches, keeping the main capture loop free of disk I/O.
+
+    Frames are accumulated into batches of `batch_size` then written with a single
+    resize+write per dataset, reducing HDF5 metadata overhead by batch_size×.
+    enqueue() is non-blocking — frames are dropped (with a warning) if the queue
+    is full, so the main loop never stalls.
     """
 
-    def __init__(self, maxsize: int = 150):
-        self._queue = queue.Queue(maxsize=maxsize)
-        self._thread = threading.Thread(target=self._run, daemon=True)
+    def __init__(self, maxsize: int = 300, batch_size: int = 10):
+        self._queue      = queue.Queue(maxsize=maxsize)
+        self._batch_size = batch_size
+        self._dropped    = 0
+        self._thread     = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
 
     def _run(self):
         while True:
+            # Block for first item in next batch
             item = self._queue.get()
             if item is None:
                 self._queue.task_done()
                 break
-            f, color_frames, depth_frames, gs_frames, timestamp = item
-            append_camera_frame(f, color_frames, depth_frames, gs_frames, timestamp)
-            self._queue.task_done()
+
+            # Drain up to batch_size-1 more items without blocking
+            batch = [item]
+            while len(batch) < self._batch_size:
+                try:
+                    next_item = self._queue.get_nowait()
+                except queue.Empty:
+                    break
+                if next_item is None:
+                    # Sentinel arrived mid-batch: write current batch, then exit
+                    self._write_batch(batch)
+                    for _ in batch:
+                        self._queue.task_done()
+                    self._queue.task_done()   # for the sentinel
+                    return
+                batch.append(next_item)
+
+            self._write_batch(batch)
+            for _ in batch:
+                self._queue.task_done()
+
+    def _write_batch(self, batch):
+        f = batch[0][0]
+        append_camera_frames_batch(f, [item[1:] for item in batch])
 
     def enqueue(self, f, color_frames, depth_frames, gs_frames, timestamp):
-        """Non-blocking: frames are already copies from camera getters, put directly on queue."""
-        self._queue.put((f, color_frames, depth_frames, gs_frames, timestamp))
+        """Non-blocking. Drops frame (with warning) if queue is full."""
+        try:
+            self._queue.put_nowait((f, color_frames, depth_frames, gs_frames, timestamp))
+        except queue.Full:
+            self._dropped += 1
+            if self._dropped % 30 == 1:
+                print(f"[HDF5Writer] WARNING: queue full, dropped {self._dropped} frames total")
 
     def flush(self):
-        """Block until all queued frames are written."""
+        """Block until all queued frames are written to disk."""
         self._queue.join()
 
     def stop(self):
@@ -155,6 +203,10 @@ class HDF5Writer:
     @property
     def queue_size(self):
         return self._queue.qsize()
+
+    @property
+    def dropped_frames(self):
+        return self._dropped
 
 
 def log_episode(data_dir, task_name, episode_num, h5_path, frame_count, fps, has_optitrack=True, notes=""):
@@ -337,6 +389,7 @@ def main():
     rs_streams = [RealsenseStream(serial=s, fps=FPS) for s in REALSENSE_SERIALS]
     for s in rs_streams:
         s.start()
+        time.sleep(0.5)  # stagger starts to avoid USB bandwidth contention
 
     print("Initializing GelSight sensors...")
     gs_left  = USBVideoStream(serial=GELSIGHT_SERIALS["left"],  resolution=(640, 480))
@@ -348,9 +401,10 @@ def main():
     optitrack = OptitrackStream()
     optitrack.start()
 
+    STARTUP_TIMEOUT = 15.0  # seconds — cameras can be slow on first init
     print("Waiting for first frames from all sensors...")
     for s in rs_streams:
-        s.get_color_frame()   # blocks until first frame arrives
+        s.get_color_frame(timeout=STARTUP_TIMEOUT)
     gs_left.get_frame()
     gs_right.get_frame()
     gs_ref = [gs_left.get_frame(), gs_right.get_frame()]
@@ -385,10 +439,12 @@ def main():
             t            = time.time()
             timing_accum["grab"] += t - t0
 
-            # Write if recording (non-blocking)
+            # Write if recording
+            t0 = time.time()
             if recording and h5_file is not None:
                 writer.enqueue(h5_file, color_frames, depth_frames, gs_frames, t)
                 frame_count += 1
+            timing_accum["enqueue"] += time.time() - t0
 
             # Preview
             t0 = time.time()
@@ -403,21 +459,32 @@ def main():
 
             t0 = time.time()
             cv2.imshow("TWM Data Collection", preview)
-            timing_accum["display"] += time.time() - t0
+            timing_accum["imshow"] += time.time() - t0
 
-            # Keyboard + tick accounting
+            # Keyboard handling
+            t0 = time.time()
             key = cv2.waitKey(1) & 0xFF
+            timing_accum["waitkey"] += time.time() - t0
+
             tick_end = time.time()
             tick_times.append(tick_end)
-            timing_accum["other"] += tick_end - t0 - (tick_end - t0)  # waitKey already in t0 window
             timing_ticks += 1
+
+            t0 = time.time()
+            sleep_t = tick_dt - (time.time() - tick_start)
+            if sleep_t > 0:
+                time.sleep(sleep_t)
+            timing_accum["sleep"] += time.time() - t0
+
             if timing_ticks % TIMING_REPORT_INTERVAL == 0:
                 n = TIMING_REPORT_INTERVAL
-                print(f"[timing] fps={fps:.1f} | "
+                print(f"[timing/{('REC' if recording else 'IDLE')}] fps={fps:.1f} | "
                       f"grab={timing_accum['grab']/n*1000:.1f}ms | "
+                      f"enqueue={timing_accum['enqueue']/n*1000:.1f}ms | "
                       f"preview={timing_accum['preview']/n*1000:.1f}ms | "
-                      f"display={timing_accum['display']/n*1000:.1f}ms | "
-                      f"tick={( tick_end - tick_start)*1000:.1f}ms")
+                      f"imshow={timing_accum['imshow']/n*1000:.1f}ms | "
+                      f"waitkey={timing_accum['waitkey']/n*1000:.1f}ms | "
+                      f"sleep={timing_accum['sleep']/n*1000:.1f}ms")
                 timing_accum.clear()
 
             if key == ord('s') and not recording:
@@ -448,8 +515,10 @@ def main():
                 log_episode(DATA_DIR, task_name, episode_num, path, frame_count, FPS,
                             has_optitrack=has_optitrack)
                 h5_file = None
+                dropped = writer.dropped_frames
+                drop_str = f", {dropped} frames DROPPED" if dropped else ""
                 print(f"Episode {episode_num:03d} saved — {frame_count} frames, "
-                      f"{frame_count / FPS:.1f}s")
+                      f"{frame_count / FPS:.1f}s{drop_str}")
 
             elif key == ord('r'):
                 gs_ref = [gs_left.get_frame(), gs_right.get_frame()]
@@ -471,11 +540,6 @@ def main():
                                 has_optitrack=has_optitrack)
                 writer.stop()
                 break
-
-            # Rate limiting
-            sleep_t = tick_dt - (time.time() - tick_start)
-            if sleep_t > 0:
-                time.sleep(sleep_t)
 
     finally:
         if recording and h5_file is not None:
