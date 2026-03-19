@@ -15,6 +15,7 @@ Controls:
 """
 
 import argparse
+import collections
 import os
 import sys
 import time
@@ -145,8 +146,9 @@ def main():
     ]
 
     paused    = False
-    loop      = False
-    frame_idx = 0
+    loop       = False
+    frame_idx  = 0
+    tick_times = collections.deque(maxlen=30)
 
     print(f"File:     {args.file}")
     print(f"Task:     {task_name or '(none)'}")
@@ -181,9 +183,13 @@ def main():
             # Replace the blank slot (bottom-right 320×240) with the action menu
             preview[240:480, 960:1280] = make_action_menu(w=320, h=240, paused=paused, loop=loop)
 
+            tick_times.append(time.time())
+            actual_fps = (len(tick_times) / (tick_times[-1] - tick_times[0])
+                          if len(tick_times) >= 2 else 0.0)
+
             # Playback status bar (top of frame, different colour to collection status)
             status = (f"[{'PAUSED' if paused else 'PLAYING'}]  "
-                      f"frame {frame_idx + 1}/{n_frames}  |  t={elapsed:.2f}s")
+                      f"frame {frame_idx + 1}/{n_frames}  |  t={elapsed:.2f}s  |  {actual_fps:.1f}fps")
             cv2.putText(preview, status, (10, 22),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 200, 255), 2)
 
