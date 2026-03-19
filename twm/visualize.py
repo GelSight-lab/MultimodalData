@@ -33,12 +33,13 @@ ACTIONS = [
     ("SPACE",   "pause / resume"),
     ("→ / d",   "next frame"),
     ("← / a",   "prev frame"),
+    ("l",       "toggle loop"),
     ("r",       "reset diff reference"),
     ("q",       "quit"),
 ]
 
 
-def make_action_menu(w=320, h=240, paused=False):
+def make_action_menu(w=320, h=240, paused=False, loop=False):
     """Render a controls legend panel matching the blank slot in the preview grid."""
     panel = np.zeros((h, w, 3), dtype=np.uint8)
 
@@ -46,24 +47,29 @@ def make_action_menu(w=320, h=240, paused=False):
                 cv2.FONT_HERSHEY_SIMPLEX, 0.6, (200, 200, 200), 1)
     cv2.line(panel, (10, 32), (w - 10, 32), (80, 80, 80), 1)
 
-    y = 58
+    y = 52
     for key, desc in ACTIONS:
-        # Highlight the relevant play/pause entry
         highlight = (key == "SPACE")
-        key_color  = (0, 220, 255) if highlight else (140, 200, 140)
+        loop_key  = (key == "l")
+        key_color  = (0, 220, 255) if highlight else (255, 180, 0) if loop_key else (140, 200, 140)
         desc_color = (220, 220, 220) if highlight else (160, 160, 160)
 
         cv2.putText(panel, f"[{key}]", (10, y),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.45, key_color, 1)
         cv2.putText(panel, desc, (110, y),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.45, desc_color, 1)
-        y += 32
+        y += 28
 
-    # Playback state indicator
+    # Playback state + loop indicator
     state_text  = "|| PAUSED" if paused else "> PLAYING"
     state_color = (0, 140, 255) if paused else (0, 220, 80)
-    cv2.putText(panel, state_text, (10, h - 14),
+    cv2.putText(panel, state_text, (10, h - 28),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.55, state_color, 2)
+
+    loop_text  = "LOOP ON" if loop else "LOOP OFF"
+    loop_color = (255, 180, 0) if loop else (80, 80, 80)
+    cv2.putText(panel, loop_text, (10, h - 8),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.45, loop_color, 1)
 
     return panel
 
@@ -139,6 +145,7 @@ def main():
     ]
 
     paused    = False
+    loop      = False
     frame_idx = 0
 
     print(f"File:     {args.file}")
@@ -172,7 +179,7 @@ def main():
             )
 
             # Replace the blank slot (bottom-right 320×240) with the action menu
-            preview[240:480, 960:1280] = make_action_menu(w=320, h=240, paused=paused)
+            preview[240:480, 960:1280] = make_action_menu(w=320, h=240, paused=paused, loop=loop)
 
             # Playback status bar (top of frame, different colour to collection status)
             status = (f"[{'PAUSED' if paused else 'PLAYING'}]  "
@@ -193,6 +200,9 @@ def main():
             elif key in (83, ord('d')):   # right arrow or d
                 paused    = True
                 frame_idx = min(n_frames - 1, frame_idx + 1)
+            elif key == ord('l'):
+                loop = not loop
+                print(f"Loop {'ON' if loop else 'OFF'}")
             elif key == ord('r'):
                 gs_ref = [
                     f["gelsight/left/frames"][min(frame_idx, gs_left_n - 1)].copy()   if gs_left_n  > 0 else _blank_gs.copy(),
@@ -203,9 +213,12 @@ def main():
             if not paused:
                 frame_idx += 1
                 if frame_idx >= n_frames:
-                    frame_idx = n_frames - 1
-                    paused    = True
-                    print("End of episode.")
+                    if loop:
+                        frame_idx = 0
+                    else:
+                        frame_idx = n_frames - 1
+                        paused    = True
+                        print("End of episode.")
 
             # Rate-limit to playback FPS only when playing
             if not paused:
