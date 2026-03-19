@@ -90,7 +90,13 @@ def optitrack_at(lookup, camera_timestamp):
             result[name] = None
             continue
         ts, poses = data
-        idx = int(np.argmin(np.abs(ts - camera_timestamp)))
+        idx = int(np.searchsorted(ts, camera_timestamp))
+        if idx == 0:
+            pass  # clamp to first
+        elif idx >= len(ts):
+            idx = len(ts) - 1  # clamp to last
+        elif abs(ts[idx - 1] - camera_timestamp) <= abs(ts[idx] - camera_timestamp):
+            idx -= 1  # left neighbor is closer
         result[name] = (float(ts[idx]), poses[idx].tolist())
     return result
 
@@ -123,10 +129,13 @@ def main():
     timestamps = f["timestamps"][:]
     optitrack  = load_optitrack(f)
 
-    # GelSight diff reference starts at frame 0
+    # GelSight diff reference — use frame 0 if available, else blank grey
+    _blank_gs  = np.full((480, 640, 3), 128, dtype=np.uint8)
+    gs_left_n  = int(f["gelsight/left/frames"].shape[0])
+    gs_right_n = int(f["gelsight/right/frames"].shape[0])
     gs_ref = [
-        f["gelsight/left/frames"][0].copy(),
-        f["gelsight/right/frames"][0].copy(),
+        f["gelsight/left/frames"][0].copy()  if gs_left_n  > 0 else _blank_gs.copy(),
+        f["gelsight/right/frames"][0].copy() if gs_right_n > 0 else _blank_gs.copy(),
     ]
 
     paused    = False
@@ -147,8 +156,8 @@ def main():
             # Load this frame from HDF5
             color_frames = [f[f"realsense/cam{i}/color"][frame_idx] for i in range(3)]
             gs_frames    = [
-                f["gelsight/left/frames"][frame_idx],
-                f["gelsight/right/frames"][frame_idx],
+                f["gelsight/left/frames"][min(frame_idx, gs_left_n - 1)].copy()   if gs_left_n  > 0 else _blank_gs.copy(),
+                f["gelsight/right/frames"][min(frame_idx, gs_right_n - 1)].copy() if gs_right_n > 0 else _blank_gs.copy(),
             ]
             cam_t           = float(timestamps[frame_idx])
             optitrack_poses = optitrack_at(optitrack, cam_t)
@@ -186,8 +195,8 @@ def main():
                 frame_idx = min(n_frames - 1, frame_idx + 1)
             elif key == ord('r'):
                 gs_ref = [
-                    f["gelsight/left/frames"][frame_idx].copy(),
-                    f["gelsight/right/frames"][frame_idx].copy(),
+                    f["gelsight/left/frames"][min(frame_idx, gs_left_n - 1)].copy()   if gs_left_n  > 0 else _blank_gs.copy(),
+                    f["gelsight/right/frames"][min(frame_idx, gs_right_n - 1)].copy() if gs_right_n > 0 else _blank_gs.copy(),
                 ]
                 print(f"GelSight diff reference reset to frame {frame_idx + 1}")
 
