@@ -428,6 +428,8 @@ def main():
                     task_name=task_name,
                 )
                 recording   = True
+                for name in ["motherboard", "sensor_left", "sensor_right"]:
+                    optitrack.flush_buffer(name)  # discard pre-episode poses
                 frame_count = 0
                 start_t     = time.time()
                 print(f"\nRecording episode {episode_num:03d} → {path}")
@@ -476,6 +478,19 @@ def main():
                 time.sleep(sleep_t)
 
     finally:
+        if recording and h5_file is not None:
+            print("Unexpected exit during recording — saving episode...")
+            try:
+                writer.flush()
+                optitrack_data = {
+                    name: optitrack.flush_buffer(name)
+                    for name in ["motherboard", "sensor_left", "sensor_right"]
+                }
+                flush_optitrack_to_hdf5(h5_file, optitrack_data)
+                h5_file.close()
+                print(f"Episode {episode_num:03d} saved ({frame_count} frames).")
+            except Exception as save_err:
+                print(f"Warning: could not save episode cleanly: {save_err}")
         for s in rs_streams:
             s.stop()
         gs_left.stop()
