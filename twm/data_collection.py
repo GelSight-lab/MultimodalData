@@ -18,6 +18,7 @@ import threading
 import time
 import numpy as np
 import h5py
+import hdf5plugin
 
 # ──────────────────────────────────────────────────────────────────────────────
 # HDF5 helpers
@@ -44,21 +45,21 @@ def create_episode_file(date_dir, episode_num, realsense_serials, gelsight_seria
     # camera timestamps (one per main-loop tick)
     f.create_dataset("timestamps", shape=(0,), maxshape=(None,), dtype=np.float64)
 
-    # RealSense color + depth — no compression for real-time write throughput.
-    # At 30fps: ~190 MB/s raw; lzf compression was the bottleneck. Compress offline
-    # with h5repack if storage matters.
+    # BLOSC LZ4 compression — benchmarked at ~100fps overhead vs 30fps capture rate.
+    _blosc = hdf5plugin.Blosc(cname="lz4", clevel=5, shuffle=hdf5plugin.Blosc.SHUFFLE)
+
     for i in range(3):
         g = f.create_group(f"realsense/cam{i}")
         g.create_dataset("color", shape=(0, 480, 640, 3), maxshape=(None, 480, 640, 3),
-                         dtype=np.uint8,  chunks=(1, 480, 640, 3))
+                         dtype=np.uint8,  chunks=(1, 480, 640, 3), **_blosc)
         g.create_dataset("depth", shape=(0, 480, 640),    maxshape=(None, 480, 640),
-                         dtype=np.uint16, chunks=(1, 480, 640))
+                         dtype=np.uint16, chunks=(1, 480, 640),    **_blosc)
 
     # GelSight
     for name in ["left", "right"]:
         g = f.create_group(f"gelsight/{name}")
         g.create_dataset("frames", shape=(0, 480, 640, 3), maxshape=(None, 480, 640, 3),
-                         dtype=np.uint8, chunks=(1, 480, 640, 3))
+                         dtype=np.uint8, chunks=(1, 480, 640, 3), **_blosc)
 
     # OptiTrack — per-tracker timestamps + poses
     for name in ["motherboard", "sensor_left", "sensor_right"]:
@@ -269,7 +270,7 @@ GELSIGHT_SERIALS = {
     "left":  "2BGLKZNT",   # /dev/video14
     "right": "2BKRDTAD",   # /dev/video12
 }
-DATA_DIR = os.path.join(os.path.dirname(__file__), "..", "data")
+DATA_DIR = "/media/yxma/Disk1/twm/data"
 FPS = 30
 
 
