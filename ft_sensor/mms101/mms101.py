@@ -76,7 +76,7 @@ class MMS101:
         return j
 
     def _board_select(self):
-        self._serial.write(bytes([0x54, 0x02, 0x10, 0x00]))
+        self._serial.write([0x54, 0x02, 0x10, 0x00])
         self._serial.flush()
         rsp = self._read_all()
         if rsp[0] != 0:
@@ -155,6 +155,8 @@ class MMS101:
         prev = b'\xff'
         while True:
             curr = self._serial.read(1)
+            if not curr:
+                raise RuntimeError("MMS101: Serial timeout while syncing to packet header")
             if prev == b'\x00' and curr == b'\x17':
                 break
             prev = curr
