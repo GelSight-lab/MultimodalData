@@ -27,16 +27,83 @@ from twm.data_collection import make_preview
 
 
 # ──────────────────────────────────────────────────────────────────────────────
+# Frame prefetcher
+# ──────────────────────────────────────────────────────────────────────────────
+
+class FramePrefetcher:
+    """Background thread that reads HDF5 frames ahead to hide disk latency."""
+
+    def __init__(self, filepath, n_frames, gs_left_n, gs_right_n, buffer_size=10):
+        self._filepath   = filepath
+        self._n_frames   = n_frames
+        self._gs_left_n  = gs_left_n
+        self._gs_right_n = gs_right_n
+        self._buf_size   = buffer_size
+        self._cache      = {}
+        self._lock       = threading.Lock()
+        self._head       = 0
+        self._stop       = False
+        self._thread     = threading.Thread(target=self._worker, daemon=True)
+        self._thread.start()
+
+    def _read_frame(self, f, idx):
+        _blank = np.full((480, 640, 3), 128, dtype=np.uint8)
+        color = [f[f"realsense/cam{i}/color"][idx] for i in range(3)]
+        gs = [
+            f["gelsight/left/frames"][min(idx, self._gs_left_n - 1)].copy()
+                if self._gs_left_n  > 0 else _blank.copy(),
+            f["gelsight/right/frames"][min(idx, self._gs_right_n - 1)].copy()
+                if self._gs_right_n > 0 else _blank.copy(),
+        ]
+        return color, gs
+
+    def _worker(self):
+        f = h5py.File(self._filepath, "r")
+        try:
+            while not self._stop:
+                with self._lock:
+                    head   = self._head
+                    target = next(
+                        (head + i for i in range(self._buf_size)
+                         if head + i < self._n_frames and head + i not in self._cache),
+                        None,
+                    )
+                if target is None:
+                    time.sleep(0.005)
+                    continue
+                data = self._read_frame(f, target)
+                with self._lock:
+                    self._cache[target] = data
+                    for k in [k for k in self._cache
+                               if k < self._head or k >= self._head + self._buf_size]:
+                        del self._cache[k]
+        finally:
+            f.close()
+
+    def get(self, frame_idx, f_fallback):
+        with self._lock:
+            if abs(frame_idx - self._head) > self._buf_size:
+                self._cache.clear()
+            self._head = frame_idx
+            data = self._cache.get(frame_idx)
+        return data if data is not None else self._read_frame(f_fallback, frame_idx)
+
+    def stop(self):
+        self._stop = True
+        self._thread.join(timeout=1.0)
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 # Action menu panel
 # ──────────────────────────────────────────────────────────────────────────────
 
-SPEEDS = [1, 2, 5, 10]   # available speed multipliers
+SPEEDS = [1, 2, 5, 10, 25, 50]   # available speed multipliers
 
 ACTIONS = [
-    ("SPACE",   "pause / resume"),
-    ("→ / d",   "next frame"),
-    ("← / a",   "prev frame"),
-    ("1/2/3/4", "speed 1×/2×/5×/10×"),
+    ("SPACE",     "pause / resume"),
+    ("→ / d",     "next frame"),
+    ("← / a",     "prev frame"),
+    ("1/2/3/4/5/6", "speed 1×/2×/5×/10×/25×/50×"),
     ("l",       "toggle loop"),
     ("r",       "reset diff reference"),
     ("q",       "quit"),
@@ -120,6 +187,8 @@ def main():
     parser.add_argument("file", help="Path to episode .h5 file")
     parser.add_argument("--fps", type=float, default=None,
                         help="Playback FPS (default: use recorded FPS from metadata)")
+    parser.add_argument("--save_video", type=str, default=None,
+                        help="Path to save output video (e.g. output.mp4)")
     args = parser.parse_args()
 
     if not os.path.isfile(args.file):
@@ -149,6 +218,8 @@ def main():
         f["gelsight/right/frames"][0].copy() if gs_right_n > 0 else _blank_gs.copy(),
     ]
 
+    prefetcher = FramePrefetcher(args.file, n_frames, gs_left_n, gs_right_n)
+
     paused    = False
     loop       = False
     speed      = 1
@@ -162,17 +233,20 @@ def main():
     print("Controls:  space=pause/resume  ←/a=prev  →/d=next  r=reset-ref  q=quit")
     print()
 
+    video_writer = None
+    if args.save_video:
+        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+        out_fps = fps if fps else 30.0
+        video_writer = cv2.VideoWriter(args.save_video, fourcc, out_fps, (1280, 480))
+        print(f"Saving video to: {args.save_video}")
+
     try:
         while True:
             tick_start = time.time()
             frame_idx  = max(0, min(frame_idx, n_frames - 1))
 
-            # Load this frame from HDF5
-            color_frames = [f[f"realsense/cam{i}/color"][frame_idx] for i in range(3)]
-            gs_frames    = [
-                f["gelsight/left/frames"][min(frame_idx, gs_left_n - 1)].copy()   if gs_left_n  > 0 else _blank_gs.copy(),
-                f["gelsight/right/frames"][min(frame_idx, gs_right_n - 1)].copy() if gs_right_n > 0 else _blank_gs.copy(),
-            ]
+            # Load this frame (from prefetch buffer or directly if cache miss)
+            color_frames, gs_frames = prefetcher.get(frame_idx, f)
             cam_t           = float(timestamps[frame_idx])
             optitrack_poses = optitrack_at(optitrack, cam_t)
             elapsed         = cam_t - float(timestamps[0])
@@ -200,6 +274,9 @@ def main():
                         cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 200, 255), 2)
 
             cv2.imshow("TWM Data Viewer", preview)
+            if video_writer is not None and not paused:
+                video_writer.write(preview)
+
             key = cv2.waitKey(1) & 0xFF
 
             if key == ord('q'):
@@ -220,6 +297,10 @@ def main():
                 speed = 5
             elif key == ord('4'):
                 speed = 10
+            elif key == ord('5'):
+                speed = 25
+            elif key == ord('6'):
+                speed = 50
             elif key == ord('l'):
                 loop = not loop
                 print(f"Loop {'ON' if loop else 'OFF'}")
@@ -252,6 +333,9 @@ def main():
                     time.sleep(sleep_t)
 
     finally:
+        prefetcher.stop()
+        if 'video_writer' in locals() and video_writer is not None:
+            video_writer.release()
         f.close()
         cv2.destroyAllWindows()
 
