@@ -184,14 +184,19 @@ class MMS101:
 
     def _thread_loop(self):
         while self._running:
-            rdata = self._read_data_raw()
-            parsed = self._parse_data(rdata)
-            if parsed is not None:
-                self._data = parsed
-                self._data_que.append(parsed)
-                if self._csv_writer is not None:
-                    ts = time.time()
-                    self._csv_writer.writerow([f"{ts:.6f}"] + [f"{v:.6f}" for v in parsed])
+            try:
+                rdata = self._read_data_raw()
+                parsed = self._parse_data(rdata)
+                if parsed is not None:
+                    self._data = parsed
+                    self._data_que.append(parsed)
+                    if self._csv_writer is not None:
+                        ts = time.time()
+                        self._csv_writer.writerow([f"{ts:.6f}"] + [f"{v:.6f}" for v in parsed])
+            except Exception as e:
+                if self._running:
+                    print(f"[MMS101] Error in read thread: {e}")
+                break
 
     def start(self):
         """Initialize sensor and start background reading thread."""
@@ -218,13 +223,18 @@ class MMS101:
     def stop(self):
         """Stop background thread and release resources."""
         self._running = False
+        if self._serial is not None and self._serial_open:
+            try:
+                self._serial.cancel_read()
+            except Exception:
+                pass
         if self._thread is not None:
-            self._thread.join(timeout=2)
+            self._thread.join(timeout=3)
         if self._csv_file is not None:
+            self._csv_writer = None
             self._csv_file.flush()
             self._csv_file.close()
             self._csv_file = None
-            self._csv_writer = None
         self._serial_port_close()
         if self.verbose:
             print("[MMS101] Stopped.")
