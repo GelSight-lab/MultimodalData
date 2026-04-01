@@ -181,3 +181,83 @@ class MMS101:
         data[4] /= 100000
         data[5] /= 100000
         return data
+
+    def _thread_loop(self):
+        while self._running:
+            rdata = self._read_data_raw()
+            parsed = self._parse_data(rdata)
+            if parsed is not None:
+                self._data = parsed
+                self._data_que.append(parsed)
+                if self._csv_writer is not None:
+                    ts = time.time()
+                    self._csv_writer.writerow([f"{ts:.6f}"] + [f"{v:.6f}" for v in parsed])
+
+    def start(self):
+        """Initialize sensor and start background reading thread."""
+        self._serial_port_open()
+        self._board_select()
+        self._power_switch()
+        self._axis_select_and_idle()
+        self._bootload()
+        self._set_interval_measure(INTERVAL_MEASURE_TIME)
+        self._set_interval_restart(INTERVAL_RESTART_TIME)
+        self._start_measure()
+
+        if self.log_csv is not None:
+            self._csv_file = open(self.log_csv, 'w', newline='')
+            self._csv_writer = csv.writer(self._csv_file)
+            self._csv_writer.writerow(['timestamp', 'Fx', 'Fy', 'Fz', 'Mx', 'My', 'Mz'])
+
+        self._running = True
+        self._thread = threading.Thread(target=self._thread_loop, daemon=True)
+        self._thread.start()
+        if self.verbose:
+            print("[MMS101] Started. NOTE: Allow 3-5 minutes warm-up before recording data.")
+
+    def stop(self):
+        """Stop background thread and release resources."""
+        self._running = False
+        if self._thread is not None:
+            self._thread.join(timeout=2)
+        if self._csv_file is not None:
+            self._csv_file.flush()
+            self._csv_file.close()
+            self._csv_file = None
+            self._csv_writer = None
+        self._serial_port_close()
+        if self.verbose:
+            print("[MMS101] Stopped.")
+
+    def get_ft(self):
+        """
+        Return latest median-filtered [Fx, Fy, Fz, Mx, My, Mz] in N / N·m.
+        Filter window = medfilt_num (set to 1 in constructor to disable).
+        """
+        if len(self._data_que) == 0:
+            return self._data
+        return list(np.median(np.array(self._data_que), axis=0))
+
+    def tare(self, n_samples=50):
+        """
+        Zero the sensor. Collects n_samples readings and sets them as the offset.
+        Call this after warm-up (3-5 min) with no load applied.
+        """
+        if self.verbose:
+            print(f"[MMS101] Taring over {n_samples} samples...")
+        samples = []
+        for _ in range(n_samples):
+            time.sleep(0.002)
+            samples.append(self.get_ft())
+        self._zeros = list(np.mean(np.array(samples), axis=0))
+        if self.verbose:
+            print(f"[MMS101] Tare complete. Offsets: {[f'{v:.4f}' for v in self._zeros]}")
+
+    def get_ft_tared(self):
+        """Return get_ft() minus tare offsets."""
+        ft = self.get_ft()
+        return [ft[i] - self._zeros[i] for i in range(6)]
+
+    def __del__(self):
+        if self._running:
+            self.stop()
