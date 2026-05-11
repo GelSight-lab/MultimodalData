@@ -22,6 +22,7 @@ Controls are the same as twm.visualize.
 
 import argparse
 import collections
+import glob
 import json
 import os
 import sys
@@ -307,68 +308,20 @@ def draw_gel_projections(preview, cam_index, pixel_left, pixel_right):
 # Main
 # ──────────────────────────────────────────────────────────────────────────────
 
-def main():
-    parser = argparse.ArgumentParser(
-        description="Visualize a TWM episode with GelSight center projection")
-    parser.add_argument("file", help="Path to episode .h5 file")
-    parser.add_argument("--fps", type=float, default=None,
-                        help="Playback FPS (default: use recorded FPS from metadata)")
-    parser.add_argument("--cam_calib", type=str, nargs='+',
-                        default=[
-                            "twm/calibration/result/T_mocap_to_cam.json",
-                            "twm/calibration/result/T_mocap_to_cam_left.json",
-                            "twm/calibration/result/T_mocap_to_cam_right.json"
-                        ],
-                        help="Path(s) to T_mocap_to_cam.json (can provide multiple)")
-    parser.add_argument("--gel_left", type=str,
-                        default="twm/calibration/result/T_gel_to_rigid_left.json",
-                        help="Path to T_gel_to_rigid_left.json")
-    parser.add_argument("--gel_right", type=str,
-                        default="twm/calibration/result/T_gel_to_rigid_right.json",
-                        help="Path to T_gel_to_rigid_right.json")
-    parser.add_argument("--save_video", type=str, default=None,
-                        help="Path to save output video (e.g. output.mp4)")
-    args = parser.parse_args()
-
-    if not os.path.isfile(args.file):
-        print(f"File not found: {args.file}")
-        sys.exit(1)
-
-    # ── Load calibrations ────────────────────────────────────────────────────
-    cam_calibs, gel_center_left, gel_center_right = \
-        load_calibrations(args.cam_calib, args.gel_left, args.gel_right)
-
-    # Determine which cam index each calibration belongs to
-    project_cams = []
-    for calib in cam_calibs:
-        serial = calib["camera_serial"]
-        try:
-            c_idx = REALSENSE_SERIALS.index(serial)
-        except ValueError:
-            print(f"Warning: camera serial {serial} not found in REALSENSE_SERIALS, skipping.")
-            continue
-        project_cams.append({
-            "index": c_idx,
-            "T_mocap_to_cam": calib["T_mocap_to_cam"],
-            "intrinsics": calib["intrinsics"],
-            "serial": serial,
-            "rmse": calib["rmse_mm"]
-        })
-
-    print(f"Loaded {len(project_cams)} camera calibrations for projection:")
-    for pc in project_cams:
-        print(f"  - index: {pc['index']} (serial {pc['serial']}) | RMSE: {pc['rmse']:.2f} mm")
-    print(f"  GelSight left  center (rigid): [{gel_center_left[0]:.2f}, {gel_center_left[1]:.2f}, {gel_center_left[2]:.2f}] mm")
-    print(f"  GelSight right center (rigid): [{gel_center_right[0]:.2f}, {gel_center_right[1]:.2f}, {gel_center_right[2]:.2f}] mm")
-    print()
+def process_episode(h5_path, out_video_path, args,
+                    project_cams, gel_center_left, gel_center_right):
+    """Play back (or export) a single episode. If out_video_path is set, runs headless."""
+    if not os.path.isfile(h5_path):
+        print(f"File not found: {h5_path}")
+        return
 
     # ── Open HDF5 ────────────────────────────────────────────────────────────
-    f = h5py.File(args.file, "r")
+    f = h5py.File(h5_path, "r")
     n_frames = int(f["timestamps"].shape[0])
     if n_frames == 0:
-        print("Episode has 0 frames.")
+        print(f"Episode has 0 frames: {h5_path}")
         f.close()
-        sys.exit(1)
+        return
 
     fps          = args.fps or float(f["metadata"].attrs.get("fps", 30))
     fps_override = args.fps is not None
@@ -385,7 +338,7 @@ def main():
         f["gelsight/right/frames"][0].copy() if gs_right_n > 0 else _blank_gs.copy(),
     ]
 
-    prefetcher = FramePrefetcher(args.file, n_frames, gs_left_n, gs_right_n)
+    prefetcher = FramePrefetcher(h5_path, n_frames, gs_left_n, gs_right_n)
 
     paused     = False
     loop       = False
@@ -393,19 +346,21 @@ def main():
     frame_idx  = 0
     tick_times = collections.deque(maxlen=30)
 
-    print(f"File:     {args.file}")
+    print(f"File:     {h5_path}")
     print(f"Task:     {task_name or '(none)'}")
     print(f"Frames:   {n_frames}  |  FPS: {fps}  |  Duration: {n_frames / fps:.1f}s")
     print()
-    print("Controls:  space=pause/resume  ←/a=prev  →/d=next  r=reset-ref  q=quit")
-    print()
+    if out_video_path is None:
+        print("Controls:  space=pause/resume  ←/a=prev  →/d=next  r=reset-ref  q=quit")
+        print()
 
     video_writer = None
-    if args.save_video:
+    if out_video_path:
+        os.makedirs(os.path.dirname(os.path.abspath(out_video_path)) or ".", exist_ok=True)
         fourcc = cv2.VideoWriter_fourcc(*'mp4v')
         out_fps = fps if fps else 30.0
-        video_writer = cv2.VideoWriter(args.save_video, fourcc, out_fps, (1280, 480))
-        print(f"Saving video to: {args.save_video}")
+        video_writer = cv2.VideoWriter(out_video_path, fourcc, out_fps, (1280, 480))
+        print(f"Saving video to: {out_video_path}")
 
     try:
         while True:
@@ -452,11 +407,16 @@ def main():
             cv2.putText(preview, status, (10, 22),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 200, 255), 2)
 
-            cv2.imshow("TWM Data Viewer + Projection", preview)
-            if video_writer is not None and not paused:
+            if video_writer is not None:
                 video_writer.write(preview)
-
-            key = cv2.waitKey(1) & 0xFF
+                if frame_idx % 100 == 0:
+                    print(f"  wrote frame {frame_idx + 1}/{n_frames}")
+                if frame_idx >= n_frames - 1:
+                    break
+                key = 0xFF
+            else:
+                cv2.imshow("TWM Data Viewer + Projection", preview)
+                key = cv2.waitKey(1) & 0xFF
 
             if key == ord('q'):
                 break
@@ -500,7 +460,7 @@ def main():
                         paused    = True
                         print("End of episode.")
 
-            if not paused:
+            if not paused and video_writer is None:
                 if fps_override or frame_idx >= n_frames - 1:
                     target_dt = tick_dt
                 else:
@@ -514,7 +474,103 @@ def main():
         if 'video_writer' in locals() and video_writer is not None:
             video_writer.release()
         f.close()
-        cv2.destroyAllWindows()
+        if out_video_path is None:
+            cv2.destroyAllWindows()
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Visualize a TWM episode with GelSight center projection")
+    parser.add_argument("path", help="Path to episode .h5 file OR a directory of .h5 files")
+    parser.add_argument("--fps", type=float, default=None,
+                        help="Playback FPS (default: use recorded FPS from metadata)")
+    parser.add_argument("--cam_calib", type=str, nargs='+',
+                        default=[
+                            "twm/calibration/result/T_mocap_to_cam.json",
+                            "twm/calibration/result/T_mocap_to_cam_left.json",
+                            "twm/calibration/result/T_mocap_to_cam_right.json"
+                        ],
+                        help="Path(s) to T_mocap_to_cam.json (can provide multiple)")
+    parser.add_argument("--gel_left", type=str,
+                        default="twm/calibration/result/T_gel_to_rigid_left.json",
+                        help="Path to T_gel_to_rigid_left.json")
+    parser.add_argument("--gel_right", type=str,
+                        default="twm/calibration/result/T_gel_to_rigid_right.json",
+                        help="Path to T_gel_to_rigid_right.json")
+    parser.add_argument("--save_video", type=str, default=None,
+                        help="Single-file mode: path to output mp4.")
+    parser.add_argument("--save_videos", action="store_true",
+                        help="Directory mode: auto-save each episode as <stem>.mp4.")
+    parser.add_argument("--out_dir", type=str, default=None,
+                        help="Directory mode: write mp4s here (default: next to each .h5).")
+    parser.add_argument("--overwrite", action="store_true",
+                        help="Directory mode: re-render episodes whose mp4 already exists.")
+    args = parser.parse_args()
+
+    # ── Resolve input: file or directory ─────────────────────────────────────
+    if os.path.isdir(args.path):
+        h5_files = sorted(glob.glob(os.path.join(args.path, "*.h5")))
+        if not h5_files:
+            print(f"No .h5 files found in {args.path}")
+            sys.exit(1)
+        directory_mode = True
+    elif os.path.isfile(args.path):
+        h5_files = [args.path]
+        directory_mode = False
+    else:
+        print(f"Path not found: {args.path}")
+        sys.exit(1)
+
+    # ── Load calibrations once ───────────────────────────────────────────────
+    cam_calibs, gel_center_left, gel_center_right = \
+        load_calibrations(args.cam_calib, args.gel_left, args.gel_right)
+
+    project_cams = []
+    for calib in cam_calibs:
+        serial = calib["camera_serial"]
+        try:
+            c_idx = REALSENSE_SERIALS.index(serial)
+        except ValueError:
+            print(f"Warning: camera serial {serial} not found in REALSENSE_SERIALS, skipping.")
+            continue
+        project_cams.append({
+            "index": c_idx,
+            "T_mocap_to_cam": calib["T_mocap_to_cam"],
+            "intrinsics": calib["intrinsics"],
+            "serial": serial,
+            "rmse": calib["rmse_mm"],
+        })
+
+    print(f"Loaded {len(project_cams)} camera calibrations for projection:")
+    for pc in project_cams:
+        print(f"  - index: {pc['index']} (serial {pc['serial']}) | RMSE: {pc['rmse']:.2f} mm")
+    print(f"  GelSight left  center (rigid): [{gel_center_left[0]:.2f}, {gel_center_left[1]:.2f}, {gel_center_left[2]:.2f}] mm")
+    print(f"  GelSight right center (rigid): [{gel_center_right[0]:.2f}, {gel_center_right[1]:.2f}, {gel_center_right[2]:.2f}] mm")
+    print()
+
+    # ── Dispatch ─────────────────────────────────────────────────────────────
+    if directory_mode:
+        if not args.save_videos:
+            print("Directory input requires --save_videos (batch export only).")
+            sys.exit(1)
+        out_dir = args.out_dir
+        if out_dir:
+            os.makedirs(out_dir, exist_ok=True)
+
+        print(f"Batch processing {len(h5_files)} episode(s) from {args.path}\n")
+        for i, h5_path in enumerate(h5_files, 1):
+            stem = os.path.splitext(os.path.basename(h5_path))[0]
+            out_video = os.path.join(out_dir or os.path.dirname(h5_path), f"{stem}.mp4")
+            if os.path.exists(out_video) and not args.overwrite:
+                print(f"[{i}/{len(h5_files)}] SKIP (exists): {out_video}")
+                continue
+            print(f"[{i}/{len(h5_files)}] {h5_path} → {out_video}")
+            process_episode(h5_path, out_video, args,
+                            project_cams, gel_center_left, gel_center_right)
+            print()
+    else:
+        process_episode(h5_files[0], args.save_video, args,
+                        project_cams, gel_center_left, gel_center_right)
 
 
 if __name__ == "__main__":

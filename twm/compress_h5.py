@@ -10,6 +10,7 @@ Usage:
 import argparse
 import os
 import sys
+import hdf5plugin  # registers BLOSC/etc. plugin path so compressed sources read correctly
 import h5py
 import numpy as np
 
@@ -32,6 +33,9 @@ def compress_file(src_path, gzip_level=4):
                     if chunks is None and obj.ndim > 0:
                         # default chunk: one "row"
                         chunks = (1,) + obj.shape[1:]
+
+                    if chunks is not None and obj.shape:
+                        chunks = tuple(min(c, max(s, 1)) for c, s in zip(chunks, obj.shape))
 
                     kwargs = dict(
                         data=obj[()],
