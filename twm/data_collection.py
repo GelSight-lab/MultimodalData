@@ -393,10 +393,26 @@ def main():
         time.sleep(0.5)  # stagger starts to avoid USB bandwidth contention
 
     print("Initializing GelSight sensors...")
-    gs_left  = USBVideoStream(serial=GELSIGHT_SERIALS["left"],  resolution=(640, 480))
-    gs_right = USBVideoStream(serial=GELSIGHT_SERIALS["right"], resolution=(640, 480))
-    gs_left.start()
-    gs_right.start()
+
+    class _DummyGelSight:
+        def __init__(self):
+            self._frame = np.zeros((480, 640, 3), dtype=np.uint8)
+        def start(self): pass
+        def stop(self): pass
+        def get_frame(self): return self._frame
+
+    def _try_start_gelsight(side, serial):
+        gs = USBVideoStream(serial=serial, resolution=(640, 480))
+        try:
+            gs.start()
+            return gs
+        except Exception as e:
+            print(f"  WARNING: GelSight '{side}' (serial {serial}) not available: {e}")
+            print(f"           Continuing without it — frames will be black.")
+            return _DummyGelSight()
+
+    gs_left  = _try_start_gelsight("left",  GELSIGHT_SERIALS["left"])
+    gs_right = _try_start_gelsight("right", GELSIGHT_SERIALS["right"])
 
     print("Initializing OptiTrack...")
     optitrack = OptitrackStream()

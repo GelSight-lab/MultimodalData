@@ -14,19 +14,44 @@ Camera serials are set at the top of `data_collection.py` (`REALSENSE_SERIALS`, 
 
 ---
 
+## Prerequisites
+
+### OptiTrack stream (required for pose data)
+
+OptiTrack poses are streamed over VRPN. Before launching `data_collection.py`,
+start the VRPN client in a separate terminal:
+
+```bash
+roslaunch vrpn_client_ros sample.launch
+```
+
+This connects to the Motive server and publishes pose topics for the
+`motherboard`, `sensor_left`, and `sensor_right` rigid bodies. If the launch
+isn't running, OptiTrack pose datasets in the saved HDF5 will be empty
+(camera/GelSight recording still works).
+
+> **Tip:** The Motive software on the OptiTrack PC must be open and tracking
+> the rigid bodies for VRPN to broadcast poses.
+
+---
+
 ## Collecting Data
 
 ```bash
 python -m twm.data_collection --task <task_name>
 ```
 
-`--task` is required and controls where data is saved:
+`--task` is required and controls where data is saved. Episodes are written to:
 
 ```
-data/<task_name>/<YYYY-MM-DD>/episode_000.h5
-                              episode_001.h5
-                              ...
+/media/yxma/Disk1/twm/data/<task_name>/<YYYY-MM-DD>/episode_000.h5
+                                                    episode_001.h5
+                                                    ...
 ```
+
+The root directory is set by `DATA_DIR` at the top of `data_collection.py`
+(currently `/media/yxma/Disk1/twm/data`). The dataset log is written to
+`<DATA_DIR>/dataset_log.csv`.
 
 ### Controls
 
@@ -47,7 +72,7 @@ data/<task_name>/<YYYY-MM-DD>/episode_000.h5
 6. Repeat from step 2 for the next episode.
 7. Press `q` to quit.
 
-A log row is appended to `data/dataset_log.csv` after each episode.
+A log row is appended to `<DATA_DIR>/dataset_log.csv` after each episode.
 
 ---
 
