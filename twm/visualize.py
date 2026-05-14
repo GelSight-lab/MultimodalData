@@ -102,9 +102,9 @@ SPEEDS = [1, 2, 5, 10, 25, 50]   # available speed multipliers
 
 ACTIONS = [
     ("SPACE",     "pause / resume"),
-    ("→ / d",     "next frame"),
-    ("← / a",     "prev frame"),
-    ("1/2/3/4/5/6", "speed 1×/2×/5×/10×/25×/50×"),
+    ("-> / d",    "next frame"),
+    ("<- / a",    "prev frame"),
+    ("1/2/3/4/5/6", "speed 1x/2x/5x/10x/25x/50x"),
     ("l",       "toggle loop"),
     ("r",       "reset diff reference"),
     ("q",       "quit"),
@@ -227,6 +227,12 @@ def main():
     frame_idx  = 0
     tick_times = collections.deque(maxlen=30)
 
+    WIN = "TWM Data Viewer"
+    seek = {"requested": None}
+    cv2.namedWindow(WIN, cv2.WINDOW_AUTOSIZE)
+    cv2.createTrackbar("Frame", WIN, 0, max(1, n_frames - 1),
+                       lambda pos: seek.__setitem__("requested", pos))
+
     print(f"File:     {args.file}")
     print(f"Task:     {task_name or '(none)'}")
     print(f"Frames:   {n_frames}  |  FPS: {fps}  |  Duration: {n_frames / fps:.1f}s")
@@ -244,7 +250,12 @@ def main():
     try:
         while True:
             tick_start = time.time()
-            frame_idx  = max(0, min(frame_idx, n_frames - 1))
+
+            if seek["requested"] is not None and seek["requested"] != frame_idx:
+                frame_idx = seek["requested"]
+            seek["requested"] = None
+
+            frame_idx = max(0, min(frame_idx, n_frames - 1))
 
             # Load this frame (from prefetch buffer or directly if cache miss)
             color_frames, gs_frames = prefetcher.get(frame_idx, f)
@@ -274,7 +285,9 @@ def main():
             cv2.putText(preview, status, (10, 22),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 200, 255), 2)
 
-            cv2.imshow("TWM Data Viewer", preview)
+            cv2.imshow(WIN, preview)
+            if cv2.getTrackbarPos("Frame", WIN) != frame_idx:
+                cv2.setTrackbarPos("Frame", WIN, frame_idx)
             if video_writer is not None and not paused:
                 video_writer.write(preview)
 
