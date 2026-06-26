@@ -46,18 +46,21 @@ except Exception:
 VIEW_STREAMS = ("view_left", "view_middle", "view_right")
 TACTILE_STREAMS = ("tactile_left", "tactile_right")
 ALL_STREAMS = VIEW_STREAMS + TACTILE_STREAMS
+DEPTH_STREAMS = ("depth_left", "depth_middle", "depth_right")   # optional, uint16 mm
 
 
-def _decode_frames(mp4_path: Path, frame_indices):
-    """Return (N, H, W, 3) uint8 RGB for the requested frame indices."""
+def _decode_frames(mp4_path: Path, frame_indices, depth=False):
+    """Return (N, H, W, 3) uint8 RGB, or (N, H, W) uint16 mm if depth=True."""
     want = list(frame_indices)
-    if _BACKEND == "av":
+    fmt = None if depth else "rgb24"     # depth: native gray16le ndarray
+    if _BACKEND == "av" or depth:        # depth requires PyAV (16-bit)
         container = av.open(str(mp4_path))
         stream = container.streams.video[0]
         out, wantset, got = {}, set(want), 0
         for fi, frame in enumerate(container.decode(stream)):
             if fi in wantset:
-                out[fi] = frame.to_ndarray(format="rgb24")
+                a = frame.to_ndarray(format=fmt) if fmt else frame.to_ndarray()
+                out[fi] = a
                 got += 1
                 if got == len(wantset):
                     break
@@ -77,7 +80,7 @@ def _decode_frames(mp4_path: Path, frame_indices):
 class ReactVideoDataset:
     def __init__(self, task_root, window_length=16, stride=1, window_step=None,
                  mode="segment", streams=ALL_STREAMS, skip_bad=True,
-                 which_sensors="any"):
+                 which_sensors="any", load_depth=False):
         self.root = Path(task_root)
         self.W = window_length
         self.stride = stride
@@ -86,6 +89,8 @@ class ReactVideoDataset:
         self.streams = tuple(streams)
         self.skip_bad = skip_bad
         self.which = which_sensors
+        # depth only if requested AND present on disk for this task
+        self.load_depth = load_depth and (self.root / "depth").is_dir()
 
         self.segments = json.loads((self.root / "segments.json").read_text())["segments"]
         self.bad = json.loads((self.root / "bad_frames.json").read_text())["episodes"]
@@ -141,13 +146,20 @@ class ReactVideoDataset:
         idx = list(range(start, start + (self.W - 1) * self.stride + 1, self.stride))
         vd = self._video_dir(ek)
         out = {s: _decode_frames(vd / f"{s}.mp4", idx) for s in self.streams}
+        if self.load_depth:
+            date, ep = ek.split("/")
+            dd = self.root / "depth" / date / ep
+            for s in DEPTH_STREAMS:
+                p = dd / f"{s}.mkv"
+                if p.exists():
+                    out[s] = _decode_frames(p, idx, depth=True)   # (T,H,W) uint16 mm
         tbl = pq.read_table(self._parquet(ek)).slice(start, idx[-1] - start + 1)
         # subsample by stride
         rows = [r - start for r in idx]
-        pl = np.array(tbl.column("sensor_left_pose").to_pylist(), np.float32)[rows]
-        pr = np.array(tbl.column("sensor_right_pose").to_pylist(), np.float32)[rows]
-        out["sensor_left_pose"] = pl
-        out["sensor_right_pose"] = pr
+        for c in ("sensor_left_pose", "sensor_right_pose"):
+            out[c] = np.array(tbl.column(c).to_pylist(), np.float32)[rows]
+        if "object_pose" in tbl.column_names:
+            out["object_pose"] = np.array(tbl.column("object_pose").to_pylist(), np.float32)[rows]
         for c in ("tactile_left_intensity", "tactile_right_intensity",
                   "tactile_left_mixed", "tactile_right_mixed"):
             out[c] = np.array(tbl.column(c).to_pylist(), np.float32)[rows]

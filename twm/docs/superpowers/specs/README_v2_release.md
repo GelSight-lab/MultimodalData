@@ -49,11 +49,22 @@ data/<task>/
 |---|---|---|
 | `frame_idx` | int | 0…T-1, matches MP4 frame index |
 | `timestamp` | float64 | camera clock (s) |
-| `sensor_left_pose`, `sensor_right_pose` | list[7] | OptiTrack world pose (xyz + quat wxyz) |
+| `sensor_left_pose`, `sensor_right_pose` | list[7] | OptiTrack world pose of each GelSight (xyz + quat wxyz) |
+| `object_pose` | list[7] | OptiTrack world pose of the manipulated object (NaN where the object body was not tracked — e.g. all pushT) |
 | `tactile_{L,R}_{intensity,area,mixed}` | float32 | contact metrics (computed at full 640×480) |
 | `source_h5_frame` | int | index into the original recording |
 
-**Decoded frames are RGB** (standard decoder convention) for all five streams.
+**Decoded frames are RGB** (standard decoder convention) for all five RGB streams.
+
+### depth (optional, `data/<task>/depth/`)
+Per-camera depth is shipped as **lossless FFV1 16-bit video** (`gray16le`):
+```
+data/<task>/depth/<date>/episode_NNN/depth_{left,middle,right}.mkv
+```
+- uint16, **millimeters**; `0` = no return / invalid.
+- Frame `i` aligns to the RGB video frame `i` and parquet row `i`.
+- Decode with PyAV (`frame.to_ndarray()` → `(480, 640)` uint16). cv2 cannot read 16-bit video.
+- Load via `ReactVideoDataset(..., load_depth=True)`.
 
 ## Tasks
 
