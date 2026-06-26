@@ -1,0 +1,1 @@
+"""One-shot curation / analysis scripts for the React dataset. These ran on the recording machine to produce the data published on HF — they are not user-facing examples (those live in the HF repo's `examples/` directory)."""
