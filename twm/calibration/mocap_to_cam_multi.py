@@ -698,6 +698,10 @@ def main():
     ap.add_argument("--serials", nargs="*", default=REALSENSE_SERIALS,
                     help="RealSense serials in H5 cam-index order "
                          f"(default: {REALSENSE_SERIALS})")
+    ap.add_argument("--only", nargs="*", default=None,
+                    choices=["left", "middle", "right"],
+                    help="Calibrate only these view(s) (e.g. --only left). Other "
+                         "cameras' existing calibration files are left untouched.")
     ap.add_argument("--num_points", type=int, default=8,
                     help="Number of calibration points to collect (≥4 per camera).")
     ap.add_argument("--method", choices=["pnp", "svd"], default="pnp",
@@ -749,6 +753,8 @@ def main():
           f"Snap: {'OFF' if args.no_snap else f'ON (r={args.snap_radius:.0f}px)'}   Cameras:")
     cams = []
     for cam_idx, serial in enumerate(args.serials):
+        if args.only and _view_label(cam_idx) not in args.only:
+            continue
         print(f"  cam{cam_idx} ({_view_label(cam_idx)}): {serial}")
         cams.append(_Cam(cam_idx, serial, source=args.source, snap=not args.no_snap,
                          snap_radius=args.snap_radius,
