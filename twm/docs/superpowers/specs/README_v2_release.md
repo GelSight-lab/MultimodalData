@@ -82,6 +82,29 @@ Cameras were **recalibrated between tasks**. Each task points to the calibration
 
 Camera extrinsics are used only for the projection overlay; **stored poses are OptiTrack world-frame** and independent of calibration. The 2026-05-19 motherboard session had a redefined world origin; an offset `(0.23, 0, 0.175) m` is already baked into its poses so all dates share one frame (recorded in `episodes.jsonl`).
 
+## Downloading — depth is optional
+
+The dataset splits into a **lightweight core** (RGB + tactile + poses, ~4.4 GB) and an **optional depth tree** (`data/<task>/depth/`, ~33 GB lossless). Depth lives in its own subtree so you can skip it entirely.
+
+```python
+from huggingface_hub import snapshot_download
+
+# Core only — RGB + tactile + parquet, NO depth (~4.4 GB)
+snapshot_download("yxma/React", repo_type="dataset",
+                  ignore_patterns=["*/depth/*"])
+
+# Everything including depth (~37 GB)
+snapshot_download("yxma/React", repo_type="dataset")
+
+# One task only
+snapshot_download("yxma/React", repo_type="dataset",
+                  allow_patterns=["data/motherboard/*"], ignore_patterns=["*/depth/*"])
+```
+
+Or use the helper: `python examples/download.py --no-depth` (see [`examples/download.py`](examples/download.py)).
+
+The `ReactVideoDataset` loader **never touches depth unless you pass `load_depth=True`**, so depth-free training requires no depth download.
+
 ## Loading
 
 ```python
