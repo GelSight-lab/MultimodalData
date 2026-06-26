@@ -16,6 +16,20 @@ tags:
 pretty_name: React (Tactile-Visual Manipulation)
 size_categories:
   - 100K<n<1M
+configs:
+  - config_name: motherboard
+    data_files:
+      - split: train
+        path: data/motherboard/meta/**/*.parquet
+  - config_name: pushT
+    data_files:
+      - split: train
+        path: data/pushT/meta/**/*.parquet
+  - config_name: all
+    default: true
+    data_files:
+      - split: train
+        path: data/**/meta/**/*.parquet
 ---
 
 # React — Multi-Task Tactile-Visual Manipulation
@@ -47,7 +61,9 @@ data/<task>/
 ### parquet columns (per frame, aligned to video frame `i`)
 | Column | Type | Meaning |
 |---|---|---|
-| `frame_idx` | int | 0…T-1, matches MP4 frame index |
+| `frame_idx` / `frame_index` | int | 0…T-1, matches MP4 frame index |
+| `episode` / `episode_index` | str / int | source episode key and its 0-based index within the task |
+| `task` / `task_index` | str / int | task name and index (0=motherboard, 1=pushT) |
 | `timestamp` | float64 | camera clock (s) |
 | `sensor_left_pose`, `sensor_right_pose` | list[7] | OptiTrack world pose of each GelSight (xyz + quat wxyz) |
 | `object_pose` | list[7] | OptiTrack world pose of the manipulated object (NaN where the object body was not tracked — e.g. all pushT) |
