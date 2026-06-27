@@ -80,7 +80,7 @@ def _decode_frames(mp4_path: Path, frame_indices, depth=False):
 class ReactVideoDataset:
     def __init__(self, task_root, window_length=16, stride=1, window_step=None,
                  mode="segment", streams=ALL_STREAMS, skip_bad=True,
-                 which_sensors="any", load_depth=False):
+                 which_sensors="any", load_depth=False, tactile_latency=0):
         self.root = Path(task_root)
         self.W = window_length
         self.stride = stride
@@ -91,6 +91,16 @@ class ReactVideoDataset:
         self.which = which_sensors
         # depth only if requested AND present on disk for this task
         self.load_depth = load_depth and (self.root / "depth").is_dir()
+        # GelSight acquisition lag (frames): tactile stream was captured
+        # `tactile_latency` frames BEFORE the view at the same index, due to a
+        # recording-side V4L2 buffer bug (fixed in the rig from 2026-06-27).
+        # When >0, the loader pairs view[i] with tactile[i+latency] (and the
+        # tactile contact scalars likewise), and trims `latency` frames from
+        # the end of each window range so the shifted index stays in bounds.
+        self.tactile_latency = int(tactile_latency)
+        self._TACT = ("tactile_left", "tactile_right")
+        self._TACT_COLS = ("tactile_left_intensity", "tactile_right_intensity",
+                           "tactile_left_mixed", "tactile_right_mixed")
 
         self.segments = json.loads((self.root / "segments.json").read_text())["segments"]
         self.bad = json.loads((self.root / "bad_frames.json").read_text())["episodes"]
@@ -116,22 +126,21 @@ class ReactVideoDataset:
     def _build_index(self):
         items = []
         span = (self.W - 1) * self.stride + 1
+        lat = self.tactile_latency        # tactile read at idx+lat must stay in bounds
         if self.mode == "segment":
             for s in self.segments:
                 ek, a, b = s["source_episode"], s["frame_range"][0], s["frame_range"][1]
                 start = a
-                while start + span - 1 <= b:
+                while start + span - 1 + lat <= b:
                     items.append((ek, start))
                     start += self.step
         else:  # window over whole episode
-            for s in self.segments:  # reuse episode list via segments' episodes
-                pass
             eps = sorted({s["source_episode"] for s in self.segments})
             for ek in eps:
                 T = self.bad.get(ek, {}).get("n_frames", 0)
                 bad = self._bad_mask(ek, T) if self.skip_bad else np.zeros(T, bool)
                 start = 0
-                while start + span - 1 < T:
+                while start + span - 1 + lat < T:
                     idx = range(start, start + span, self.stride)
                     if not (self.skip_bad and bad[list(idx)].any()):
                         items.append((ek, start))
@@ -143,28 +152,36 @@ class ReactVideoDataset:
 
     def __getitem__(self, i):
         ek, start = self.index[i]
+        lat = self.tactile_latency
         idx = list(range(start, start + (self.W - 1) * self.stride + 1, self.stride))
+        idx_tac = [r + lat for r in idx]        # tactile is `lat` frames behind view
         vd = self._video_dir(ek)
-        out = {s: _decode_frames(vd / f"{s}.mp4", idx) for s in self.streams}
-        if self.load_depth:
+        out = {}
+        for s in self.streams:
+            read_idx = idx_tac if s in self._TACT else idx   # shift only tactile
+            out[s] = _decode_frames(vd / f"{s}.mp4", read_idx)
+        if self.load_depth:                      # depth is a view-side cam, no shift
             date, ep = ek.split("/")
             dd = self.root / "depth" / date / ep
             for s in DEPTH_STREAMS:
                 p = dd / f"{s}.mkv"
                 if p.exists():
                     out[s] = _decode_frames(p, idx, depth=True)   # (T,H,W) uint16 mm
-        tbl = pq.read_table(self._parquet(ek)).slice(start, idx[-1] - start + 1)
-        # subsample by stride
-        rows = [r - start for r in idx]
+        # parquet: read a range covering both idx and idx_tac
+        lo, hi = start, idx_tac[-1]
+        tbl = pq.read_table(self._parquet(ek)).slice(lo, hi - lo + 1)
+        v_rows = [r - lo for r in idx]
+        t_rows = [r - lo for r in idx_tac]
         for c in ("sensor_left_pose", "sensor_right_pose"):
-            out[c] = np.array(tbl.column(c).to_pylist(), np.float32)[rows]
+            out[c] = np.array(tbl.column(c).to_pylist(), np.float32)[v_rows]
         if "object_pose" in tbl.column_names:
-            out["object_pose"] = np.array(tbl.column("object_pose").to_pylist(), np.float32)[rows]
-        for c in ("tactile_left_intensity", "tactile_right_intensity",
-                  "tactile_left_mixed", "tactile_right_mixed"):
-            out[c] = np.array(tbl.column(c).to_pylist(), np.float32)[rows]
+            out["object_pose"] = np.array(tbl.column("object_pose").to_pylist(), np.float32)[v_rows]
+        # tactile contact scalars follow the tactile frames -> shifted rows
+        for c in self._TACT_COLS:
+            out[c] = np.array(tbl.column(c).to_pylist(), np.float32)[t_rows]
         out["episode"] = ek
         out["frame_start"] = start
+        out["tactile_latency"] = lat
         return out
 
 

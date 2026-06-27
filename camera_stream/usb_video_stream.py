@@ -13,7 +13,7 @@ class USBVideoStream(BaseVideoStream):
         super(USBVideoStream, self).__init__(resolution, format, verbose=verbose)
         self.serial = serial
         self.usb_id = usb_id
-        self.fps = 25
+        self.fps = 30
     
     def parse_serial(self, serial: str):
         """Parse serial number and find the corresponding usb id"""
@@ -34,11 +34,20 @@ class USBVideoStream(BaseVideoStream):
     def start(self, create_thread=True):
         if len(self.serial) > 0:
             self.usb_id = self.parse_serial(self.serial)
-        self.stream = cv2.VideoCapture(self.usb_id)
+        # Force the V4L2 backend so CAP_PROP_BUFFERSIZE / FOURCC are honored.
+        self.stream = cv2.VideoCapture(self.usb_id, cv2.CAP_V4L2)
+        # MJPG: the GelSight Mini's native compressed format. Without this V4L2
+        # may negotiate raw YUYV, which saturates USB bandwidth (esp. alongside
+        # the RealSense cameras) and forces the driver to queue/delay frames.
+        self.stream.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
         # Only works for cameras that support this resolution as one of the native resolutions
         self.stream.set(cv2.CAP_PROP_FRAME_WIDTH, self.resolution[0])
         self.stream.set(cv2.CAP_PROP_FRAME_HEIGHT, self.resolution[1])
-        
+        # Shallowest possible driver buffer: with read()/grab() being FIFO over
+        # the V4L2 queue, a deep buffer means every frame we read is stale by the
+        # buffer depth. 1 keeps us on the freshest frame.
+        self.stream.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+
         if not self.stream.isOpened():
             print("Cannot open camera stream at id {}".format(self.usb_id))
             exit()
@@ -53,13 +62,13 @@ class USBVideoStream(BaseVideoStream):
             del self.stream
 
     def update(self):
+        # IMPORTANT: do NOT throttle reads. cv2.VideoCapture.read() returns the
+        # OLDEST frame in the V4L2 queue (FIFO). If we read slower than the
+        # camera streams, the queue stays full and every frame we hand out is
+        # stale by the buffer depth (this was the ~15-frame GelSight latency).
+        # Reading continuously (grab as fast as possible, keep only the latest
+        # retrieve) drains the backlog so self.frame is always the freshest.
         while self.streaming:
-            while self.streaming and time.time() - self.last_updated < 1.0 / self.fps:
-                time.sleep(0.001)
-            if not self.streaming:
-                break
-            if not self.streaming:
-                return
             grabbed, frame = None, None
             try:
                 grabbed, frame = self.stream.read()

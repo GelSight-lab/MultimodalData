@@ -134,6 +134,27 @@ sample = ds[0]
 ```
 `mode="segment"` iterates clean spans (no bad frames by construction); `mode="window"` slides over whole episodes and skips `bad_frames.json` intervals. Backend: PyAV (install `decord` for faster random access).
 
+## ⚠️ Known issue: tactile acquisition latency (~15 frames)
+
+Recordings **up to and including 2026-06-18** have a GelSight-vs-camera capture
+lag of **≈15 frames (~0.5 s)**: the tactile stream at index `i` was physically
+captured ~15 frames *before* the camera/pose at the same index. Cause: a
+recording-side `cv2.VideoCapture` V4L2 buffer that was never flushed
+(throttled reads + no `BUFFERSIZE=1` + default pixel format). Fixed in the rig
+on 2026-06-27; **future recordings will not have this lag**.
+
+The streams are stored frame-aligned by tick index, so this lag is baked in but
+**correctable**. The reference loader compensates at load time:
+
+```python
+ds = ReactVideoDataset("data/motherboard", tactile_latency=15)  # pairs view[i] with tactile[i+15]
+```
+
+`tactile_latency` shifts both the tactile videos and the tactile contact-scalar
+columns; poses/views/depth are unchanged. Set `tactile_latency=0` for the raw
+(uncompensated) data. The exact per-session value should be re-measured with
+`camera_stream/measure_gelsight_latency.py`.
+
 ## Data quality
 Per-task `bad_frames.json` flags `intensity_spikes`, `pose_teleports_{L,R}`, `ot_loss_{L,R}` (OptiTrack track loss). Overall flagged: motherboard 0.90 %, pushT 0.67 %. `segments.json` already excludes them.
 
