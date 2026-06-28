@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>React · Latency Correction Check</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&display=swap" rel="stylesheet">
+<style>
+  :root{--bg:#080b0c;--panel:#0e1416;--panel-2:#121a1d;--line:#1d292c;--phos:#5ef2a0;
+    --phos-dim:#2c7a52;--amber:#ffb347;--ink:#dfeef0;--muted:#6f8589;--blue:#78b4ff}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--ink);font-family:"IBM Plex Mono",monospace;font-size:14px;
+    background-image:radial-gradient(circle at 50% -10%,rgba(94,242,160,.06),transparent 60%);min-height:100vh}
+  .wrap{max-width:1180px;margin:0 auto;padding:34px 26px 80px}
+  .eyebrow{font-size:11px;letter-spacing:.32em;text-transform:uppercase;color:var(--phos);display:flex;align-items:center;gap:10px}
+  .eyebrow::before{content:"";width:8px;height:8px;border-radius:50%;background:var(--phos);box-shadow:0 0 10px var(--phos)}
+  h1{font-family:"Bricolage Grotesque",sans-serif;font-weight:800;font-size:clamp(28px,5vw,50px);line-height:1;letter-spacing:-.02em;margin:14px 0 8px}
+  h1 .b{color:var(--phos)}
+  .sub{color:var(--muted);max-width:780px;font-size:13px}
+  .howto{margin:22px 0 26px;border:1px solid var(--line);border-left:3px solid var(--amber);background:linear-gradient(180deg,var(--panel),transparent);padding:16px 20px;border-radius:4px}
+  .howto h2{font-size:12px;letter-spacing:.2em;text-transform:uppercase;color:var(--amber);margin-bottom:10px}
+  .howto ol{margin-left:18px;color:#aebec1;font-size:13px} .howto li{margin:4px 0} .howto b{color:var(--ink)}
+  .tagrow{display:flex;gap:18px;margin-top:10px;font-size:12px}
+  .tagrow .t1{color:var(--blue)} .tagrow .t2{color:var(--phos)}
+  kbd{background:var(--panel-2);border:1px solid var(--line);border-bottom-width:2px;border-radius:4px;padding:1px 7px;font-size:12px;color:var(--phos)}
+  .sec-h{display:flex;align-items:baseline;gap:14px;margin:32px 0 14px;padding-bottom:8px;border-bottom:1px dashed var(--line)}
+  .sec-h .tag{font-family:"Bricolage Grotesque";font-weight:800;font-size:22px}
+  .sec-h .cal{margin-left:auto;color:var(--phos-dim);font-size:11px;letter-spacing:.1em;text-transform:uppercase}
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(360px,1fr));gap:20px}
+  .ch{background:var(--panel);border:1px solid var(--line);border-radius:8px;overflow:hidden}
+  .ch.active{border-color:var(--phos);box-shadow:0 0 0 1px var(--phos-dim)}
+  .ch-top{display:flex;align-items:center;gap:8px;padding:9px 12px;border-bottom:1px solid var(--line);background:var(--panel-2);font-size:11px}
+  .ch-id{color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .pos{margin-left:auto;font-size:9px;letter-spacing:.12em;text-transform:uppercase;color:var(--bg);background:var(--amber);padding:2px 7px;border-radius:3px;font-weight:700}
+  video{width:100%;display:block;background:#000;cursor:crosshair}
+  .ovl{position:relative}
+  .fr-line{padding:6px 12px;font-size:11px;color:var(--phos);border-top:1px solid var(--line);background:var(--panel-2)}
+  .tp{display:flex;align-items:center;gap:6px;padding:10px;flex-wrap:wrap}
+  button.t{background:var(--panel-2);border:1px solid var(--line);color:var(--ink);font-family:inherit;font-size:12px;padding:6px 10px;border-radius:5px;cursor:pointer;min-width:34px}
+  button.t:hover{border-color:var(--phos);color:var(--phos)}
+  button.t.play{min-width:50px;color:var(--phos)}
+  .spd{display:flex;gap:3px;margin-left:auto}.spd button{font-size:11px;padding:5px 8px;min-width:0}
+  .spd button.on{background:var(--phos);color:var(--bg);border-color:var(--phos);font-weight:700}
+  .scrub{width:100%;padding:0 10px 12px}
+  input[type=range]{-webkit-appearance:none;width:100%;height:4px;border-radius:3px;background:var(--line)}
+  input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;height:14px;border-radius:50%;background:var(--phos);cursor:pointer}
+  footer{margin-top:46px;padding-top:18px;border-top:1px solid var(--line);color:var(--muted);font-size:12px}
+  footer a{color:var(--phos)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="eyebrow">React Dataset · Latency Correction</div>
+  <h1>Does +15f <span class="b">fix it?</span></h1>
+  <p class="sub">Each clip is a vertical 2-up of the SAME moment. 20&nbsp;s @ 1×, sampled at
+  early / mid / late positions of 2 episodes per task — to check the correction holds across time.</p>
+  <div class="tagrow">
+    <span class="t1">▲ TOP = RAW (cam[i] + tactile[i]) — tactile lags ~15f</span>
+    <span class="t2">▼ BOTTOM = CORRECTED (cam[i] + tactile[i+15])</span>
+  </div>
+
+  <div class="howto">
+    <h2>▸ What to look for</h2>
+    <ol>
+      <li>Find a contact moment in the <b>camera row</b> (row 1 of each panel).</li>
+      <li><b>TOP (raw):</b> the GelSight diff (row 2) lights up ~15 frames AFTER the camera contact.</li>
+      <li><b>BOTTOM (corrected):</b> the diff should light up on the SAME frame as the camera contact. If it does, +15 is right; if it's still early/late, the true shift differs.</li>
+      <li>Step frames with <kbd>←</kbd>/<kbd>→</kbd>, <kbd>Space</kbd> play/pause. Use 0.25× for precision.</li>
+    </ol>
+  </div>
+
+  <div id="sections"></div>
+  <footer>Source: <a href="https://huggingface.co/datasets/yxma/React">yxma/React</a> ·
+  Raw onset clips: <a href="index.html">index.html</a> · positions p10/p50/p85 = ~early/mid/late.</footer>
+</div>
+<script>
+const META = __META__;
+const FPS = 30;
+const SECTIONS=[{key:"motherboard",tag:"motherboard",cal:"calib · May-12"},{key:"pushT",tag:"pushT",cal:"calib · June-26"}];
+const root=document.getElementById("sections"); let active=null;
+const posName=n=>n.includes("p10")?"early":n.includes("p50")?"mid":n.includes("p85")?"late":"";
+function card(m){
+  const c=document.createElement("div");c.className="ch";
+  const ep=m.name.replace(/^\d{4}-\d{2}-\d{2}_/,"").split("__")[0];
+  c.innerHTML=`<div class="ch-top"><span class="ch-id">${ep}</span><span class="pos">${posName(m.name)}</span></div>
+    <div class="ovl"><video preload="metadata" playsinline src="check/${m.file}"></video></div>
+    <div class="fr-line">FR <b class="fr">0</b> / ${m.frames-1} · <b class="tt">0.00</b>s</div>
+    <div class="tp">
+      <button class="t" data-a="-1">◀1f</button><button class="t play" data-a="play">▶</button>
+      <button class="t" data-a="1">1f▶</button>
+      <div class="spd"><button data-s="0.25">.25×</button><button data-s="0.5">.5×</button><button data-s="1" class="on">1×</button></div>
+    </div><input type="range" class="scrub" min="0" max="${m.frames-1}" value="0">`;
+  const v=c.querySelector("video"),fr=c.querySelector(".fr"),tt=c.querySelector(".tt"),sc=c.querySelector(".scrub"),pb=c.querySelector('[data-a="play"]');
+  const setA=()=>{if(active)active.classList.remove("active");active=c;c.classList.add("active")};
+  c.addEventListener("click",setA);
+  const upd=()=>{const f=Math.round(v.currentTime*FPS);fr.textContent=f;tt.textContent=(f/FPS).toFixed(2);sc.value=f};
+  v.addEventListener("timeupdate",upd);v.addEventListener("seeked",upd);
+  v.addEventListener("play",()=>pb.textContent="⏸");v.addEventListener("pause",()=>pb.textContent="▶");
+  const step=n=>{v.pause();v.currentTime=Math.max(0,Math.min((v.duration||20)-1e-3,v.currentTime+n/FPS))};
+  c.querySelectorAll("button.t").forEach(b=>b.addEventListener("click",e=>{e.stopPropagation();setA();
+    b.dataset.a==="play"?(v.paused?v.play():v.pause()):step(parseInt(b.dataset.a))}));
+  c.querySelectorAll(".spd button").forEach(b=>b.addEventListener("click",e=>{e.stopPropagation();setA();
+    v.playbackRate=parseFloat(b.dataset.s);c.querySelectorAll(".spd button").forEach(x=>x.classList.remove("on"));b.classList.add("on")}));
+  sc.addEventListener("input",e=>{setA();v.pause();v.currentTime=parseInt(e.target.value)/FPS});
+  return c;
+}
+SECTIONS.forEach(sec=>{const items=META.filter(m=>m.task===sec.key);if(!items.length)return;
+  const h=document.createElement("div");h.className="sec-h";
+  h.innerHTML=`<span class="tag">${sec.tag}</span><span class="cal">${sec.cal}</span>`;root.appendChild(h);
+  const g=document.createElement("div");g.className="grid";items.forEach(m=>g.appendChild(card(m)));root.appendChild(g)});
+document.addEventListener("keydown",e=>{if(!active)return;const v=active.querySelector("video");
+  if(e.key==="ArrowLeft"){e.preventDefault();v.pause();v.currentTime=Math.max(0,v.currentTime-1/FPS)}
+  else if(e.key==="ArrowRight"){e.preventDefault();v.pause();v.currentTime=Math.min((v.duration||20)-1e-3,v.currentTime+1/FPS)}
+  else if(e.key===" "){e.preventDefault();v.paused?v.play():v.pause()}});
+</script>
+</body>
+</html>
