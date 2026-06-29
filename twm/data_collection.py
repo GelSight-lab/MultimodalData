@@ -20,6 +20,16 @@ import numpy as np
 import h5py
 import hdf5plugin
 
+def _gs_frame_ts(gs_stream):
+    """Return (frame, capture_timestamp) for a GelSight stream, using the
+    per-frame capture timestamp when available (USBVideoStream) and falling
+    back to (frame, None) for streams/dummies without it."""
+    fn = getattr(gs_stream, "get_frame_with_timestamp", None)
+    if fn is not None:
+        return fn()
+    return gs_stream.get_frame(), None
+
+
 # ──────────────────────────────────────────────────────────────────────────────
 # HDF5 helpers
 # ──────────────────────────────────────────────────────────────────────────────
@@ -55,11 +65,16 @@ def create_episode_file(date_dir, episode_num, realsense_serials, gelsight_seria
         g.create_dataset("depth", shape=(0, 480, 640),    maxshape=(None, 480, 640),
                          dtype=np.uint16, chunks=(1, 480, 640),    **_blosc)
 
-    # GelSight
+    # GelSight — frames + per-sensor CAPTURE timestamps. The GelSight Mini
+    # streams ~18.75 fps (hardware ceiling, < the 30 fps camera tick), so its
+    # frames don't line up 1:1 with the main-loop `timestamps`. Each frame
+    # carries the time it was actually captured (post-grab), letting downstream
+    # code align tactile to cameras by nearest timestamp instead of by index.
     for name in ["left", "right"]:
         g = f.create_group(f"gelsight/{name}")
         g.create_dataset("frames", shape=(0, 480, 640, 3), maxshape=(None, 480, 640, 3),
                          dtype=np.uint8, chunks=(1, 480, 640, 3), **_blosc)
+        g.create_dataset("timestamps", shape=(0,), maxshape=(None,), dtype=np.float64)
 
     # OptiTrack — per-tracker timestamps + poses
     for name in ["motherboard", "sensor_left", "sensor_right"]:
@@ -79,11 +94,14 @@ def append_camera_frames_batch(f, batch):
     """
     Write a batch of frames to HDF5 in one resize+write per dataset.
 
-    batch: list of (color_frames, depth_frames, gs_frames, timestamp) tuples
-           color_frames: list of 3 arrays (480, 640, 3) uint8
-           depth_frames: list of 3 arrays (480, 640) uint16
-           gs_frames:    list of 2 arrays (480, 640, 3) uint8
-           timestamp:    float
+    batch: list of (color_frames, depth_frames, gs_frames, timestamp,
+                    gs_timestamps) tuples
+           color_frames:  list of 3 arrays (480, 640, 3) uint8
+           depth_frames:  list of 3 arrays (480, 640) uint16
+           gs_frames:     list of 2 arrays (480, 640, 3) uint8
+           timestamp:     float (main-loop tick time)
+           gs_timestamps: list of 2 floats (per-sensor capture time) — optional
+                          for backward compat; falls back to `timestamp`.
 
     One resize() call per dataset instead of one per frame — reduces HDF5
     b-tree metadata overhead by len(batch)×.
@@ -109,6 +127,11 @@ def append_camera_frames_batch(f, batch):
         gs_batch = np.stack([b[2][j] for b in batch])      # (nb, 480, 640, 3)
         ds = f[f"gelsight/{name}/frames"]
         ds.resize(n + nb, axis=0);  ds[n:] = gs_batch
+        # per-sensor capture timestamps (fall back to tick time if absent)
+        gts = np.array([(b[4][j] if len(b) > 4 and b[4] and b[4][j] is not None
+                         else b[3]) for b in batch], dtype=np.float64)
+        dst = f[f"gelsight/{name}/timestamps"]
+        dst.resize(n + nb, axis=0);  dst[n:] = gts
 
 
 def flush_optitrack_to_hdf5(f, optitrack_data):
@@ -183,10 +206,15 @@ class HDF5Writer:
         f = batch[0][0]
         append_camera_frames_batch(f, [item[1:] for item in batch])
 
-    def enqueue(self, f, color_frames, depth_frames, gs_frames, timestamp):
-        """Non-blocking. Drops frame (with warning) if queue is full."""
+    def enqueue(self, f, color_frames, depth_frames, gs_frames, timestamp,
+                gs_timestamps=None):
+        """Non-blocking. Drops frame (with warning) if queue is full.
+
+        gs_timestamps: optional list of 2 per-sensor capture times.
+        """
         try:
-            self._queue.put_nowait((f, color_frames, depth_frames, gs_frames, timestamp))
+            self._queue.put_nowait((f, color_frames, depth_frames, gs_frames,
+                                    timestamp, gs_timestamps))
         except queue.Full:
             self._dropped += 1
             if self._dropped % 30 == 1:
@@ -360,7 +388,13 @@ class CaptureLoop:
             t0 = time.time()
             color_frames = [s.get_color_frame() for s in self.rs_streams]
             depth_frames = [s.get_depth_frame() for s in self.rs_streams]
-            gs_frames    = [self.gs_left.get_frame(), self.gs_right.get_frame()]
+            # GelSight: grab frame + its true capture timestamp (the sensor runs
+            # ~18.75 fps < tick rate, so its frames are older than `t`; the
+            # per-sensor timestamp records when each was actually captured).
+            gs_l, ts_l = _gs_frame_ts(self.gs_left)
+            gs_r, ts_r = _gs_frame_ts(self.gs_right)
+            gs_frames     = [gs_l, gs_r]
+            gs_timestamps = [ts_l, ts_r]
             t            = time.time()
             self._timing_accum["grab"] += t - t0
 
@@ -375,7 +409,8 @@ class CaptureLoop:
                     self._warmup_remaining -= 1
                     rec = False
             if rec and h5_file is not None:
-                self.writer.enqueue(h5_file, color_frames, depth_frames, gs_frames, t)
+                self.writer.enqueue(h5_file, color_frames, depth_frames, gs_frames, t,
+                                    gs_timestamps=gs_timestamps)
                 with self._lock:
                     self._frame_count += 1
             self._timing_accum["enqueue"] += time.time() - t0
