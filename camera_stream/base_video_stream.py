@@ -7,7 +7,7 @@ import os
 from misc.utils import logging
 
 class BaseVideoStream(object):
-    def __init__(self, resolution: Tuple[int, int] = (640, 480), format="BGR", verbose=True):
+    def __init__(self, resolution: Tuple[int, int] = (640, 480), format="BGR", verbose=True, name=""):
         self.stream = None
         self.frame = None
         self.streaming = False
@@ -16,6 +16,7 @@ class BaseVideoStream(object):
         self.last_updated = time.time()
         self.lock = threading.Lock()
         self.verbose = verbose
+        self.name = name                 # human label, e.g. "left"/"right"
 
         self.recording = False
         self.record_path = None
@@ -26,6 +27,16 @@ class BaseVideoStream(object):
 
         if not verbose:
             logging("Camera-related warnings will be turned off", True, "warning")
+
+    def _tag(self):
+        """Identifier for log messages: '[<name> serial=<serial>]'."""
+        parts = []
+        if getattr(self, "name", ""):
+            parts.append(self.name)
+        ser = getattr(self, "serial", "")
+        if ser:
+            parts.append(f"serial={ser}")
+        return f"[{' '.join(parts)}]" if parts else ""
 
     def start(self, create_thread=True):
         raise NotImplementedError
@@ -73,7 +84,7 @@ class BaseVideoStream(object):
     
     def restart(self):
         self.stop()
-        logging("Restarting the camera...", self.verbose, "cyan")
+        logging(f"Restarting the camera {self._tag()}...", self.verbose, "cyan")
         self.frame = None
         time.sleep(3)
         # Avoid creating new thread
@@ -91,11 +102,12 @@ class BaseVideoStream(object):
             if time.time() - self.last_updated > 4 * max_no_update_time:
                 self.restart()
                 self.last_updated = time.time()
-                print("Restarted the camera.")
+                print(f"Restarted the camera {self._tag()}.")
             if not error_flag:
                 # only print the error msg once
                 error_flag = True
-                print("Frame is not updated for more than {} second. Check the camera connection.".format(max_no_update_time))
+                print("Frame is not updated for more than {} second {}. "
+                      "Check the camera connection.".format(max_no_update_time, self._tag()))
             time.sleep(0.01)
         while self.frame is None:
             time.sleep(0.01)

@@ -9,8 +9,8 @@ from .base_video_stream import BaseVideoStream
 from misc.utils import logging
 
 class USBVideoStream(BaseVideoStream):
-    def __init__(self, serial: str = "", usb_id: int = 0, resolution: Tuple[int, int] = (640, 480), format="BGR", verbose=True):
-        super(USBVideoStream, self).__init__(resolution, format, verbose=verbose)
+    def __init__(self, serial: str = "", usb_id: int = 0, resolution: Tuple[int, int] = (640, 480), format="BGR", verbose=True, name=""):
+        super(USBVideoStream, self).__init__(resolution, format, verbose=verbose, name=name)
         self.serial = serial
         self.usb_id = usb_id
         self.fps = 30

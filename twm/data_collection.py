@@ -543,7 +543,7 @@ def main():
         def get_frame(self): return self._frame
 
     def _try_start_gelsight(side, serial):
-        gs = USBVideoStream(serial=serial, resolution=(640, 480))
+        gs = USBVideoStream(serial=serial, resolution=(640, 480), name=side)
         try:
             gs.start()
             return gs
