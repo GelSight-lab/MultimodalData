@@ -39,11 +39,20 @@ def reference_compare(frame, reference):
     return np.concatenate([reference, frame, sd], axis=1)
 
 
-def depth_view(height_map, cmap="viridis"):
-    """Colormap a (H, W) height map to an RGB image."""
+def depth_view(height_map, cmap="gray"):
+    """Render a (H, W) height map as an RGB image.
+
+    Default is **grayscale** (brighter = higher), the standard GelSight
+    height-map convention (gsrobotics, GelSight Wedge, depth-recon papers).
+    Pass cmap="turbo"/"jet"/"viridis" for a colormapped view instead.
+    """
     h = height_map.astype(np.float32)
     rng = h.max() - h.min()
-    return _colormap((h - h.min()) / (rng + 1e-6), cmap)
+    norm = (h - h.min()) / (rng + 1e-6)
+    if cmap in (None, "gray", "grey", "grayscale"):
+        g = (np.clip(norm, 0, 1) * 255).astype(np.uint8)
+        return np.repeat(g[..., None], 3, axis=2)   # (H,W,3) gray RGB
+    return _colormap(norm, cmap)
 
 
 def height_to_pointcloud(height_map, stride=4, z_scale=1.0):

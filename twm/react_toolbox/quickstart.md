@@ -58,7 +58,7 @@ python -m react_toolbox.demo --with_depth
 | `reference` | `get_reference`, `difference`, `l2_diff` | p01 / first / running-avg reference; Sparsh signed diff |
 | `contact` | `contact_mask`, `contact_metrics`, `contact_centroid` | diff→threshold→largest component; reproduces dataset scalars |
 | `depth` | `height_map`, `normals`, `poisson_integrate` | **approximate, uncalibrated** — pretrained markerless-Mini net (`nnmini.pt`, fetched on demand) + DCT Poisson |
-| `viz` | `diff_heatmap`, `contact_overlay`, `reference_compare`, `depth_view`, `height_to_pointcloud` | all return RGB uint8 |
+| `viz` | `diff_heatmap`, `contact_overlay`, `reference_compare`, `depth_view` (grayscale by default = standard GelSight height map; cmap= for colormap), `contact_overlay`, `reference_compare`, `height_to_pointcloud` — all return RGB uint8 |
 | `calibration` | `load_calibration`, `project_gel_to_pixel` | per-task extrinsics (motherboard=May-12, pushT=June-26) |
 | `actions` | `next_state_action`, `delta_pose_action`, `integrate_delta` | handheld pose → IL/world-model targets |
 
