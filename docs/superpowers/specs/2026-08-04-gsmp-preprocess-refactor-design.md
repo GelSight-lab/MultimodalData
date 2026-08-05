@@ -131,9 +131,36 @@ class SourceSpec:
 已发布数据实际使用的值无法从代码或文档判定，且发布给用户的 README
 声称的值（12/10）与主实现（10）和主文档（15）均不一致。
 
-因此 `i_min` **不设默认值**，每个源必须显式声明。实际值须逐源从已发布
-parquet 反推（对已知帧重算 area/intensity，找出与保留决策一致的阈值），
-不得从任一现有文档抄写。这是重构的前置步骤，非事后清理。
+因此 `i_min` **不设默认值**，每个源必须显式声明。
+
+#### 修正（2026-08-05，实施 Task 10 时发现）
+
+上面这段的前提**只对全局默认值成立**。实际上每个 legacy iterator
+都硬编码了自己的 `I_MIN`：
+
+| 源 | I_MIN | 出处 |
+|---|---|---|
+| gelslam, tactile_tracking | 10 | `VALIDITY_THRESH` |
+| real_tactile_mnist | 15 | `make_parquet_v2.py:231` |
+| sim_tactile_mnist, sim_starstruck | 15 | `make_parquet_v2.py:379` |
+| feelanyforce, threedcal, tacquad_mini, faf | 10 | `:319 / :538 / :471 / :589` |
+| sparsh, unit, tacquad_full | 12 | `ingest_*.py` |
+
+**权威来源是生成数据的 legacy 代码**，不是从已发布 parquet 反推。
+
+反推法本身有一个不可修复的局限：已发布 parquet 只含**被保留的（即接触）**帧，
+而 baseline 按定义是**无接触**参考——无接触参考无法从只含接触帧的数据集重建。
+`real_tactile_mnist` 与 `feats` 更极端：5127 行对应 5127 个 capture 组，
+per-capture 中位数就是该帧自身，差分恒为 0。
+
+`tools/recover_imin.py` 因此降级为**交叉验证工具**，其结论记于
+`docs/imin_recovered.md`；权威值记于 `docs/imin_from_code.md`。
+在非退化的源上两者互相印证：gelslam 反推 11.05 vs 代码 10，
+sparsh p05=12.50 vs 代码 12。
+
+这个错误是被 sparsh 锚点抓到的——`ingest_sparsh.py` 明写 `I_MIN = 12`，
+是唯一有独立可信值的源。它的作用不是确认方法可靠，而是证伪。
+没有这个锚点，9 个源会拿到"i_min = 0.0"的退化值而看起来一切正常。
 
 ### BaselineStrategy
 

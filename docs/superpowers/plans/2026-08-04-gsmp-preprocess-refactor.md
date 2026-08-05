@@ -19,7 +19,7 @@
   Task 1-18 不得写入该目录。
 - 不重跑已发布数据的生成流程。Task 19 的补列是对现有 shard 加列，不是重新生成。
 - 数据盘 `/media/yxma/Disk1` 已用 92%（剩 292G）；NVMe `/` 已用 100%（剩 3.8G）。新仓库只放代码。
-- `i_min` 在任何新代码中**不得设默认值**，必须逐源显式声明，且取值须经 Task 10 从已发布 parquet 反推得到，不得从任何现有文档抄写。
+- `i_min` 在任何新代码中**不得设默认值**，必须逐源显式声明。取值的**权威来源是 legacy iterator 里硬编码的 `I_MIN` 常量**（见 `docs/imin_from_code.md`，每行标注 `file:line`），不得从 `PIPELINE.md` 或已发布 README 抄写。Task 10 的经验反推（`docs/imin_recovered.md`）仅作交叉验证——它对"已发布帧全是接触帧"的源在原理上失效，因为无接触 baseline 无法从只含接触帧的数据重建。
 - 提交信息结尾附：`Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>`
 - 新仓库路径常量统一走 `gsmp.config`，任何模块内不得出现硬编码绝对路径。
 
@@ -50,8 +50,19 @@
 
 ## 两个前置事实（实施前必读）
 
-**事实 1 — `i_min` 四处取值不一致：**
-`make_parquet_v2.py:51` 为 10，`pipeline.py:188` 为 12.0，`PIPELINE.md:90` 为 15（FoTA 为 10），已发布给用户的 `README` 为 12 real / 10 sim。已发布数据实际用的值无法从代码或文档判定。Task 10 负责反推。
+**事实 1 — `i_min` 的全局默认值四处不一致，但每个源的实际值在代码里是明确的：**
+
+全局默认：`make_parquet_v2.py:51` 为 10，`pipeline.py:188` 为 12.0，
+`PIPELINE.md:90` 为 15（FoTA 为 10），已发布 README 为 12 real / 10 sim。
+
+**但每个 legacy iterator 都硬编码了自己的 `I_MIN`**（RTM 与 sim_* 为 15，
+gelslam/tactile_tracking/feelanyforce/threedcal/tacquad_mini/faf 为 10，
+sparsh/unit/tacquad_full 为 12）。逐源取值以 `docs/imin_from_code.md` 为准。
+
+Task 10 的经验反推降级为交叉验证：已发布 parquet 只含被保留的接触帧，
+而 baseline 是无接触参考，后者无法从前者重建。`real_tactile_mnist` 与
+`feats` 尤其退化——5127 行对应 5127 个 capture 组，per-capture 中位数
+即该帧自身，差分恒为 0。
 
 **事实 2 — 已发布数据的 schema 并非统一的 30 列：**
 
