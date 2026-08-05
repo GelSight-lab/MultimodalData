@@ -40,8 +40,14 @@ def is_done(task: str, date: str, ep: str, side: str) -> bool:
 
 
 def main() -> int:
+    import os
+
     worker, n_workers = int(sys.argv[1]), int(sys.argv[2])
     jobs = all_episodes()[worker::n_workers]
+    if os.environ.get("REVERSE"):
+        # extra workers eat the same slice from the tail; the version-stamp
+        # skip makes the meeting point cost at most one duplicated episode
+        jobs = jobs[::-1]
     print(f"[worker {worker}] {len(jobs)} episodes", flush=True)
     failures = 0
     for task, date, ep in jobs:

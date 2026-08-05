@@ -195,6 +195,8 @@ reference frames come from the same episode seconds away.</p>
 <tr><td>Pearson r (pooled)</td><td>{ext.get('pearson_r',0):.2f}</td></tr>
 <tr><td>MAE after scale calibration</td><td>{ext.get('mae_calibrated_n',0):.1f} N</td></tr>
 <tr><td>ρ within one indenter family</td><td>0.66–0.94</td><td>zelda 0.94, cylinder 0.75, triangle 0.70</td></tr>
+<tr><td>ρ on <b>unseen indenter shapes</b></td><td>0.85</td><td>test_unknown_indenters split, n=100 — shape generalization holds</td></tr>
+<tr><td>scale stability across splits</td><td>2–4×</td><td>fitted N/mm³ varies 1.9–7.2 between sessions/sensors: within-episode relative force is reliable, cross-sensor absolute scale is not</td></tr>
 <tr><td>ρ on shear-loaded captures</td><td>−0.15</td><td>excluded &amp; documented: shear churns the image without adding indentation volume</td></tr>
 <tr><td>fitted scale</td><td>{ext.get('scale_n_per_mm3',0):.2f} N/mm³</td>
 <td>{ext.get('scale_vs_theory',0):.0f}× the assumed Winkler constant — the fit absorbs the

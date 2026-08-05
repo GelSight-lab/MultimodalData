@@ -114,8 +114,11 @@ def run(split: str = "val", max_frames: int = 300,
         "per_frame": results,
     }
     CALIB_OUT.parent.mkdir(parents=True, exist_ok=True)
-    CALIB_OUT.write_text(json.dumps({k: v for k, v in report.items()
-                                     if k != "per_frame"}, indent=2))
+    # Only the val split defines the canonical calibration — a test-split
+    # run must never silently swap the scale under the batch pipeline.
+    if split == "val":
+        CALIB_OUT.write_text(json.dumps({k: v for k, v in report.items()
+                                         if k != "per_frame"}, indent=2))
     (OUT_ROOT / f"feats_validation_{split}.json").write_text(
         json.dumps(report, indent=2))
     return report
