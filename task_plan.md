@@ -1,4 +1,29 @@
-# Task Plan: React 数据集修复 + preprocess 重构
+# Task Plan 2: 力恢复双方法实现 + 评估 + HF 可视化站
+
+## Goal 2(活跃)
+选择两个最合适的方法实现,自行 debug 和评估,可视化方法和结果到 HF 网站。
+选定方法(基于文献调研):
+1. **FEATS 伪力标注**:GelSight Mini 图像 → normal/shear 力分布 → 回填数据集力通道
+2. **DexForce 式 action 变换**:F_normal → 沿 sensor normal 的 force-informed
+   position target(虚拟穿透),与现有 pose action 融合
+
+## Phases (Goal 2)
+- [ ] P1: FEATS 跑通(clone、预训练权重、输入格式适配 640x480 BGR/RGB)
+- [ ] P2: 方法1 全量推理 + 无 GT 的自评估(无接触帧≈0 力、力-接触强度相关性、时间平滑性)
+- [ ] P3: 方法2 实现 + 评估(无接触帧 target==pose、穿透深度有界、往返一致性)
+- [ ] P4: 可视化(力 overlay 视频、力-pose 时间线、穿透轨迹 3D)
+- [ ] P5: HF Space 静态站(方法图 + 结果),发布并回读验证
+
+## Env facts
+- GPU: RTX 2080 Ti (11GB) + GTX 1080;torch 2.1.0+cu121 OK;HF auth = yxma
+- FEATS: github.com/feats-ai/feats;权重在 repo `src/feats/models/unet_09042025_124903_80.pt`
+  + `normalization_08042025_122519.npy`;输入格式需读代码确认
+- 我们的触觉帧:H5 `gelsight/<side>/frames`,640x480 RGB(HDF5 内 RGB)
+- 注意:FEATS 训练输入可能是 320x240 或原生 GelSight Mini 分辨率;需查 predict 代码
+
+---
+
+# Task Plan 1(已完成): React 数据集修复 + preprocess 重构
 
 ## Goal
 1. 自动修复已识别的数据集问题(触觉重复标注、时间戳对齐、双重校正)
