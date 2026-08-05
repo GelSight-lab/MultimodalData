@@ -4,7 +4,7 @@
 
 **Goal:** 把散落在 `MultimodalData` 根目录的 40 个未跟踪预处理脚本，重构成数据盘上一个受版本控制、以声明式 `SourceSpec` 组织的 Python 包。
 
-**Architecture:** 新建独立 git 仓库 `/media/yxma/Disk1/yuxiang/gelsight-mini-pretrain/`。核心包 `src/gsmp/` 提供纯函数层（filters/encode/schema）、写出层（writer）、baseline 策略层，以及一个通用 runner。每个数据源成为 `src/gsmp/sources/<name>.py`，导出一个 `SourceSpec` 与一个 `iter_frames()` 生成器。已生效的一次性修复脚本原样封存到 `archive/`。
+**Architecture:** 新建独立 git 仓库 `/home/yxma/gelsight-mini-pretrain/`。核心包 `src/gsmp/` 提供纯函数层（filters/encode/schema）、写出层（writer）、baseline 策略层，以及一个通用 runner。每个数据源成为 `src/gsmp/sources/<name>.py`，导出一个 `SourceSpec` 与一个 `iter_frames()` 生成器。已生效的一次性修复脚本原样封存到 `archive/`。
 
 **Tech Stack:** Python 3.9.18 (conda, `/home/yxma/miniconda3/bin/python3`)、pyarrow 21.0.0、pytest 8.4.2、numpy、Pillow、opencv-python、huggingface_hub。
 
@@ -160,19 +160,19 @@ Expected: 输出中不再有 `twm/` 或 `probing_panda.egg-info` 条目；剩余
 建立新仓库，第一个 commit 是 40 个文件的**逐字复制**，不改一行。这样后续每一步重构都可对着这个已知能跑的状态 diff。
 
 **Files:**
-- Create: `/media/yxma/Disk1/yuxiang/gelsight-mini-pretrain/` (git repo)
+- Create: `/home/yxma/gelsight-mini-pretrain/` (git repo)
 - Create: `.gitignore`, `pyproject.toml`, `README.md`
 - Copy verbatim: 40 个预处理文件 + `calibration/` + 3 个 markdown
 
 **Interfaces:**
 - Consumes: Task 1 产出的干净 git status
-- Produces: 仓库根 `$GSMP_ROOT=/media/yxma/Disk1/yuxiang/gelsight-mini-pretrain`；`legacy/` 目录内含全部原始脚本，供后续任务逐个迁出
+- Produces: 仓库根 `$GSMP_ROOT=/home/yxma/gelsight-mini-pretrain`；`legacy/` 目录内含全部原始脚本，供后续任务逐个迁出
 
 - [ ] **Step 1: 建仓库并复制文件到 legacy/**
 
 ```bash
 set -euo pipefail
-GSMP=/media/yxma/Disk1/yuxiang/gelsight-mini-pretrain
+GSMP=/home/yxma/gelsight-mini-pretrain
 SRC=/home/yxma/MultimodalData
 mkdir -p "$GSMP/legacy"
 cd "$SRC"
@@ -208,8 +208,8 @@ cp -v _readme_new.md _nc_readme_new.md "$GSMP/docs/"
 ```bash
 cd /home/yxma/MultimodalData
 fail=0
-for f in $(ls /media/yxma/Disk1/yuxiang/gelsight-mini-pretrain/legacy/*.py \
-              /media/yxma/Disk1/yuxiang/gelsight-mini-pretrain/legacy/*.sh); do
+for f in $(ls /home/yxma/gelsight-mini-pretrain/legacy/*.py \
+              /home/yxma/gelsight-mini-pretrain/legacy/*.sh); do
   b=$(basename "$f")
   cmp -s "$b" "$f" || { echo "DIFF: $b"; fail=1; }
 done
@@ -287,7 +287,7 @@ See `docs/PIPELINE.md`.
 - [ ] **Step 6: 初始提交**
 
 ```bash
-cd /media/yxma/Disk1/yuxiang/gelsight-mini-pretrain
+cd /home/yxma/gelsight-mini-pretrain
 git init -q
 git add -A
 git commit -F - <<'EOF'
