@@ -11,8 +11,13 @@
 ## Global Constraints
 
 - Python 3.9 — 所有模块首行必须 `from __future__ import annotations`；类型标注用 `typing.Optional` / `typing.Literal`，不用 `X | None` 运行时语法。
-- 805G 原始数据（`/media/yxma/Disk1/yuxiang/mini_data/`）与 8G 已发布 parquet（`mini_data_parquet/`）**全程只读**。任何任务不得写入这两个目录。
-- 不重跑已发布数据的生成流程，不修改 HF 上现有 parquet。
+- 805G 原始数据（`/media/yxma/Disk1/yuxiang/mini_data/`）**全程只读**，无例外。
+- 已发布 parquet（`mini_data_parquet/`）默认只读。**两处经批准的例外，仅限 Task 19 与 Task 20：**
+  - Task 19：`fota_labeled` / `fota_unlabeled` 补列后重传（图片不重编码，先本地构建校验再上传）
+  - Task 20：删除 `mini_data_parquet/scripts/` 这份陈旧代码副本（不触碰任何 parquet）
+
+  Task 1-18 不得写入该目录。
+- 不重跑已发布数据的生成流程。Task 19 的补列是对现有 shard 加列，不是重新生成。
 - 数据盘 `/media/yxma/Disk1` 已用 92%（剩 292G）；NVMe `/` 已用 100%（剩 3.8G）。新仓库只放代码。
 - `i_min` 在任何新代码中**不得设默认值**，必须逐源显式声明，且取值须经 Task 10 从已发布 parquet 反推得到，不得从任何现有文档抄写。
 - 提交信息结尾附：`Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>`
@@ -3211,21 +3216,23 @@ have four different documented values.
 > Remediation requires republishing those two subsets — see Task 19.
 ```
 
-- [ ] **Step 4: 处理 HF 上的陈旧 scripts 副本**
+- [ ] **Step 4: 在 PIPELINE.md 记录 scripts/ 副本的处置方向**
 
-**此步需要用户决策，不要自动执行。** 向用户呈现：
+实际的删除与 GitHub 迁移在 Task 20 执行（需要 `gh auth login`）。此处只在
+`docs/PIPELINE.md` 的 "Where the code lives" 一节记录最终状态：
 
+```markdown
+## Where the code lives
+
+All of it lives in one git repository, mirrored to GitHub. The dataset repo
+on Hugging Face no longer carries a `scripts/` copy: it held an 8-file
+snapshot from 2026-05-17 whose `make_parquet_v2.py` was 7,770 bytes behind
+the code that actually produced the release. A copy with no mechanism
+keeping it fresh is worse than a link, so the README points at the
+repository instead.
 ```
-mini_data_parquet/scripts/ 含 8 个 5-17 的文件，其中 make_parquet_v2.py
-比本仓库版本旧 7,770 字节。该目录已随数据集发布到 HF。
 
-选项:
-  A. 从 HF 仓库删除 scripts/，README 改为指向本 git 仓库
-  B. 用本仓库当前内容覆盖它，并在发布脚本中加入同步步骤
-  C. 保持现状
-```
-
-得到答复后再动。**不得**在未确认前修改 `mini_data_parquet/`。
+**本步不修改 `mini_data_parquet/`。**
 
 - [ ] **Step 5: 更新 README.md**
 
@@ -3272,76 +3279,517 @@ EOF
 
 ---
 
-### Task 19: FoTA schema 缺陷的补救方案（仅提案，不执行）
+### Task 19: 修复 FoTA 26 列 schema（补列 + 重传）
+
+已批准执行。给 `fota_labeled` / `fota_unlabeled` 现有 shard 补齐 4 列，
+JPEG 原样透传，重传约 3.5GB。
 
 **Files:**
-- Create: `docs/proposals/fota-schema-remediation.md`
+- Create: `src/gsmp/backfill.py`, `tools/backfill_fota_schema.py`
+- Test: `tests/test_backfill.py`
 
 **Interfaces:**
-- Consumes: `gsmp.schema.LEGACY_26_SOURCES`
-- Produces: 一份供用户决策的方案文档。**本任务不修改任何已发布数据。**
+- Consumes: `gsmp.schema.SCHEMA`, `gsmp.schema.LEGACY_26_MISSING`
+- Produces:
+  - `backfill_table(table: pa.Table) -> pa.Table` — 26 列 → 30 列
+  - `verify_backfill(old: pa.Table, new: pa.Table) -> None` — 不满足则 raise
 
-- [ ] **Step 1: 量化影响**
+补列规则（`gel_variant` 是唯一能填出真值的）：
 
-Run:
-```bash
-cd $GSMP && python - <<'PY'
-import glob, pyarrow.parquet as pq
-from gsmp import config
-for s in ("fota_labeled", "fota_unlabeled"):
-    n = sum(pq.ParquetFile(f).metadata.num_rows
-            for f in glob.glob(str(config.published_dir(s) / "*.parquet")))
-    print(f"{s:18s} rows={n}")
-PY
+| 列 | 填法 |
+|---|---|
+| `gel_variant` | `"markered" if markered else "markerless"` |
+| `frame_idx` | NULL — 行内没有来源帧号，不可恢复 |
+| `episode` | NULL — FoTA 无 episode 概念 |
+| `digit_class` | NULL — 对 FoTA 无意义 |
+
+- [ ] **Step 1: 写失败测试**
+
+Create `tests/test_backfill.py`:
+```python
+from __future__ import annotations
+
+import pyarrow as pa
+import pytest
+
+from gsmp import schema
+from gsmp.backfill import backfill_table, verify_backfill
+
+_OLD_COLS = [c for c in schema.COLUMNS if c not in schema.LEGACY_26_MISSING]
+
+
+def _old_table(n=3, markered=(True, False, True)):
+    data = {}
+    for name in _OLD_COLS:
+        field = schema.SCHEMA.field(name)
+        if name == "image":
+            data[name] = pa.array([b"\xff\xd8jpg%d" % i for i in range(n)], pa.binary())
+        elif name == "markered":
+            data[name] = pa.array(list(markered[:n]), pa.bool_())
+        elif pa.types.is_string(field.type):
+            data[name] = pa.array([f"{name}{i}" for i in range(n)], pa.string())
+        elif pa.types.is_boolean(field.type):
+            data[name] = pa.array([False] * n, pa.bool_())
+        elif pa.types.is_int32(field.type):
+            data[name] = pa.array(list(range(n)), pa.int32())
+        else:
+            data[name] = pa.array([float(i) for i in range(n)], pa.float32())
+    return pa.table(data)
+
+
+def test_backfill_produces_the_full_schema():
+    new = backfill_table(_old_table())
+    assert new.schema.names == list(schema.COLUMNS)
+    assert new.schema.equals(schema.SCHEMA)
+
+
+def test_gel_variant_is_derived_from_markered():
+    new = backfill_table(_old_table(markered=(True, False, True)))
+    assert new.column("gel_variant").to_pylist() == [
+        "markered", "markerless", "markered",
+    ]
+
+
+def test_unrecoverable_columns_are_null():
+    new = backfill_table(_old_table())
+    for col in ("frame_idx", "episode", "digit_class"):
+        assert new.column(col).null_count == new.num_rows
+
+
+def test_image_bytes_pass_through_untouched():
+    old = _old_table()
+    new = backfill_table(old)
+    assert new.column("image").to_pylist() == old.column("image").to_pylist()
+
+
+def test_all_original_columns_are_preserved_exactly():
+    old = _old_table()
+    new = backfill_table(old)
+    for name in _OLD_COLS:
+        assert new.column(name).to_pylist() == old.column(name).to_pylist(), name
+
+
+def test_verify_passes_for_a_correct_backfill():
+    old = _old_table()
+    verify_backfill(old, backfill_table(old))
+
+
+def test_verify_rejects_row_count_change():
+    old = _old_table()
+    bad = backfill_table(old).slice(0, 2)
+    with pytest.raises(ValueError, match="row count"):
+        verify_backfill(old, bad)
+
+
+def test_verify_rejects_mutated_image_bytes():
+    old = _old_table()
+    new = backfill_table(old)
+    cols = {n: new.column(n) for n in new.schema.names}
+    cols["image"] = pa.array([b"tampered"] * new.num_rows, pa.binary())
+    with pytest.raises(ValueError, match="image"):
+        verify_backfill(old, pa.table(cols).cast(schema.SCHEMA))
+
+
+def test_backfill_is_idempotent():
+    old = _old_table()
+    once = backfill_table(old)
+    assert backfill_table(once).equals(once)
 ```
-记录行数，写入方案文档。
 
-- [ ] **Step 2: 验证用户可见的破坏**
+- [ ] **Step 2: 运行测试确认失败**
+
+Run: `cd $GSMP && python -m pytest tests/test_backfill.py -v`
+Expected: FAIL — `ModuleNotFoundError: No module named 'gsmp.backfill'`
+
+- [ ] **Step 3: 实现**
+
+Create `src/gsmp/backfill.py`:
+```python
+"""Backfill the 26-column FoTA shards to the full 30-column schema.
+
+fota_labeled and fota_unlabeled were published missing episode, frame_idx,
+digit_class and gel_variant, which breaks the concatenate_datasets example in
+the dataset's own README (93,155 frames, ~11% of the corpus).
+
+Only gel_variant can be given a real value -- it is a function of the
+markered column. The other three are unrecoverable from the published rows
+and are written as NULL. That is enough to fix the user-visible breakage:
+HF feature compatibility requires matching column names and types, not
+non-null values.
+
+JPEG bytes are never re-encoded. Every original column passes through
+untouched, and verify_backfill() enforces that.
+"""
+from __future__ import annotations
+
+import pyarrow as pa
+
+from gsmp.schema import COLUMNS, LEGACY_26_MISSING, SCHEMA
+
+
+def backfill_table(table: pa.Table) -> pa.Table:
+    """Return `table` widened to the full 30-column schema."""
+    n = table.num_rows
+    present = set(table.schema.names)
+    cols = {}
+
+    for name in COLUMNS:
+        field = SCHEMA.field(name)
+        if name in present:
+            cols[name] = table.column(name).cast(field.type)
+        elif name == "gel_variant":
+            markered = table.column("markered").to_pylist()
+            cols[name] = pa.array(
+                ["markered" if m else "markerless" for m in markered],
+                pa.string(),
+            )
+        else:
+            cols[name] = pa.nulls(n, field.type)
+
+    return pa.table(cols, schema=SCHEMA)
+
+
+def verify_backfill(old: pa.Table, new: pa.Table) -> None:
+    """Raise unless `new` is `old` widened, with nothing else changed."""
+    if new.num_rows != old.num_rows:
+        raise ValueError(
+            f"row count changed: {old.num_rows} -> {new.num_rows}"
+        )
+    if not new.schema.equals(SCHEMA):
+        raise ValueError("result does not match the canonical schema")
+
+    for name in old.schema.names:
+        if name in LEGACY_26_MISSING:
+            continue
+        if new.column(name).to_pylist() != old.column(name).to_pylist():
+            raise ValueError(f"column {name!r} was modified")
+
+    for name in LEGACY_26_MISSING:
+        if name == "gel_variant":
+            continue
+        if new.column(name).null_count != new.num_rows:
+            raise ValueError(f"{name!r} should be entirely null")
+```
+
+- [ ] **Step 4: 运行测试确认通过**
+
+Run: `cd $GSMP && python -m pytest tests/test_backfill.py -v`
+Expected: 9 passed
+
+- [ ] **Step 5: 写 CLI**
+
+Create `tools/backfill_fota_schema.py`:
+```python
+#!/usr/bin/env python3
+"""Widen the published FoTA shards to the 30-column schema.
+
+Writes to config.OUT_ROOT/fota_backfill/<source>/ -- never in place, so the
+published tree stays untouched until the upload step is run separately.
+
+    python tools/backfill_fota_schema.py --source fota_labeled
+    python tools/backfill_fota_schema.py --all
+"""
+from __future__ import annotations
+
+import argparse
+import glob
+import pathlib
+import sys
+
+import pyarrow.parquet as pq
+
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "src"))
+
+from gsmp import config                                    # noqa: E402
+from gsmp.backfill import backfill_table, verify_backfill  # noqa: E402
+
+SOURCES = ("fota_labeled", "fota_unlabeled")
+
+
+def run(source: str) -> None:
+    src_dir = config.published_dir(source)
+    out_dir = config.OUT_ROOT / "fota_backfill" / source
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    shards = sorted(glob.glob(str(src_dir / "*.parquet")))
+    if not shards:
+        raise FileNotFoundError(f"no shards under {src_dir}")
+
+    for path in shards:
+        name = pathlib.Path(path).name
+        old = pq.read_table(path)
+        new = backfill_table(old)
+        verify_backfill(old, new)
+        pq.write_table(new, out_dir / name, compression="snappy")
+        print(f"  {name}: {old.num_rows} rows, "
+              f"{len(old.schema.names)} -> {len(new.schema.names)} cols")
+
+    print(f"{source}: wrote {len(shards)} shards to {out_dir}")
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--source", choices=SOURCES)
+    ap.add_argument("--all", action="store_true")
+    args = ap.parse_args()
+    targets = SOURCES if args.all else ([args.source] if args.source else [])
+    if not targets:
+        ap.error("pass --source NAME or --all")
+    for s in targets:
+        run(s)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+```
+
+- [ ] **Step 6: 生成补列后的分片**
+
+Run:
+```bash
+cd $GSMP && python tools/backfill_fota_schema.py --all
+```
+Expected: 4 个 shard，`26 -> 30 cols`，行数分别为 26,394 与 66,761。
+`verify_backfill` 在任一 shard 上抛异常即停止——**不要跳过**。
+
+- [ ] **Step 7: 独立复核（不复用 backfill 代码）**
 
 Run:
 ```bash
 cd $GSMP && python - <<'PY'
-import glob, pyarrow.parquet as pq
+import glob, pathlib, pyarrow.parquet as pq
 from gsmp import config, schema
-a = schema.published_columns("gelslam")
-b = schema.published_columns("fota_unlabeled")
-print("gelslam cols:", len(a), " fota_unlabeled cols:", len(b))
-print("HF concatenate_datasets across these two will raise on feature mismatch")
-print("missing from fota_unlabeled:", sorted(set(a) - set(b)))
+for s in ("fota_labeled", "fota_unlabeled"):
+    old_fs = sorted(glob.glob(str(config.published_dir(s) / "*.parquet")))
+    new_fs = sorted(glob.glob(str(config.OUT_ROOT / "fota_backfill" / s / "*.parquet")))
+    assert len(old_fs) == len(new_fs), s
+    for o, n in zip(old_fs, new_fs):
+        to, tn = pq.read_table(o), pq.read_table(n)
+        assert to.num_rows == tn.num_rows
+        assert list(tn.schema.names) == list(schema.COLUMNS)
+        assert to.column("image").to_pylist() == tn.column("image").to_pylist()
+        gv = set(tn.column("gel_variant").to_pylist())
+        assert gv <= {"markered", "markerless"}, gv
+    print(f"{s}: OK, {sum(pq.ParquetFile(f).metadata.num_rows for f in new_fs)} rows")
+PY
+```
+Expected: 两行 `OK`，行数 26,394 / 66,761。
+
+- [ ] **Step 8: 上传新 revision**
+
+```bash
+cd $GSMP && python - <<'PY'
+from huggingface_hub import HfApi
+from gsmp import config
+api = HfApi()
+for s in ("fota_labeled", "fota_unlabeled"):
+    api.upload_folder(
+        repo_id=config.HF_REPO_MAIN, repo_type="dataset",
+        folder_path=str(config.OUT_ROOT / "fota_backfill" / s),
+        path_in_repo=s,
+        commit_message=f"fix: widen {s} to the full 30-column schema",
+    )
+    print("uploaded", s)
 PY
 ```
 
-- [ ] **Step 3: 写方案文档**
+上传约 3.5GB。HF 保留提交历史，出问题可回滚到前一个 revision。
 
-Create `docs/proposals/fota-schema-remediation.md`，包含：
+- [ ] **Step 9: 验证线上生效 + README 示例可跑**
 
-- 缺陷描述与影响行数（Step 1 结果）
-- 用户可见后果：已发布 README 的 quick-start 示例会抛异常
-- 三个选项及取舍：
-  - **A. 补列重传** — 读现有 shard，加 4 个列（`frame_idx` 无法恢复，只能为 NULL；
-    `gel_variant` 可从 `markered` 推导；`episode`/`digit_class` 对 FoTA 无意义，置 NULL），
-    重传两个 config。代价：约 2GB 上传。收益：schema 统一，示例可用。
-  - **B. 只改文档** — README 明确列出 FoTA 的 schema 差异并修正 quick-start 示例。
-    代价：极低。收益：用户不再被误导，但 schema 仍不统一。
-  - **C. 不处理** — 记录在案。
-- 推荐：**A + B**。A 让文档的既有承诺成立；仅做 B 等于把缺陷写进规格。
-- 明确标注：执行 A 需要重新上传已发布数据，**超出本次重构范围，需单独批准**。
+Run:
+```bash
+cd $GSMP && python - <<'PY'
+from datasets import load_dataset, concatenate_datasets
+ds = [load_dataset("yxma/gelsight-mini-pretrain", c, split="train")
+      for c in ("fota_unlabeled", "gelslam")]
+pool = concatenate_datasets(ds)
+print("concat OK, rows =", len(pool))
+PY
+```
+Expected: 打印总行数而非抛 feature-mismatch 异常。**这一步是整个任务的验收标准**——
+它跑通才说明缺陷真的修好了。
 
-- [ ] **Step 4: 提交**
+- [ ] **Step 10: 从 LEGACY_26_SOURCES 移除并让固化测试转正**
+
+修改 `src/gsmp/schema.py`：`LEGACY_26_SOURCES = frozenset()`，
+并在 docstring 记录修复日期。
+
+修改 `tests/test_schema.py`：删除 `test_fota_is_known_to_deviate`，
+把 `fota_labeled`、`fota_unlabeled` 加进
+`test_conforming_sources_match_schema` 的参数列表。
+
+Run: `cd $GSMP && python -m pytest tests/test_schema.py -v`
+Expected: 13 passed（现在 12 个源全部走 conforming 分支）
+
+- [ ] **Step 11: 更新已发布 README**
+
+`docs/_readme_new.md` 中 "Schema (30 columns, every row identical)" 一节
+现在成立，无需加免责说明。在文末 Notes 追加一行：
+
+```markdown
+- 2026-08-04: `fota_labeled` and `fota_unlabeled` were widened from 26 to 30
+  columns. `frame_idx`, `episode` and `digit_class` are null for these two
+  subsets -- they were not recorded at build time -- but the column set now
+  matches every other config, so cross-config `concatenate_datasets` works.
+```
+
+- [ ] **Step 12: 提交**
 
 ```bash
 cd $GSMP
-mkdir -p docs/proposals
-git add docs/proposals/fota-schema-remediation.md
+git add src/gsmp/backfill.py tools/backfill_fota_schema.py \
+        tests/test_backfill.py src/gsmp/schema.py tests/test_schema.py \
+        docs/_readme_new.md
 git commit -F - <<'EOF'
-docs: proposal for the FoTA 26-column schema defect
+fix: widen fota_labeled and fota_unlabeled to the 30-column schema
 
-Quantifies the defect found during the refactor audit and lays out three
-remediation options. Executing any of them means republishing released data,
-which is out of scope here and needs separate approval.
+Both subsets shipped with 26 columns, missing episode, frame_idx,
+digit_class and gel_variant, which made the dataset README's own
+concatenate_datasets example fail across configs. 93,155 frames affected.
+
+gel_variant is derived from markered; the other three are unrecoverable from
+the published rows and are null. That still fixes the breakage, since HF
+feature compatibility needs matching names and types, not values.
+
+JPEG bytes are not re-encoded -- verify_backfill asserts every original
+column passes through byte-identical, and an independent re-check outside
+the backfill code confirmed it before upload.
+
+LEGACY_26_SOURCES is now empty and the pinning test is replaced by the
+conforming-source test.
 
 Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
 EOF
+```
+
+---
+
+### Task 20: GitHub 公开仓库 + 清理 HF 上的陈旧 scripts/
+
+**前置条件（人工）：** `gh auth login`。`gh` 已安装但当前未登录，
+此步无法自动完成——先确认登录再执行本任务。
+
+**Files:**
+- Modify: `README.md`（加仓库地址与 HF 数据集链接）
+- Modify: `docs/_readme_new.md`（HF README：scripts/ 改为指向 GitHub）
+- Delete on HF: `mini_data_parquet/scripts/`（远端），本地同目录一并删除
+
+**Interfaces:**
+- Consumes: Task 18 已重写的 docs
+- Produces: 公开 remote `origin`；HF 数据集不再携带代码副本
+
+- [ ] **Step 1: 确认无敏感内容**
+
+Run:
+```bash
+cd $GSMP
+grep -rnE "hf_[A-Za-z0-9]{20,}|ghp_[A-Za-z0-9]{20,}|api_key|password|secret" \
+     --include="*.py" --include="*.sh" --include="*.md" . | grep -v "\.git/" || echo "CLEAN"
+```
+Expected: `CLEAN`。有命中则先处理再继续，**不要**推送。
+
+另确认没有大文件混进历史：
+```bash
+cd $GSMP && git count-objects -vH | grep size-pack
+```
+Expected: 几 MB 量级。若超过 100MB，说明有数据文件被误提交，先查 `git log --stat`。
+
+- [ ] **Step 2: 建仓库并推送**
+
+```bash
+cd $GSMP
+gh repo create gelsight-mini-pretrain --public \
+   --description "Preprocessing pipeline for the gelsight-mini-pretrain tactile dataset" \
+   --source=. --remote=origin --push
+git remote -v
+```
+Expected: `origin` 指向 `https://github.com/<user>/gelsight-mini-pretrain`。
+
+- [ ] **Step 3: 更新 HF README 指向仓库**
+
+在 `docs/_readme_new.md` 的 Pipeline 一节末尾追加：
+
+```markdown
+Full build pipeline, including per-source parameters and the regression
+tests that check each source against this release:
+<https://github.com/<user>/gelsight-mini-pretrain>
+```
+
+同时把 `docs/PIPELINE.md` 里 Task 18 Step 4 写的那段中的"mirrored to GitHub"
+补上实际 URL。
+
+- [ ] **Step 4: 从 HF 删除 scripts/**
+
+```bash
+cd $GSMP && python - <<'PY'
+from huggingface_hub import HfApi
+from gsmp import config
+api = HfApi()
+files = [f for f in api.list_repo_files(config.HF_REPO_MAIN, repo_type="dataset")
+         if f.startswith("scripts/")]
+print("deleting:", files)
+assert files, "nothing to delete -- already removed?"
+api.delete_files(repo_id=config.HF_REPO_MAIN, repo_type="dataset",
+                 delete_patterns=["scripts/*"],
+                 commit_message="chore: drop stale scripts/ copy; code now lives on GitHub")
+PY
+```
+Expected: 列出 8 个文件并删除。
+
+- [ ] **Step 5: 上传更新后的 HF README**
+
+```bash
+cd $GSMP && python - <<'PY'
+from huggingface_hub import HfApi
+from gsmp import config
+HfApi().upload_file(
+    path_or_fileobj=str(config.repo_root() / "docs" / "_readme_new.md"),
+    path_in_repo="README.md", repo_id=config.HF_REPO_MAIN, repo_type="dataset",
+    commit_message="docs: point at the pipeline repository")
+print("README uploaded")
+PY
+```
+
+- [ ] **Step 6: 删除本地陈旧副本**
+
+```bash
+rm -rf /media/yxma/Disk1/yuxiang/mini_data_parquet/scripts
+ls /media/yxma/Disk1/yuxiang/mini_data_parquet/
+```
+Expected: 输出中不再有 `scripts`。这是本计划中**唯一**一处写 `mini_data_parquet/`
+的操作，且只删除那份已确认陈旧的代码副本，不触碰任何 parquet。
+
+- [ ] **Step 7: 验证线上状态**
+
+```bash
+cd $GSMP && python - <<'PY'
+from huggingface_hub import HfApi
+from gsmp import config
+files = HfApi().list_repo_files(config.HF_REPO_MAIN, repo_type="dataset")
+assert not [f for f in files if f.startswith("scripts/")], "scripts/ still present"
+print("scripts/ removed; total files:", len(files))
+PY
+```
+
+- [ ] **Step 8: 提交**
+
+```bash
+cd $GSMP
+git add README.md docs/_readme_new.md docs/PIPELINE.md
+git commit -F - <<'EOF'
+chore: publish the pipeline repo, drop the stale scripts/ copy from HF
+
+The dataset repo carried an 8-file scripts/ snapshot from 2026-05-17 whose
+make_parquet_v2.py was 7,770 bytes behind the code that actually produced
+the release -- four of the eight files had drifted. A copy with no mechanism
+keeping it current is worse than a link, so the HF README now points at the
+GitHub repository and the copy is gone.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+EOF
+git push
 ```
 
 ---
@@ -3365,14 +3813,20 @@ EOF
 | tier-2 原样封装不重构 | Task 16 |
 | `archive/` 封存 + 索引 | Task 17 |
 | `PIPELINE.md` 更新到真实状态 | Task 18 |
-| 删除陈旧 scripts 副本 | Task 18 Step 4（需用户确认）|
+| 删除陈旧 scripts 副本 | Task 20（已批准，需先 `gh auth login`）|
+| FoTA schema 缺陷修复 | Task 19（已批准执行，含重传）|
 | MultimodalData 提交 | Task 1 |
 | 数据只读 | Global Constraints；Task 19 显式不执行写操作 |
 
 **新增（spec 未预见，审计中发现）：**
 
 - Task 19 — FoTA 26 列 schema 缺陷。写 spec 时未知，是 Task 4 起草测试时
-  查证已发布 parquet 发现的。
+  查证已发布 parquet 发现的。**已批准执行**（原为仅提案），含约 3.5GB 重传。
+  spec 的"不修改 HF 上现有 parquet"约束因此有一处经批准的例外，
+  仅限 `fota_labeled` / `fota_unlabeled` 两个 config 的补列。
+- Task 20 — GitHub 公开仓库 + 删除 HF 上的陈旧 `scripts/` 副本。**已批准执行**。
+  spec 的"数据只读"约束的唯一例外是删除 `mini_data_parquet/scripts/`
+  这份代码副本，不触碰任何 parquet。
 - `sparsh`（NC 仓库）纳入范围。spec 只写了"12 个源"，遗漏了 NC 仓库这一棵
   parquet 树。已核实 sparsh 为 30 列、`capture`/`frame_idx` 非空，属 tier-1，
   且其 `I_MIN = 12` 在 legacy 脚本中明写，可反过来校验 Task 10 的反推工具。
