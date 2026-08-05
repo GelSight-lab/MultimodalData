@@ -43,3 +43,10 @@ Thumbs.db
 
 # Logs
 *.log
+
+# Agent / editor local state
+.claude/
+
+# Large calibration artifacts (regenerable)
+twm/calibration/result/
+*.zip
