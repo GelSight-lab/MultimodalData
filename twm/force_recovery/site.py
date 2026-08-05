@@ -103,15 +103,14 @@ def build(m1: list[dict], m2: list[dict], assets: dict[str, str],
 <style>{CSS}</style></head><body>
 <header><div class="wrap">
 <h1>Recovering Force-Related Actions for the React Tactile Dataset</h1>
-<p class="sub">React records GelSight-Mini images and OptiTrack sensor poses, but —
-like all UMI-style datasets — no applied force: demonstrated pose equals achieved
-pose, so the <i>F&nbsp;=&nbsp;k(target&nbsp;−&nbsp;actual)</i> channel of a stiffness
-controller is identically zero, and contact-rich pressure cannot be reproduced from
-the actions alone. Two methods, implemented and evaluated on the released data,
-put it back.</p>
+<p class="sub">React records GelSight-Mini images and OptiTrack poses — but, like
+all UMI-style data, no applied force: demonstrated pose equals achieved pose, so
+replaying the actions presses with zero intended force. Two methods put it back:
+tactile-estimated normal force, and DexForce-style force-informed action targets.</p>
 <div class="pills"><span class="pill">GelSight Mini (markerless gel)</span>
 <span class="pill">no F/T sensor</span><span class="pill">no force ground truth</span>
 <span class="pill">dataset: yxma/React</span>
+<a class="pill" href="method.html" style="text-decoration:none;color:#ffd9a0;border:1px solid rgba(255,255,255,.3)">→ method in one page</a>
 <a class="pill" href="actions.html" style="text-decoration:none;color:#ffd9a0;border:1px solid rgba(255,255,255,.3)">→ action processing deep-dive</a></div>
 </div></header>
 <div class="wrap">
