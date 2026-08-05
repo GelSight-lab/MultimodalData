@@ -111,7 +111,8 @@ the actions alone. Two methods, implemented and evaluated on the released data,
 put it back.</p>
 <div class="pills"><span class="pill">GelSight Mini (markerless gel)</span>
 <span class="pill">no F/T sensor</span><span class="pill">no force ground truth</span>
-<span class="pill">dataset: yxma/React</span></div>
+<span class="pill">dataset: yxma/React</span>
+<a class="pill" href="actions.html" style="text-decoration:none;color:#ffd9a0;border:1px solid rgba(255,255,255,.3)">→ action processing deep-dive</a></div>
 </div></header>
 <div class="wrap">
 
