@@ -844,13 +844,21 @@ def maybe_swap_channels(rgb: np.ndarray, mode: str) -> np.ndarray:
 
 
 def phash(rgb: np.ndarray) -> int:
-    """8x8 DCT-low-frequency perceptual hash as a 64-bit int."""
+    """8x8 DCT-low-frequency perceptual hash as a 64-bit int.
+
+    `dct1` mirrors along axis 0 (`x[::-1]`) while concatenating along
+    axis -1. That is not the axis pairing a textbook DCT-II mirror uses,
+    but it is exactly what produced every dedupe decision in the published
+    release, so it is reproduced verbatim. Changing it to the "correct"
+    `x[..., ::-1]` yields a hash 20 bits different out of 64 -- a different
+    hash function, and a different dataset.
+    """
     im = Image.fromarray(rgb).convert("L").resize((32, 32), Image.LANCZOS)
     a = np.array(im, dtype=np.float32)
 
     def dct1(x: np.ndarray) -> np.ndarray:
         return np.fft.fft(
-            np.concatenate([x, x[..., ::-1]], axis=-1)
+            np.concatenate([x, x[::-1]], axis=-1)
         ).real[..., :x.shape[-1]]
 
     d = dct1(dct1(a).T).T
@@ -921,8 +929,12 @@ def test_phash_matches_legacy(legacy_mod):
 ```
 
 Run: `cd $GSMP && python -m pytest tests/test_filters_matches_legacy.py -v`
-Expected: 2 passed。若 `phash` 不一致，说明 Step 3 里 `dct1` 的 `x[..., ::-1]`
-与 legacy 的 `x[::-1]` 语义有别 —— 以 legacy 为准改回，并在 docstring 记录。
+Expected: 2 passed。
+
+这两个测试是 Task 5 的核心，不是形式。已验证：`dct1` 里若把 `x[::-1]`
+"整理"成看起来更对的 `x[..., ::-1]`，同一张图的 phash 会差 20 bit（共 64 bit）
+—— 那是另一个哈希函数，会产生另一套去重决策。legacy 的写法按定义就是基准，
+因为它生成了已发布的数据。不要改。
 
 - [ ] **Step 6: 提交**
 
@@ -1297,6 +1309,30 @@ def test_per_touch_median_uses_head_of_each_touch():
     assert b.mean() == pytest.approx(3.0)
 
 
+def test_explicit_reference_reads_the_shipped_blank(tmp_path):
+    from PIL import Image
+
+    ref = tmp_path / "blank.png"
+    Image.fromarray(np.full((80, 120, 3), 33, dtype=np.uint8)).save(ref)
+    b = baseline.ExplicitReference(ref).compute([])
+    assert b.shape == (40, 60)
+    assert b.mean() == pytest.approx(33.0, abs=1.0)
+
+
+def test_explicit_reference_ignores_the_frames_it_is_given():
+    """The reference is the baseline; frames must not influence it."""
+    from PIL import Image
+    import tempfile, pathlib
+
+    with tempfile.TemporaryDirectory() as d:
+        ref = pathlib.Path(d) / "blank.png"
+        Image.fromarray(np.full((80, 120, 3), 33, dtype=np.uint8)).save(ref)
+        s = baseline.ExplicitReference(ref)
+        np.testing.assert_array_equal(
+            s.compute([]), s.compute(_frames([250] * 20))
+        )
+
+
 def test_no_baseline_returns_none():
     assert baseline.NoBaseline().compute(_frames([1, 2, 3])) is None
 
@@ -1418,6 +1454,26 @@ class PerTouchMedian(BaselineStrategy):
 
     def compute(self, frames: Sequence[np.ndarray]) -> Optional[np.ndarray]:
         return _median_of(list(frames)[: self.n])
+
+
+class ExplicitReference(BaselineStrategy):
+    """Baseline read from a gel-at-rest reference image shipped upstream.
+
+    py3DCal ships `blank_images/blank.png`. The legacy iterator uses it
+    directly and never computes a median -- PIPELINE.md's claim that
+    threedcal uses a "cross-image median over a random 200-frame sample" is
+    simply wrong. Verified against legacy/make_parquet_v2.py:529-547.
+    """
+
+    def __init__(self, path: "os.PathLike[str] | str") -> None:
+        self.path = path
+
+    def compute(self, frames: Sequence[np.ndarray]) -> Optional[np.ndarray]:
+        from PIL import Image
+
+        blank = np.asarray(Image.open(self.path).convert("L"), dtype=np.float32)
+        h, w = blank.shape
+        return blank[h // 4:3 * h // 4, w // 4:3 * w // 4]
 
 
 class NoBaseline(BaselineStrategy):
@@ -1585,6 +1641,16 @@ class SourceSpec:
     a fourth (12 real / 10 sim), so no default can be justified. Each source
     declares the value recovered from the published release by
     tools/recover_imin.py.
+
+    `rng_seed` seeds the runner's background-keep draw. Legacy seeded every
+    iterator explicitly -- mostly `random.Random(0)`, but
+    `make_parquet_v2.py:234` uses `random.Random(42)`. Reproducing a
+    source's kept set requires its actual seed, so copy it from the legacy
+    iterator rather than assuming 0.
+
+    `touch_window_keep` is the per-frame Bernoulli keep probability applied
+    inside a touch window. It is 1.0 everywhere except real_tactile_mnist,
+    which keeps 0.30 (~2 frames per touch).
     """
 
     name: str
@@ -1599,6 +1665,8 @@ class SourceSpec:
     phash_lookback: int = 30
     budget: int = 200_000
     bg_keep_rate: float = 0.015
+    rng_seed: int = 0
+    touch_window_keep: float = 1.0
     resolution: Optional[Tuple[int, int]] = None
     notes: str = ""
 
@@ -2468,14 +2536,14 @@ def run(
     units: Iterable[Tuple[str, Sequence[FrameRecord]]],
     writer: Optional[ShardWriter] = None,
     dry_run: bool = False,
-    seed: int = 0,
+    seed: Optional[int] = None,
 ) -> RunResult:
     """Process `units`, where each unit is (unit_id, frames_of_that_unit).
 
     A "unit" is whatever the baseline strategy is scoped to: a capture, an
     episode, a touch, or the whole source for global strategies.
     """
-    rng = random.Random(seed)
+    rng = random.Random(spec.rng_seed if seed is None else seed)
     kept: Set[Key] = set()
     n_candidates = 0
     n_bg = 0
@@ -2509,6 +2577,10 @@ def run(
                 if rng.random() >= spec.bg_keep_rate:
                     continue
                 is_bg = True
+            elif spec.touch_window_keep < 1.0:
+                # Bernoulli thinning inside the touch window (RTM only).
+                if rng.random() >= spec.touch_window_keep:
+                    continue
 
             rgb = filters.maybe_swap_channels(rec.rgb, spec.channel_mode)
 
@@ -2794,11 +2866,21 @@ EOF
 
 每个源对应的 baseline 策略与 legacy 行数：
 
-| 源 | baseline | legacy iter |
+> ⚠️ **下表的 baseline 一列是指示性的，以 legacy 代码为准。**
+> 它最初抄自 `PIPELINE.md`，而该文档已被证明不可靠——它声称 `threedcal` 用
+> "cross-image median over a random 200-frame sample"，实际代码
+> （`make_parquet_v2.py:529-547`）读的是上游自带的 `blank_images/blank.png`，
+> 根本不算中位数。**每个源实现前必须先读 legacy 行区间**，以代码所写为准；
+> 与本表不符时改本表，并在 commit 里记录差异。
+>
+> 同样必须逐源从 legacy 抄出、不得假设默认值的还有：
+> `rng_seed`（多数为 0，`:234` 为 42）、`a_min`、`touch_window_keep`。
+
+| 源 | baseline（待核实） | legacy iter |
 |---|---|---|
-| `real_tactile_mnist` | `PerTouchMedian(5)` | `make_parquet_v2.py:207-307` |
+| `real_tactile_mnist` | `PerTouchMedian(5)`，另有 `touch_window_keep=0.30`、`rng_seed=42` | `make_parquet_v2.py:207-307` |
 | `feelanyforce` | `GlobalMedian(126)` | `make_parquet_v2.py:308-369` |
-| `threedcal` | `GlobalMedian(200)` | `make_parquet_v2.py:529-576` |
+| `threedcal` | **`ExplicitReference(blank.png)`** — 已核实，非中位数 | `make_parquet_v2.py:529-576` |
 | `tacquad` | `PerGroupMedian(60)` | `make_parquet_v2.py:457-528` |
 | `sim_tactile_mnist` | `PerTouchMedian(32)` | `make_parquet_v2.py:433-446` |
 | `sim_starstruck` | `PerTouchMedian(32)` | `make_parquet_v2.py:447-456` |
