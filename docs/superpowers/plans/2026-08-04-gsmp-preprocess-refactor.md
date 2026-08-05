@@ -18,6 +18,31 @@
 - 提交信息结尾附：`Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>`
 - 新仓库路径常量统一走 `gsmp.config`，任何模块内不得出现硬编码绝对路径。
 
+## 范围：三棵 parquet 树，本计划覆盖两棵
+
+数据盘上 `gelsight-mini-pretrain` 实际存在三棵已发布的 parquet 树：
+
+| 目录 | HF 仓库 | 源数 | 本计划 |
+|---|---|---:|---|
+| `mini_data_parquet/` | `yxma/gelsight-mini-pretrain` | 12 | **覆盖** |
+| `mini_data_parquet_nc/` | `yxma/gelsight-mini-pretrain-nc` | 1 (`sparsh`) | **覆盖** |
+| `mini_data_parquet_video/` | 未单独发布 | 3 | **不覆盖，见下** |
+
+**视频子集不在本计划范围内。** `mini_data_parquet_video/` 含 `gelslam`、
+`real_tactile_mnist`、`tactile_tracking` 三个源的保序视频版本，由
+`legacy/make_parquet_video.py` 生成。它的 schema 比主 schema 多 4 列
+（`sequence_id`、`frame_in_seq`、`sequence_length`、`fps`），而 Task 4 的
+`gsmp.schema.SCHEMA` 是固定 30 列。
+
+把这个变体塞进本计划会迫使 schema 层支持多态，动摇"唯一真源"这个前提——
+而这正是本次重构要建立的东西。因此：
+
+- `legacy/make_parquet_video.py` 随 Task 2 逐字导入，**不迁移、不删除**
+- Task 18 的 README 须明确记录该子集当前状态为"未迁移"
+- 视频子集的处理另开一个 spec，届时先解决 schema 多态的设计问题
+
+任何任务都不得为了容纳视频子集而修改 `gsmp.schema.SCHEMA`。
+
 ## 两个前置事实（实施前必读）
 
 **事实 1 — `i_min` 四处取值不一致：**
@@ -1804,14 +1829,21 @@ from gsmp.tools_imin import estimate_from_intensities  # noqa: E402
 ALL_SOURCES = [
     "gelslam", "tactile_tracking", "real_tactile_mnist", "feelanyforce",
     "threedcal", "tacquad", "unit", "sim_tactile_mnist", "sim_starstruck",
-    "feats", "fota_labeled", "fota_unlabeled",
+    "feats", "fota_labeled", "fota_unlabeled", "sparsh",
 ]
+
+#: Sources published to the NC repo rather than the main one. Until the
+#: source modules exist (Task 13-16) the registry cannot answer this, so the
+#: tools carry the mapping. After Task 16, spec.get(name).license_repo is
+#: authoritative and this constant should agree with it.
+SOURCE_LICENSE_REPO = {"sparsh": "nc"}
 
 
 def sample_intensities(source: str, n: int) -> np.ndarray:
     """Decode up to n published frames and measure intensity vs a per-capture
     median baseline built from that same shard."""
-    shards = sorted(glob.glob(str(config.published_dir(source) / "*.parquet")))
+    repo = SOURCE_LICENSE_REPO.get(source, "main")
+    shards = sorted(glob.glob(str(config.published_dir(source, repo) / "*.parquet")))
     if not shards:
         raise FileNotFoundError(f"no shards for {source}")
 
@@ -1877,8 +1909,12 @@ Run:
 ```bash
 cd $GSMP && python tools/recover_imin.py --all --sample 2000 | tee docs/imin_recovered.md
 ```
-Expected: 12 行输出。**人工审阅**：任何 verdict 为 `ambiguous` 的源，
-在 Task 12 中一律归入 tier-2（原样搬），不得猜测其 i_min。
+Expected: 13 行输出（12 个主仓库源 + sparsh）。**人工审阅**：任何 verdict 为
+`ambiguous` 的源，在 Task 12 中一律归入 tier-2（原样搬），不得猜测其 i_min。
+
+参考锚点：`legacy/ingest_sparsh.py` 顶部显式写了 `I_MIN = 12`。若工具对
+sparsh 反推出的 p01 明显偏离 12，说明反推方法本身有问题（而非 sparsh 特殊），
+应先查工具再继续——这是唯一一个有独立可信来源可交叉验证的源。
 
 - [ ] **Step 7: 提交**
 
@@ -2161,22 +2197,26 @@ from gsmp import schema  # noqa: E402
 SOURCES = [
     "gelslam", "tactile_tracking", "real_tactile_mnist", "feelanyforce",
     "threedcal", "tacquad", "unit", "sim_tactile_mnist", "sim_starstruck",
-    "feats", "fota_labeled", "fota_unlabeled",
+    "feats", "fota_labeled", "fota_unlabeled", "sparsh",
 ]
+
+#: Must stay in sync with tools/recover_imin.py::SOURCE_LICENSE_REPO.
+SOURCE_LICENSE_REPO = {"sparsh": "nc"}
 
 
 def main() -> int:
-    print("| source | published cols | join key | tier |")
-    print("|---|---:|---|---|")
+    print("| source | repo | published cols | join key | tier |")
+    print("|---|---|---:|---|---|")
     for src in SOURCES:
+        repo = SOURCE_LICENSE_REPO.get(src, "main")
         try:
-            cols = schema.published_columns(src)
-            join = schema.has_join_key(src)
+            cols = schema.published_columns(src, repo)
+            join = schema.has_join_key(src, repo)
         except FileNotFoundError:
-            print(f"| {src} | - | MISSING | skip |")
+            print(f"| {src} | {repo} | - | MISSING | skip |")
             continue
         tier = "tier-1" if join else "tier-2"
-        print(f"| {src} | {len(cols)} | {'yes' if join else 'NO'} | {tier} |")
+        print(f"| {src} | {repo} | {len(cols)} | {'yes' if join else 'NO'} | {tier} |")
     return 0
 
 
@@ -2190,8 +2230,10 @@ Run:
 ```bash
 cd $GSMP && python tools/audit_sources.py | tee /tmp/tiers.md && cat /tmp/tiers.md
 ```
-Expected: 12 行表格。已知 `feats` 的 `frame_idx` 全为 NULL、`fota_*` 无该列，
-故三者必为 tier-2。若 `gelslam`/`tactile_tracking` 不是 tier-1，停止并报告。
+Expected: 13 行表格。已知 `feats` 的 `frame_idx` 全为 NULL、`fota_*` 无该列，
+故三者必为 tier-2；`sparsh` 已核实为 30 列且 `capture`/`frame_idx` 均非空，
+必为 tier-1。若 `gelslam`/`tactile_tracking`/`sparsh` 中任一不是 tier-1，
+停止并报告——说明 `has_join_key` 的判定有问题。
 
 - [ ] **Step 3: 写入 docs/source_tiers.md**
 
@@ -2736,7 +2778,7 @@ EOF
 
 对 `docs/source_tiers.md` 中每个剩余的 tier-1 源重复 Task 14 的流程。
 候选（以实际审计结果为准）：`real_tactile_mnist`、`feelanyforce`、`threedcal`、
-`tacquad`、`unit`、`sim_tactile_mnist`、`sim_starstruck`。
+`tacquad`、`unit`、`sim_tactile_mnist`、`sim_starstruck`、`sparsh`。
 
 **Files:**
 - Create: `src/gsmp/sources/<name>.py`（每源一个）
@@ -2756,6 +2798,7 @@ EOF
 | `sim_tactile_mnist` | `PerTouchMedian(32)` | `make_parquet_v2.py:433-446` |
 | `sim_starstruck` | `PerTouchMedian(32)` | `make_parquet_v2.py:447-456` |
 | `unit` | `FirstNFrames(5)` | `legacy/ingest_unit.py` |
+| `sparsh` | `PerGroupMedian(100)` | `legacy/ingest_sparsh.py` |
 
 - [ ] **Step 1: 逐源实现**
 
@@ -2764,6 +2807,22 @@ EOF
 `dry_run_keys`）→ `i_min` 取自 `docs/imin_recovered.md` 对应行的 p01。
 
 `sim_*` 两源注意 `domain="sim"`；`unit` 注意 `gel_variant="markered"`。
+
+**`sparsh` 三处与其他源不同，容易写错：**
+
+1. `license_repo="nc"` — 输出到 NC 仓库（CC-BY-NC-4.0，不能混进主仓库）。
+2. `split` 存的是 indenter 名（`flat`/`sharp`/`sphere`），不是 `train`/`val`。
+   已发布分片也按 indenter 命名（`flat-00000-of-00001.parquet`），
+   与其他源按 split 命名的惯例不同。保持现状，不要"修正"。
+3. 原始数据是 pickle 而非视频：
+   `mini_data/markerless_nc/SparshGelSight/{indenter}/batch_*/dataset_gelsight_NN.pkl`，
+   每个 pkl 是一个 JPEG bytes 列表（~5000 帧）。**必须跳过 `org_dataset_*.pkl`**
+   （那是未过滤的原始数据），legacy 脚本第 64-65 行有此逻辑。
+   `capture` 构造为 `{indenter}_batch_{N}_f{NN}`。
+
+`i_min` 交叉验证：`legacy/ingest_sparsh.py` 显式写 `I_MIN = 12`。若
+`docs/imin_recovered.md` 对 sparsh 给出的 p01 与 12 相差超过 2，
+**先停下来查反推工具**，不要直接采信任一方。
 
 - [ ] **Step 2: 逐源跑回归**
 
@@ -3174,6 +3233,20 @@ mini_data_parquet/scripts/ 含 8 个 5-17 的文件，其中 make_parquet_v2.py
 如何跑一个源、`tools/` 各脚本用途、tier-1/tier-2 的含义与当前分布
 （引用 `docs/source_tiers.md`）。
 
+README 须含一节 "Not migrated"，明确记录：
+
+```markdown
+## Not migrated
+
+`legacy/make_parquet_video.py` and the sequence-preserving video subset at
+`mini_data_parquet_video/` (gelslam, real_tactile_mnist, tactile_tracking)
+are imported verbatim and left alone. That subset's schema carries four
+extra columns (sequence_id, frame_in_seq, sequence_length, fps) that the
+30-column `gsmp.schema.SCHEMA` does not model. Supporting it needs a
+polymorphic schema layer, which is a separate design question — see the
+scope section of docs/superpowers/plans/2026-08-04-gsmp-preprocess-refactor.md.
+```
+
 - [ ] **Step 6: 全量测试**
 
 Run: `cd $GSMP && python -m pytest -q`
@@ -3296,8 +3369,22 @@ EOF
 | MultimodalData 提交 | Task 1 |
 | 数据只读 | Global Constraints；Task 19 显式不执行写操作 |
 
-**新增（spec 未预见，审计中发现）：** Task 19 — FoTA 26 列 schema 缺陷。
-该缺陷在写 spec 时未知，是 Task 4 起草测试时查证已发布 parquet 发现的。
+**新增（spec 未预见，审计中发现）：**
+
+- Task 19 — FoTA 26 列 schema 缺陷。写 spec 时未知，是 Task 4 起草测试时
+  查证已发布 parquet 发现的。
+- `sparsh`（NC 仓库）纳入范围。spec 只写了"12 个源"，遗漏了 NC 仓库这一棵
+  parquet 树。已核实 sparsh 为 30 列、`capture`/`frame_idx` 非空，属 tier-1，
+  且其 `I_MIN = 12` 在 legacy 脚本中明写，可反过来校验 Task 10 的反推工具。
+- 视频子集明确排除。spec 未提及 `mini_data_parquet_video/`；因其 schema 多 4 列，
+  纳入会迫使 schema 层多态化，与本次重构要建立的"唯一真源"冲突，故另开 spec。
+
+**Type consistency（补充）：** `SOURCE_LICENSE_REPO` 在 Task 10 与 Task 12 的
+两个工具中各定义一份，二者必须一致（Task 12 的注释已声明）。Task 16 落地后，
+`spec.get(name).license_repo` 成为权威来源，两处常量应与之相符。
+`config.published_dir(source, license_repo)` 与 `schema.published_columns(
+source, license_repo)`、`schema.has_join_key(source, license_repo)`
+三者的第二参数语义一致，默认均为 `"main"`。
 
 **Type consistency:** `SourceSpec` 字段名在 Task 9 定义后，于 Task 13-16
 的所有源模块中一致使用（`i_min`、`a_min`、`phash_dist`、`phash_lookback`、
