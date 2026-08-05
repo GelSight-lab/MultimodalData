@@ -1,0 +1,190 @@
+# gelsight-mini-pretrain 预处理代码重构 — 设计
+
+日期：2026-08-04
+状态：已批准，待实施计划
+
+## 背景
+
+`gelsight-mini-pretrain`（HF: `yxma/gelsight-mini-pretrain`，~853K 帧，12 个源）
+的全部预处理代码目前以 **40 个未跟踪脚本**的形式散落在
+`/home/yxma/MultimodalData/` 仓库根目录，与机器人采集端代码（`twm/`、
+`camera_stream/`、`probing_panda/`）混在一起。
+
+### 现状问题
+
+1. **无版本控制。** 85 个未跟踪条目，其中 ~40 个是本项目的全部实现。
+2. **代码与数据分离。** 代码在 NVMe（`/` 已 100% 满，仅剩 3.8G），
+   数据在 `/media/yxma/Disk1/yuxiang/mini_data*`（805G 原始 + 8G parquet）。
+3. **单一真源缺失导致漂移。** `mini_data_parquet/scripts/` 存在一份 5-17 的
+   陈旧副本（`make_parquet_v2.py` 32,592 字节 vs 仓库内 40,362 字节），
+   且该副本已随数据集发布到 HF。
+4. **抽象断裂。** `pipeline.py`（5-20）与 `make_parquet_v2.py`（5-18）是
+   同一套抽象的两代，前者 `sys.path.insert` 反向 import 后者的 `SCHEMA`，
+   构成循环依赖。
+5. **文档与实现脱节。** `PIPELINE.md` 自称 v4，实际已有 `finalize_v9.sh`、
+   `fix_channel_order.py` 等后续变更。该文档开篇声明"文档是唯一真源"，
+   此声明当前不成立。
+
+### 核心发现
+
+`SKIP_EMPTY_FILTER` 中 9 个源有 7 个为 `True`。PIPELINE.md 宣称的
+"统一 area+intensity 过滤"实际只对 `gelslam`、`tactile_tracking` 两个源
+由通用驱动器执行；其余 7 个各自在 iterator 内部用不同 baseline 策略完成过滤。
+
+这个布尔开关掩盖的真实结构是：**12 个源存在 6 种不同的 baseline 求法**。
+`pipeline.py` 假设驱动器负责过滤，该假设对 7/9 的源不成立——这解释了
+为何它只被 2 个最新源（touchandgo、tvl）采用：老源套不进去。
+
+## 目标
+
+- 预处理代码进入版本控制，与数据同盘。
+- 每个源的完整行为在单个模块内可一眼读完，消灭散落各处的参数字典。
+- 新增源 = 新增一个文件。
+- 保留历史修复脚本的可追溯性，但不为其投入重写成本。
+
+## 非目标
+
+- 不重跑任何已发布数据的生成流程。
+- 不修改 HF 上现有 parquet。
+- 不重构 `twm/scripts/`（React 数据集构建流程）——单独一个 spec。
+- 805G 原始数据与 8G parquet 全程只读。
+
+## 方案
+
+### 决策记录
+
+| 决策 | 选择 | 理由 |
+|---|---|---|
+| 仓库边界 | 数据盘上独立 git 仓库 | 代码与数据同盘；MultimodalData 只留采集端 |
+| 重构深度 | 分层：活代码重构 + 历史归档 | 一次性修复已生效，重写无收益 |
+| 范围 | 仅 mini-pretrain | twm/scripts/ 另开 spec |
+| 源注册方式 | 声明式 `SourceSpec` | 真正的债是参数散落，非文件散落 |
+
+### 目标结构
+
+```
+/media/yxma/Disk1/yuxiang/gelsight-mini-pretrain/     # 新 git 仓库
+├── src/gsmp/
+│   ├── config.py          # 所有路径 ← 环境变量 + 默认值
+│   ├── schema.py          # 统一 30 列 SCHEMA（唯一真源）
+│   ├── filters.py         # grey_center / passes_filter / channel_check / phash
+│   ├── encode.py          # JPEG q92
+│   ├── writer.py          # ShardWriter：分块 binary、2GB 规避、pickle 恢复点
+│   ├── baseline.py        # BaselineStrategy 的 6 种实现
+│   ├── spec.py            # SourceSpec dataclass
+│   ├── runner.py          # 通用驱动：probe → filter → dedupe → budget → write
+│   └── sources/           # 12 个源，每源一个模块（SPEC + iter_frames）
+├── tools/                 # 报表 / 样例网格 / 发布
+├── probes/                # 诊断脚本
+├── archive/               # 一次性修复脚本原样封存 + README 索引
+├── docs/PIPELINE.md       # 更新到当前真实状态
+└── README.md / SOURCES.md
+```
+
+`archive/` 的取舍：`fix_channel_order.py`、`redo_fota_unlabeled.py`、
+`reprocess_*.py` 等 11 个脚本的修复已烘进已发布数据。重写无收益，
+删除则失去"数据为何长这样"的追溯链。原样封存 + 索引说明是最低成本的正确做法。
+
+### 数据流
+
+```
+iter_frames()  →  BaselineStrategy  →  contact filter  →  channel norm
+                                                              ↓
+                   parquet shards  ←  budget cap  ←  phash dedupe
+```
+
+### SourceSpec
+
+```python
+@dataclass(frozen=True)
+class SourceSpec:
+    name: str
+    domain: Literal["real", "sim"]
+    gel_variant: Literal["markered", "markerless", "mixed"]
+    license_repo: Literal["main", "nc"]      # 取代 NC_SOURCES 集合
+    baseline: BaselineStrategy               # 取代 SKIP_EMPTY_FILTER
+    a_min: int = 40
+    i_min: float = 15                        # 取代 VALIDITY_THRESH dict
+    channel_mode: Literal["auto","rgb","bgr","mixed"] = "auto"
+    phash_dist: int | None = 4               # None = 不去重
+    phash_lookback: int = 30
+    budget: int = 200_000
+    resolution: tuple[int,int] | None = None # None = 保持原生
+```
+
+四个字典（`SKIP_EMPTY_FILTER`、`VALIDITY_THRESH`、`NC_SOURCES`、
+`SOURCE_ITERS`）因此全部消失。
+
+### BaselineStrategy
+
+统一接口 `compute(frames) -> np.ndarray | None`，覆盖实际存在的 6 种：
+
+| 策略 | 使用的源 |
+|---|---|
+| `PerCaptureMedian(n=30)` | fota_labeled, fota_unlabeled |
+| `FirstNFrames(n=10)` | gelslam, tactile_tracking, unit(n=5) |
+| `GlobalMedian(n)` | threedcal(200), feelanyforce, faf |
+| `PerGroupMedian(key)` | feats(按 indenter), tacquad(按 data_* split) |
+| `PerTouchMedian(n=5)` | real_tactile_mnist, sim_tactile_mnist, sim_starstruck |
+| `ForceThreshold(0.4)` | feats（有 marker，像素 diff 不可靠，改用 \|f_z\|） |
+
+## 回归验证
+
+抽出 7 个源内嵌的过滤逻辑等于改动已发布数据的生成路径。不依赖
+"读代码觉得等价"来保证正确性。
+
+已发布的 8G parquet 即旧行为的 ground truth——每行带 `capture` + `frame_idx`：
+
+```
+published:  SELECT capture, frame_idx FROM <source>/*.parquet   → 集合 A
+new code:   跑新路径，收集保留帧                                  → 集合 B
+断言:       A △ B 只能落在 1.5% 背景随机保留的部分内
+```
+
+`BG_KEEP_RATE=0.015` 是随机的，精确相等不可能。断言分两层：
+
+- **确定性部分**（通过 area+intensity 的帧）必须完全一致
+- **随机部分**（未通过但被保留的）仅校验数量在容差内
+
+### 分级门槛
+
+每个源在重构前先做可行性检查：该源 parquet 是否有可 join 的
+`capture` + `frame_idx`。
+
+- **有** → 重构到新抽象，附回归证明
+- **无** → 原样搬进 `sources/`，不动内部逻辑，仅包一层 `SourceSpec`
+
+预计 `feats`（力过滤，无像素判据）与 `fota_unlabeled`（经历 v9 通道修复，
+中间态无从复现）落入第二档。
+
+交付物是分级的：一部分源真正统一并有回归证明，一部分源仅被规整位置与声明。
+不将后者表述为前者。
+
+## 实施顺序
+
+先原样搬，再重构——使每步重构可 diff。
+
+```
+1. MultimodalData 提交
+   · twm/scripts/{apply_tactile_shift,rebuild_tactile_from_h5_shifted,
+                  upload_tactile_correction}.py
+   · .gitignore 补: .claude/  *.zip  twm/calibration/result/
+   · git rm --cached probing_panda.egg-info/
+
+2. 新仓库 initial commit = 40 个文件逐字复制，不改一行
+
+3. 逐步重构，每步一个 commit：
+   config → schema → filters → writer → baseline → spec → runner → 逐源迁移
+
+4. 收尾：删除 mini_data_parquet/scripts/ 陈旧副本，
+        改由发布脚本从新仓库同步（消灭漂移源头）
+```
+
+## 风险
+
+| 风险 | 缓解 |
+|---|---|
+| 重构改变已发布数据的生成语义 | 回归验证 + 分级门槛；无基准则不重构 |
+| 数据盘 92% 满 | 新仓库仅代码（几 MB） |
+| 数据盘为机械盘，git 操作较慢 | 可接受；仓库体积小 |
+| 抽取内嵌过滤逻辑时引入静默偏差 | 确定性部分要求完全一致，不设容差 |
