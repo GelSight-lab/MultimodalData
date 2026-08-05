@@ -24,6 +24,8 @@
 5. **文档与实现脱节。** `PIPELINE.md` 自称 v4，实际已有 `finalize_v9.sh`、
    `fix_channel_order.py` 等后续变更。该文档开篇声明"文档是唯一真源"，
    此声明当前不成立。
+6. **关键参数四处取值不一。** `i_min` 在两代代码与两份文档中分别为
+   10 / 12 / 15 / 12-10，且发布给用户的 README 值与主实现不符。详见下文。
 
 ### 核心发现
 
@@ -104,7 +106,7 @@ class SourceSpec:
     license_repo: Literal["main", "nc"]      # 取代 NC_SOURCES 集合
     baseline: BaselineStrategy               # 取代 SKIP_EMPTY_FILTER
     a_min: int = 40
-    i_min: float = 15                        # 取代 VALIDITY_THRESH dict
+    i_min: float                             # 无默认值，见下 — 取代 VALIDITY_THRESH
     channel_mode: Literal["auto","rgb","bgr","mixed"] = "auto"
     phash_dist: int | None = 4               # None = 不去重
     phash_lookback: int = 30
@@ -114,6 +116,24 @@ class SourceSpec:
 
 四个字典（`SKIP_EMPTY_FILTER`、`VALIDITY_THRESH`、`NC_SOURCES`、
 `SOURCE_ITERS`）因此全部消失。
+
+#### i_min 无默认值 — 一个必须先解决的矛盾
+
+同一个参数在四处取值不同：
+
+| 出处 | 值 |
+|---|---|
+| `make_parquet_v2.py:51` | `I_MIN_DEFAULT = 10` |
+| `pipeline.py:188` | `i_min: float = 12.0` |
+| `PIPELINE.md:90` | 15（FoTA 为 10） |
+| `_readme_new.md:145`（已发布的 HF README） | 12 real / 10 sim |
+
+已发布数据实际使用的值无法从代码或文档判定，且发布给用户的 README
+声称的值（12/10）与主实现（10）和主文档（15）均不一致。
+
+因此 `i_min` **不设默认值**，每个源必须显式声明。实际值须逐源从已发布
+parquet 反推（对已知帧重算 area/intensity，找出与保留决策一致的阈值），
+不得从任一现有文档抄写。这是重构的前置步骤，非事后清理。
 
 ### BaselineStrategy
 
