@@ -103,6 +103,7 @@ Cuts single-frame spikes from 4–8% to ≈0.</p>
 <tr><td>vs FEA ground truth (FEATS)</td><td class="ok">ρ = 0.70</td><td>transfer: marker gel, ≤30 N, normal loading</td></tr>
 <tr><td>unseen indenter shapes</td><td class="ok">ρ = 0.85</td><td>same, shape generalization</td></tr>
 <tr><td>vs press depth (FoTa/T3, 61 captures)</td><td class="ok">ρ median 0.43 markerless / 0.24 markered, 84% positive</td><td>third-party Panda rig, household objects; no force GT — pose press-depth as monotone proxy (includes free approach, so ρ is attenuated)</td></tr>
+<tr><td>vs F/T ground truth (FoTa cnc_Mini, 400 frames)</td><td class="ok">ρ = 0.34 pooled, 0.49 central presses; all 6 probes positive</td><td>CNC gantry + F/T sensor, markerless Mini, third-party rig. Fitted scale 1.08 N/mm³ vs 1.89 on FEATS — inside the stated 2–4× cross-sensor band. Only 4 truly free frames exist for referencing, and 62% of presses sit near the pad border where illumination falloff degrades reconstruction (controlled same-probe comparisons are cleanly monotone)</td></tr>
 <tr><td>React internal (72 sides)</td><td class="ok">SNR p50 ≈ 1200, ρ = 0.84 vs intensity</td><td>in-domain, per-episode references</td></tr>
 <tr><td>shear-dominant contact</td><td class="warn">ρ = −0.15</td><td>out of scope — stated blind spot</td></tr>
 <tr><td>cross-sensor absolute scale</td><td class="warn">drifts 2–4×</td><td>relative force within an episode is the reliable part</td></tr>
@@ -188,6 +189,12 @@ Cuts single-frame spikes from 4–8% to ≈0.</p>""",
     ("<td>same, shape generalization</td>", "<td>同上,形状泛化</td>"),
     ("<td>vs press depth (FoTa/T3, 61 captures)</td>",
      "<td>对按压深度(FoTa/T3,61 captures)</td>"),
+    ("<td>vs F/T ground truth (FoTa cnc_Mini, 400 frames)</td>",
+     "<td>对 F/T 真值(FoTa cnc_Mini,400 帧)</td>"),
+    ('<td class="ok">ρ = 0.34 pooled, 0.49 central presses; all 6 probes positive</td>',
+     '<td class="ok">混合 ρ = 0.34,中心区按压 0.49;6 个探头全部为正</td>'),
+    ("<td>CNC gantry + F/T sensor, markerless Mini, third-party rig. Fitted scale 1.08 N/mm³ vs 1.89 on FEATS — inside the stated 2–4× cross-sensor band. Only 4 truly free frames exist for referencing, and 62% of presses sit near the pad border where illumination falloff degrades reconstruction (controlled same-probe comparisons are cleanly monotone)</td>",
+     "<td>CNC 龙门 + F/T 传感器,无点 Mini,第三方平台。拟合刻度 1.08 N/mm³ 对 FEATS 的 1.89——在声明的 2–4× 跨传感器带内。可作参考的真自由帧只有 4 帧;62% 的按压贴近 gel 边缘,照明衰减使重建退化(同探头受控对比完全单调)</td>"),
     ("<td class=\"ok\">ρ median 0.43 markerless / 0.24 markered, 84% positive</td>",
      '<td class="ok">ρ 中位 0.43 无点 / 0.24 有点,84% 为正</td>'),
     ("<td>third-party Panda rig, household objects; no force GT — pose press-depth as monotone proxy (includes free approach, so ρ is attenuated)</td>",
