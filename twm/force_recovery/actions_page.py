@@ -119,6 +119,7 @@ episode data, and what the transformation is worth.</p>
 <span class="pill">36 episodes · 72 sensor-sides</span>
 <span class="pill">no F/T sensor involved</span>
 <span class="pill"><a href="index.html" style="color:inherit;text-decoration:none">↖ full methods &amp; validation</a></span>
+<span class="pill"><a href="actions_zh.html" style="color:inherit;text-decoration:none">中文版</a></span>
 </header>
 
 <h2>How an action is processed</h2>
@@ -294,5 +295,153 @@ setI(Math.round(N*0.5));
     return out
 
 
+# Ordered exact replacements EN -> ZH. Every pair is asserted to hit, so an
+# edit to the English template that would silently desynchronise the Chinese
+# page fails the build instead.
+ZH = [
+    ('<html lang="en">', '<html lang="zh-CN">'),
+    ("<title>Force-Informed Actions — React Dataset</title>",
+     "<title>力信息化动作 — React 数据集</title>"),
+    ("family=IBM+Plex+Sans:wght@400;600&display=swap",
+     "family=IBM+Plex+Sans:wght@400;600&family=Noto+Serif+SC:wght@600;700"
+     "&family=Noto+Sans+SC:wght@400;500&display=swap"),
+    ("font-family:'IBM Plex Sans',sans-serif;line-height:1.6",
+     "font-family:'IBM Plex Sans','Noto Sans SC',sans-serif;line-height:1.75"),
+    ("h1,h2{font-family:'Fraunces',serif}",
+     "h1,h2{font-family:'Fraunces','Noto Serif SC',serif}"),
+    ('<div class="kicker">React dataset · action processing</div>',
+     '<div class="kicker">React 数据集 · 动作处理</div>'),
+    ("<h1>The missing half of the action:<br>putting force back into pose-only demonstrations</h1>",
+     "<h1>动作缺失的另一半:<br>把力还给只有位姿的演示数据</h1>"),
+    ("""<p class="sub">React's actions are computed from OptiTrack sensor poses — like all
+UMI-style data, the demonstrated pose <i>is</i> the achieved pose. A stiffness
+controller exerts <span class="mono">F&nbsp;=&nbsp;k·(target&nbsp;−&nbsp;actual)</span>,
+so replaying these actions reproduces the motion but presses with <b>zero
+intended force</b>. This page shows how each action is transformed, on real
+episode data, and what the transformation is worth.</p>""",
+     """<p class="sub">React 的动作由 OptiTrack 跟踪的传感器位姿计算而来——和所有
+UMI 类数据一样,演示位姿<i>就是</i>实际达到的位姿。刚度控制器输出
+<span class="mono">F&nbsp;=&nbsp;k·(target&nbsp;−&nbsp;actual)</span>,
+因此复现这些动作只能复现运动,按压的<b>意图力恒为零</b>。
+本页在真实 episode 数据上展示每个动作如何被变换,以及这个变换值多少。</p>"""),
+    ('<span class="pill">36 episodes · 72 sensor-sides</span>',
+     '<span class="pill">36 个 episode · 72 个传感器侧</span>'),
+    ('<span class="pill">no F/T sensor involved</span>',
+     '<span class="pill">全程无 F/T 传感器</span>'),
+    ('>↖ full methods &amp; validation</a>', '>↖ 完整方法与验证(英文)</a>'),
+    ('<a href="actions_zh.html" style="color:inherit;text-decoration:none">中文版</a>',
+     '<a href="actions.html" style="color:inherit;text-decoration:none">English</a>'),
+    ("<h2>How an action is processed</h2>", "<h2>动作是怎么被处理的</h2>"),
+    ("<small>OptiTrack, 30 Hz</small>", "<small>OptiTrack,30 Hz</small>"),
+    ("GelSight frame<small>640×480 RGB</small>", "GelSight 图像<small>640×480 RGB</small>"),
+    ("<small>depth → Winkler,<br>FEATS-calibrated</small>",
+     "<small>深度 → Winkler,<br>FEATS 定标</small>"),
+    ("<small>dual-ball calibrated axis</small>", "<small>双球标定的 gel 轴</small>"),
+    ("action target<small>virtual, past the surface</small>",
+     "动作目标<small>虚拟,穿过接触面</small>"),
+    ("""<p>The action stays a pose. In free space F̂<sub>n</sub>&nbsp;=&nbsp;0 and the target
+<i>is</i> the observed pose — nothing changes. In contact, the target moves past
+the surface along the gel normal by exactly the displacement an impedance
+controller at stiffness k needs to exert the demonstrated force. No new action
+dimension, no force interface at deployment — a DexForce-style transform
+(arXiv:2501.10356) driven by tactile-estimated rather than measured force.</p>""",
+     """<p>动作仍然是位姿。自由空间中 F̂<sub>n</sub>&nbsp;=&nbsp;0,目标<i>就是</i>观测位姿——什么都不变。
+接触时,目标沿 gel 法向越过接触面,偏移量恰好是刚度为 k 的阻抗控制器要输出演示力所需的位移。
+不新增动作维度,部署端不需要力控接口——即 DexForce 式变换(arXiv:2501.10356),
+只是驱动它的力来自触觉估计而非力传感器测量。</p>"""),
+    ("<h2>Live on real data — drag across the trace</h2>",
+     "<h2>真实数据实时演示——在曲线上拖动</h2>"),
+    ("""<p style="margin-top:0">90 s of <span class="mono">motherboard/2026-05-10/episode_000</span>
+(left sensor), centred on the strongest press. Top: estimated normal force.
+Bottom: the transform's entire effect on the action — the target's offset from
+the observed pose along the gel normal. The cyan zero-line <i>is</i> the
+original action; the sensor itself sweeps ±170 mm through this window, which
+is why the offset is drawn on its own millimetre scale.</p>""",
+     """<p style="margin-top:0"><span class="mono">motherboard/2026-05-10/episode_000</span>
+(左传感器)以最强按压为中心的 90 秒。上:估计的法向力。
+下:变换对动作的全部效果——目标相对观测位姿沿 gel 法向的偏移。
+青色零线<i>就是</i>原始动作;这段窗口里传感器本身扫过 ±170 mm,
+所以偏移单独用毫米刻度画出。</p>"""),
+    ('<span class="l-pose">observed pose = zero offset (action before)</span>',
+     '<span class="l-pose">观测位姿 = 零偏移(变换前的动作)</span>'),
+    ('<span class="l-tgt">target offset F̂/k along n̂ (action after)</span>',
+     '<span class="l-tgt">沿 n̂ 的目标偏移 F̂/k(变换后的动作)</span>'),
+    ('<span class="l-force">F̂ normal [N]</span>', '<span class="l-force">法向力 F̂ [N]</span>'),
+    ('<div class="k">F̂ normal</div>', '<div class="k">法向力 F̂</div>'),
+    ('<div class="k">target offset F̂/k</div>', '<div class="k">目标偏移 F̂/k</div>'),
+    ('<div class="k">state</div>', '<div class="k">状态</div>'),
+    ('<p class="hint">drag / hover to scrub · data is the actual per-row output, not a mock-up</p>',
+     '<p class="hint">拖动 / 悬停查看 · 数据为逐行真实输出,非示意图</p>'),
+    ("<h2>The effect, measured</h2>", "<h2>效果,用数字说话</h2>"),
+    ('<div class="lbl">free-space invariance</div>', '<div class="lbl">自由空间不变性</div>'),
+    ('max |target − pose| when F̂=0, all __NS__ sides'.replace("__NS__", "{ns}"),
+     'F̂=0 时 |target − pose| 的最大值,全部 {ns} 个侧'),
+    ('<div class="lbl">round-trip error</div>', '<div class="lbl">往返误差</div>'),
+    ("k·‖target−pose‖ vs F̂ — machine precision", "k·‖target−pose‖ 对比 F̂ —— 机器精度"),
+    ('<div class="lbl">penetration in contact</div>', '<div class="lbl">接触期穿透量</div>'),
+    ('>median</span>', '>中位数</span>'),
+    ("max {pmax} mm at the hardest ~23 N press",
+     "最硬的 ~23 N 按压达 {pmax} mm"),
+    ("""<p style="margin-top:0"><b>Why this matters for training.</b> Policies trained on
+raw poses learn "touch the surface and stop": the label says the fingertip halts
+at the contact plane, so at deployment the controller exerts whatever residual
+force tracking error happens to produce. With force-informed targets the label
+itself encodes <i>how hard</i> — DexForce measured near-zero task success without
+this correction and 76% with it, on kinesthetic demonstrations with measured
+forces; here the same transform runs from tactile-estimated force, with the
+estimator validated against FEA ground truth (ρ=0.70 pooled, 0.85 on unseen
+indenter shapes — see the <a href="index.html">main page</a>).</p>""",
+     """<p style="margin-top:0"><b>为什么这对训练重要。</b>在原始位姿上训练的策略学到的是
+"碰到表面就停":标签说指尖停在接触面上,部署时控制器输出的力只是跟踪误差碰巧产生的残余。
+用力信息化目标后,标签本身编码了<i>按多重</i>——DexForce 在带力测量的拖动示教上测得:
+不做这个修正任务成功率接近零,做了是 76%;这里同样的变换由触觉估计的力驱动,
+估计器已对 FEA 真值验证(混合 ρ=0.70,未见过的按压头形状 0.85——见<a href="index.html">主页(英文)</a>)。</p>"""),
+    ('<p class="hint">the force signal driving the action transform, live under the tactile stream</p>',
+     '<p class="hint">驱动动作变换的力信号,与触觉流实时对齐</p>'),
+    ("<h2>Using it</h2>", "<h2>怎么用</h2>"),
+    ("# per-episode force estimates ship as npz next to the release",
+     "# 每个 episode 的力估计以 npz 形式随 release 一起发布"),
+    ("# de-spike on fresh frames", "# 只在 fresh 帧上去尖峰"),
+    ("# (T,3) — drop-in pose labels", "# (T,3) —— 直接替换位姿标签"),
+    ("""<p>Caveats, stated plainly: absolute newtons carry the FEATS-calibration
+uncertainty (cross-sensor scale drifts 2–4×; within-episode relative force is
+the reliable part), shear-dominant contact is a blind spot of the normal-force
+estimator, and legacy recordings update tactile at ~8.5 fps — the
+<code>tactile_*_is_new</code> flags mark which rows carry fresh force evidence.</p>""",
+     """<p>需要直说的告诫:绝对牛顿值带有 FEATS 定标的不确定性(跨传感器刻度漂移 2–4×;
+集内相对力才是可靠的部分);剪切主导的接触是法向力估计器的盲区;
+旧录制的触觉有效更新率约 8.5 fps——<code>tactile_*_is_new</code>
+标记了哪些行携带新的力证据。</p>"""),
+    ("""<footer>React force recovery · data <a href="https://huggingface.co/datasets/yxma/React">yxma/React</a>
+· methods &amp; external validation on the <a href="index.html">main page</a>
+· transform: DexForce (2501.10356) · force: gsrobotics photometric stereo + Winkler, FEATS-calibrated (2411.03315)</footer>""",
+     """<footer>React 力恢复 · 数据集 <a href="https://huggingface.co/datasets/yxma/React">yxma/React</a>
+· 方法与外部验证见<a href="index.html">主页(英文)</a>
+· 变换:DexForce (2501.10356) · 力估计:gsrobotics 光度立体 + Winkler,FEATS 定标 (2411.03315)</footer>"""),
+    # JS-embedded UI strings
+    ("s.textContent='CONTACT';", "s.textContent='接触中';"),
+    ("s.textContent='free — target ≡ pose';", "s.textContent='自由 — 目标 ≡ 位姿';"),
+]
+
+
+def build_zh() -> Path:
+    """Chinese page, derived from the freshly built English page."""
+    en = build().read_text()
+    # numeric placeholders inside translated strings
+    import re
+    ns = re.search(r"all (\d+) sides", en).group(1)
+    pmax = re.search(r"max ([\d.]+) mm at the hardest", en).group(1)
+    zh = en
+    for old, new in ZH:
+        old = old.replace("{ns}", ns).replace("{pmax}", pmax)
+        new = new.replace("{ns}", ns).replace("{pmax}", pmax)
+        assert old in zh, f"ZH replacement missed: {old[:60]!r}"
+        zh = zh.replace(old, new, 1)
+    out = SITE / "actions_zh.html"
+    out.write_text(zh)
+    return out
+
+
 if __name__ == "__main__":
     print(build())
+    print(build_zh())
