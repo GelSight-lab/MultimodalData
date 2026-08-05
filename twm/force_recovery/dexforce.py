@@ -92,7 +92,9 @@ def force_informed_targets(pose: np.ndarray, force_n: np.ndarray,
     pose = np.asarray(pose, np.float64)
     force_n = np.clip(np.asarray(force_n, np.float64), 0.0, None)
     R = quat_to_matrix(pose[:, 3:7])
-    normal_world = R @ np.asarray(normal_local, np.float64)
+    normal_local = np.asarray(normal_local, np.float64)
+    normal_local = normal_local / np.linalg.norm(normal_local)
+    normal_world = R @ normal_local
     penetration = force_n / stiffness
     return ForceInformedActions(
         target_pos=pose[:, :3] + penetration[:, None] * normal_world,

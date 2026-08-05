@@ -147,7 +147,10 @@ reconstruction noise differs per sensor (measured 10–50 µm across episodes).<
 <p class="footnote">Strongest contact of motherboard/episode_000 (left sensor):
 raw frame | difference vs reference | reconstructed depth. Indentation localises
 exactly where the image difference shows contact.</p>
+<div class="twocol">
 <img src="{assets['depth_pushT']}" alt="depth panels pushT">
+<img src="{assets['depth_mb']}" alt="depth panels motherboard">
+</div>
 <h3>Evaluation (no ground truth → falsifiable properties instead)</h3>
 <p>E1.1 <b>specificity</b> — no-contact rows must read ≈0 N; SNR = median force
 on high-intensity rows / p95 on reference rows. E1.2 <b>correlation</b> —
@@ -156,11 +159,17 @@ images. E1.3 <b>spikes</b> — single-frame excursions are solver noise; a
 median-3 over fresh frames must remove them. E1.4 <b>calibration
 stability</b> across episodes.</p>
 {assets['m1_table']}
-<img src="{assets['timeline_pushT']}" alt="force timeline">
+<img src="{assets['timeline_pushT']}" alt="force timeline pushT">
+<img src="{assets['timeline_mb']}" alt="force timeline motherboard">
+<div class="twocol">
 <video controls muted loop playsinline preload="metadata"
  src="{assets['clip']}"></video>
-<p class="footnote">12 s around the force peak: live force bar under the tactile
-stream (median-3 filtered).</p>
+<video controls muted loop playsinline preload="metadata"
+ src="{assets['clip_mb']}"></video>
+</div>
+<p class="footnote">12 s around each episode's force peak: live force bar under
+the tactile stream (median-3 filtered). Left: pushT (light, intermittent
+contact). Right: motherboard (sustained presses).</p>
 </div>
 
 <h2>Method 2 — DexForce-style force-informed position targets</h2>
@@ -177,7 +186,8 @@ axis: it is the rig's dual-ball calibrated <code>gel_axis_in_rigid</code>
 (pose-to-pose consistency ≈1°), rotated into world frame per row. The naive
 [0,0,1] guess produced <i>negative</i> approach alignment at force onsets; the
 calibrated axis makes it positive.</p>
-<img src="{assets['dexforce_pushT']}" alt="virtual target offsets">
+<img src="{assets['dexforce_pushT']}" alt="virtual target offsets pushT">
+<img src="{assets['dexforce_mb']}" alt="virtual target offsets motherboard">
 <h3>Evaluation</h3>
 <p>E2.1 <b>free-space invariance</b> — zero force must leave the action exactly
 the observed pose. E2.2 <b>boundedness</b> — F/k must stay millimetre-scale to
@@ -259,9 +269,13 @@ def collect_and_build() -> Path:
         "feats_domain_gap": "feats_domain_gap.png",
         "depth_validation_panel": "depth_validation_panel.png",
         "depth_pushT": "depth_pushT_episode_000_right.png",
+        "depth_mb": "depth_motherboard_episode_000_left.png",
         "timeline_pushT": "timeline_pushT_episode_000.png",
+        "timeline_mb": "timeline_motherboard_episode_000.png",
         "dexforce_pushT": "dexforce_pushT_episode_000_right.png",
+        "dexforce_mb": "dexforce_motherboard_episode_000_left.png",
         "clip": "clip_pushT_episode_000_right.mp4",
+        "clip_mb": "clip_motherboard_episode_000_left.mp4",
     }
     assets = {}
     for key, fname in names.items():

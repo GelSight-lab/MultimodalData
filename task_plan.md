@@ -8,11 +8,25 @@
    position target(虚拟穿透),与现有 pose action 融合
 
 ## Phases (Goal 2)
-- [ ] P1: FEATS 跑通(clone、预训练权重、输入格式适配 640x480 BGR/RGB)
-- [ ] P2: 方法1 全量推理 + 无 GT 的自评估(无接触帧≈0 力、力-接触强度相关性、时间平滑性)
-- [ ] P3: 方法2 实现 + 评估(无接触帧 target==pose、穿透深度有界、往返一致性)
-- [ ] P4: 可视化(力 overlay 视频、力-pose 时间线、穿透轨迹 3D)
-- [ ] P5: HF Space 静态站(方法图 + 结果),发布并回读验证
+- [x] P1: FEATS 跑通 → **负结果**:我们的 gel 无 marker,FEATS(marker gel 训练)
+      对最强接触帧输出与无接触帧完全相同(OOD 塌缩)。有证据、已记录。
+      方法1 改为 gsrobotics 光度立体深度 + Winkler 弹性地基 F=E*/h·Σδ·dA
+- [x] P2: 方法1 实现 + 调试(边界伪影裁剪、中位数零图+MAD 5σ 阈值、
+      fresh-only median-3 去尖峰 4-8%→0-0.6%);批量推理进行中(7/16 npz)
+- [x] P3: 方法2 实现 + 评估:invariance=0、roundtrip=1e-14N、穿透≤2.6mm;
+      关键修正:gel 法向不是 [0,0,1],用标定的 gel_axis_in_rigid(双球标定,1°一致)
+- [x] P4: 可视化(timeline、depth panels、DexForce offset 图、overlay mp4)
+- [ ] P5: 批量完成后全量 eval + 站点重建 + 发布 HF Space + 回读验证
+
+## Debug log (Goal 2)
+1. UNet 参数名 output_size→out_sz
+2. 点检测阈值 55 检出 0 点(我们的点最低灰度 56)→ 百分位阈值 → 随后发现根本无点
+3. FEATS OOD 塌缩 → 换光度立体路线
+4. Poisson 边界 1.1mm 假深度 → 裁 12/16px 边缘
+5. 参考帧含轻接触 → 阈值爆 30×(0.159 vs 0.006mm)→ median+MAD
+6. 单帧尖峰 4-8% → fresh-only median-3(row-wise 会把重复值数 3 次而保留尖峰)
+7. gel 法向假设 [0,0,1] 上升沿对齐为负 → 标定轴翻正
+8. DexForce 图:offset 0.2mm 在 100mm 轨迹上不可见 → 直接画 offset + 力双轴
 
 ## Env facts
 - GPU: RTX 2080 Ti (11GB) + GTX 1080;torch 2.1.0+cu121 OK;HF auth = yxma
