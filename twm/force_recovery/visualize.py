@@ -200,6 +200,39 @@ def feats_validation_figure() -> Path:
     return out
 
 
+def fota_validation_figure() -> Path:
+    """Per-capture rank correlation on FoTa, split by gel type."""
+    import json
+
+    rep = json.loads((OUT_ROOT / "fota_validation_val.json").read_text())
+    pc = rep["per_capture"]
+    groups = [("markerless gel\n(our domain)", [r for r in pc if not r["markered"]], "#4fd8e0"),
+              ("marker-dot gel\n(foreign domain)", [r for r in pc if r["markered"]], "#ffb347")]
+
+    fig, ax = plt.subplots(figsize=(7.2, 4.0))
+    rng = np.random.default_rng(0)
+    for gi, (label, rows, color) in enumerate(groups):
+        rhos = np.array([r["spearman_force_vs_depth"] for r in rows])
+        x = gi + rng.uniform(-0.13, 0.13, len(rhos))
+        ax.scatter(x, rhos, s=26, alpha=0.75, color=color, edgecolors="none")
+        med = np.median(rhos)
+        ax.hlines(med, gi - 0.24, gi + 0.24, color=color, lw=2.5)
+        ax.text(gi + 0.27, med, f"median {med:.2f}", va="center", fontsize=9,
+                color=color)
+    ax.axhline(0, color="#999", lw=0.8, ls="--")
+    ax.set_xticks(range(len(groups)))
+    ax.set_xticklabels([g[0] for g in groups])
+    ax.set_ylabel("Spearman ρ: estimated force vs pose press-depth")
+    ax.set_title(f"FoTa (T3) validation — {rep['n_captures']} captures, "
+                 "13 household objects pressed by a Panda\n"
+                 "(no force GT in FoTa; press depth is the monotone proxy)",
+                 fontsize=10)
+    out = ASSETS / "fota_validation.png"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    fig.tight_layout(); fig.savefig(out); plt.close(fig)
+    return out
+
+
 def overlay_clip(task: str, date: str, ep: str, side: str,
                  seconds: float = 12.0, out_fps: int = 30) -> Path:
     """Tactile view + live force bar + timeline cursor around the peak."""

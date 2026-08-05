@@ -97,10 +97,12 @@ Cuts single-frame spikes from 4–8% to ≈0.</p>
 <h2>Does it work?</h2>
 <img src="assets/depth_validation_panel.png" alt="raw / diff / depth">
 <img src="assets/feats_validation.png" alt="FEATS validation">
+<img src="assets/fota_validation.png" alt="FoTa validation">
 <div class="card"><table>
 <tr><th>check</th><th>result</th><th>setting</th></tr>
 <tr><td>vs FEA ground truth (FEATS)</td><td class="ok">ρ = 0.70</td><td>transfer: marker gel, ≤30 N, normal loading</td></tr>
 <tr><td>unseen indenter shapes</td><td class="ok">ρ = 0.85</td><td>same, shape generalization</td></tr>
+<tr><td>vs press depth (FoTa/T3, 61 captures)</td><td class="ok">ρ median 0.43 markerless / 0.24 markered, 84% positive</td><td>third-party Panda rig, household objects; no force GT — pose press-depth as monotone proxy (includes free approach, so ρ is attenuated)</td></tr>
 <tr><td>React internal (72 sides)</td><td class="ok">SNR p50 ≈ 1200, ρ = 0.84 vs intensity</td><td>in-domain, per-episode references</td></tr>
 <tr><td>shear-dominant contact</td><td class="warn">ρ = −0.15</td><td>out of scope — stated blind spot</td></tr>
 <tr><td>cross-sensor absolute scale</td><td class="warn">drifts 2–4×</td><td>relative force within an episode is the reliable part</td></tr>
@@ -184,6 +186,12 @@ Cuts single-frame spikes from 4–8% to ≈0.</p>""",
      "<td>transfer 设定:有点 gel,≤30 N,法向加载</td>"),
     ("<td>unseen indenter shapes</td>", "<td>未见过的按压头形状</td>"),
     ("<td>same, shape generalization</td>", "<td>同上,形状泛化</td>"),
+    ("<td>vs press depth (FoTa/T3, 61 captures)</td>",
+     "<td>对按压深度(FoTa/T3,61 captures)</td>"),
+    ("<td class=\"ok\">ρ median 0.43 markerless / 0.24 markered, 84% positive</td>",
+     '<td class="ok">ρ 中位 0.43 无点 / 0.24 有点,84% 为正</td>'),
+    ("<td>third-party Panda rig, household objects; no force GT — pose press-depth as monotone proxy (includes free approach, so ρ is attenuated)</td>",
+     "<td>第三方 Panda 平台、日常物体;FoTa 无力真值——用位姿按压深度作单调代理(含自由接近段,ρ 被稀释)</td>"),
     ("<td>React internal (72 sides)</td>", "<td>React 集内(72 侧)</td>"),
     ("<td>in-domain, per-episode references</td>", "<td>域内,逐 episode 参考帧</td>"),
     ("<td>shear-dominant contact</td>", "<td>剪切主导的接触</td>"),

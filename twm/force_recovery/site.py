@@ -190,6 +190,8 @@ no-contact reference — i.e. strictly harder than the React setting, where
 reference frames come from the same episode seconds away.</p>
 <img src="{assets.get('feats_validation','assets/feats_validation.png')}"
  alt="FEATS validation scatter">
+<img src="{assets.get('fota_validation','assets/fota_validation.png')}"
+ alt="FoTa validation strip plot">
 <table>
 <tr><th>metric</th><th>value</th><th>scope</th></tr>
 <tr><td>Spearman ρ (pooled)</td><td>{ext.get('spearman_rho',0):.2f}</td>
@@ -198,6 +200,7 @@ reference frames come from the same episode seconds away.</p>
 <tr><td>MAE after scale calibration</td><td>{ext.get('mae_calibrated_n',0):.1f} N</td></tr>
 <tr><td>ρ within one indenter family</td><td>0.66–0.94</td><td>zelda 0.94, cylinder 0.75, triangle 0.70</td></tr>
 <tr><td>ρ on <b>unseen indenter shapes</b></td><td>0.85</td><td>test_unknown_indenters split, n=100 — shape generalization holds</td></tr>
+<tr><td>ρ vs press depth on <b>FoTa (T3)</b></td><td>0.43 / 0.24</td><td>61 captures, third-party Panda rig, household objects; markerless / marker gel medians, 84% positive. FoTa has no force GT, so pose press-depth is the (attenuated) monotone proxy</td></tr>
 <tr><td>scale stability across splits</td><td>2–4×</td><td>fitted N/mm³ varies 1.9–7.2 between sessions/sensors: within-episode relative force is reliable, cross-sensor absolute scale is not</td></tr>
 <tr><td>ρ on shear-loaded captures</td><td>−0.15</td><td>excluded &amp; documented: shear churns the image without adding indentation volume</td></tr>
 <tr><td>fitted scale</td><td>{ext.get('scale_n_per_mm3',0):.2f} N/mm³</td>
@@ -333,6 +336,7 @@ def collect_and_build() -> Path:
     names = {
         "feats_domain_gap": "feats_domain_gap.png",
         "feats_validation": "feats_validation.png",
+        "fota_validation": "fota_validation.png",
         "depth_validation_panel": "depth_validation_panel.png",
         "depth_pushT": "depth_pushT_episode_000_right.png",
         "depth_mb": "depth_motherboard_episode_000_left.png",
