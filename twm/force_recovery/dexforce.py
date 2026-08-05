@@ -29,12 +29,12 @@ from pathlib import Path
 
 import numpy as np
 
-# Impedance controller stiffness the targets are computed for. 300 N/m is a
-# soft-to-moderate Cartesian stiffness (Franka-class arms run 150-600 N/m in
-# compliant tasks). The penetration is F/k, so with forces around 0.05-1.2 N
-# offsets stay in the 0.2-4 mm range — small enough to be safe, large
-# enough to be learnable.
-STIFFNESS_N_PER_M = 300.0
+# Impedance controller stiffness the targets are computed for. With the
+# FEATS-calibrated force scale, in-contact forces run ~0.3-8 N; at a
+# mid-range Cartesian stiffness of 1500 N/m (Franka-class arms span
+# ~150-3000 N/m) the penetration F/k stays in the 0.2-6 mm range — small
+# enough to be a safe action, large enough to be learnable.
+STIFFNESS_N_PER_M = 1500.0
 
 # The pressing direction in the rigid-body frame is NOT a coordinate axis:
 # the rig's dual-ball calibration measures it as ``gel_axis_in_rigid``

@@ -59,6 +59,17 @@ def process_side(task: str, date: str, ep: str, side: str,
     h5_path = DATA_ROOT / task / date / f"{ep}.h5"
     ref_rows = _reference_rows(inten, is_new)
 
+    # Absolute scale: N per mm^3 of displaced gel volume. The FEATS
+    # ground-truth fit supersedes the theoretical Winkler constant when the
+    # external validation has been run (assumes the same pad stiffness
+    # across gels — stated, not verified).
+    from .external_validation import calibrated_scale
+    scale = calibrated_scale()
+    scale_source = "feats_calibrated" if scale is not None else "winkler_theory"
+    if scale is None:
+        from .depth_force import FORCE_PER_MM3
+        scale = FORCE_PER_MM3
+
     out = {k: np.zeros(T, np.float32) for k in FIELDS}
     kept_depths: list[tuple[int, np.ndarray]] = []
 
@@ -75,7 +86,8 @@ def process_side(task: str, date: str, ep: str, side: str,
         for row in range(T):
             if is_new[row] or last is None:
                 last = est.estimate(frames[src(row)])
-            for key, value in zip(FIELDS, (last.normal_n, last.volume_mm3,
+            for key, value in zip(FIELDS, (last.volume_mm3 * scale,
+                                           last.volume_mm3,
                                            last.contact_area_mm2,
                                            last.max_depth_mm)):
                 out[key][row] = value
@@ -92,6 +104,8 @@ def process_side(task: str, date: str, ep: str, side: str,
         "contact_threshold_mm": est.contact_threshold_mm,
         "noise_std_mm": est.noise_std_mm,
         "reference_rows": ref_rows,
+        "scale_n_per_mm3": scale,
+        "scale_source": scale_source,
     }
     out_dir = OUT_ROOT / task / date
     out_dir.mkdir(parents=True, exist_ok=True)

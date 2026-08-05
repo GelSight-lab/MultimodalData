@@ -118,7 +118,8 @@ def dexforce_figure(task: str, date: str, ep: str, side: str) -> Path:
     force = median3_fresh(npz["force_normal_n"].astype(np.float64), is_new)
     act = force_informed_targets(pose, force, gel_axis(task, side))
     pen_mm = act.penetration_m * 1000.0
-    contact = force > 0.02
+    from .evaluate import CONTACT_N
+    contact = force > CONTACT_N
 
     peak = int(np.argmax(force))
     lo, hi = max(0, peak - 90), min(len(force), peak + 90)
@@ -148,6 +149,52 @@ def dexforce_figure(task: str, date: str, ep: str, side: str) -> Path:
     fig.suptitle(f"{task}/{ep} {side} — DexForce-style virtual targets",
                  fontsize=10)
     out = ASSETS / f"dexforce_{task}_{ep}_{side}.png"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    fig.tight_layout(); fig.savefig(out); plt.close(fig)
+    return out
+
+
+def feats_validation_figure() -> Path:
+    """Ground-truth scatter: estimated volume x calibrated force vs FEA force."""
+    import json
+
+    rep = json.loads((OUT_ROOT / "feats_validation_val.json").read_text())
+    pf = rep["per_frame"]
+    ft = np.array([r["f_true"] for r in pf])
+    fc = np.array([r["volume_mm3"] for r in pf]) * rep["scale_n_per_mm3"]
+    # capture names come in two shapes ("45_<ts>_sphere_10" and
+    # "102_sphere_10"); the family is the first alphabetic token
+    def _family(r):
+        for tok in r["capture"].split("_"):
+            if tok.isalpha():
+                return tok
+        return "other"
+    fam = np.array([_family(r) for r in pf])
+
+    fig, axes = plt.subplots(1, 2, figsize=(9.5, 4.0))
+    ax = axes[0]
+    for f_ in sorted(set(fam)):
+        m = fam == f_
+        ax.scatter(ft[m], fc[m], s=14, alpha=0.75, label=f_)
+    lim = max(ft.max(), fc.max()) * 1.05
+    ax.plot([0, lim], [0, lim], "k--", lw=0.8, alpha=0.5)
+    ax.set_xlabel("FEA ground-truth normal force [N]")
+    ax.set_ylabel("our estimate (calibrated) [N]")
+    ax.set_title(f"FEATS val split — r={rep['pearson_r']:.2f}, "
+                 f"ρ={rep['spearman_rho']:.2f} (n={rep['n_frames']})")
+    ax.legend(fontsize=7, ncol=2)
+
+    ax = axes[1]
+    order = np.argsort(ft)
+    ax.plot(ft[order], np.abs(fc - ft)[order], ".", ms=4, alpha=0.6,
+            color="#7570b3")
+    ax.set_xlabel("FEA ground-truth force [N]")
+    ax.set_ylabel("|error| [N]")
+    ax.set_title(f"per-frame error — MAE {rep['mae_calibrated_n']:.1f} N "
+                 "(transfer setting)")
+    fig.suptitle("External validation on FEATS (marker gel, CNC-pressed, "
+                 "FEA force labels)", fontsize=10)
+    out = ASSETS / "feats_validation.png"
     out.parent.mkdir(parents=True, exist_ok=True)
     fig.tight_layout(); fig.savefig(out); plt.close(fig)
     return out

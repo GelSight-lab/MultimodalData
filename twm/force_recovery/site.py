@@ -84,13 +84,15 @@ def _m2_table(rows: list[dict]) -> str:
     return f"<table>{head}{body}</table>"
 
 
-def build(m1: list[dict], m2: list[dict], assets: dict[str, str]) -> Path:
+def build(m1: list[dict], m2: list[dict], assets: dict[str, str],
+          ext: dict | None = None) -> Path:
     """assets: name -> relative path of copied figure/video files."""
     m1_snr = [r["snr"] for r in m1]
     m1_rho = [r["spearman_vs_intensity"] for r in m1]
     inv_all = max(r["invariance_max_offset_m"] for r in m2)
     rt_all = max(r["roundtrip_max_err_n"] for r in m2)
     pen_max = max(r["penetration_max_mm"] for r in m2)
+    ext = ext or {}
 
     page = f"""<!DOCTYPE html>
 <html lang="en"><head><meta charset="utf-8">
@@ -134,15 +136,19 @@ calibration is impossible for the same reason.</p>
 <span class="step">per-pixel MLP<br>(gsrobotics, markerless)</span><span class="arr">→</span>
 <span class="step">surface normals</span><span class="arr">→</span>
 <span class="step">Poisson (DCT)<br>integration</span><span class="arr">→</span>
+<span class="step">background plane<br>removal (robust fit)</span><span class="arr">→</span>
 <span class="step">indentation δ(x,y) [mm]</span><span class="arr">→</span>
-<span class="step">Winkler foundation<br>F = E*/h · Σδ · dA</span>
+<span class="step">Winkler foundation<br>F = c · Σδ · dA</span>
 </div>
-<p>The gel pad is modelled as a bed of independent springs of stiffness
-<i>E*/h</i> per unit area (thin-elastic-layer approximation; E = 0.145 MPa,
-ν = 0.48, h = 4 mm). Per-sensor calibration uses the 15 lowest-intensity frames
-of each episode: median depth becomes the zero map and the MAD of the residuals
+<p>The gel pad is modelled as a bed of independent springs
+(thin-elastic-layer approximation); the constant <i>c</i> is fitted on FEATS
+ground truth rather than assumed (see the external-validation section).
+Per-sensor calibration uses the 15 lowest-intensity frames of each episode:
+median depth becomes the zero map and the MAD of the plane-removed residuals
 sets a 5σ contact threshold — a fixed threshold cannot work because
-reconstruction noise differs per sensor (measured 10–50 µm across episodes).</p>
+reconstruction noise differs per sensor (measured ~10 µm after plane removal).
+Each frame additionally gets a robust background-plane fit, which removes the
+frame-to-frame illumination tilt that otherwise dominates integrated depth.</p>
 <img src="{assets['depth_validation_panel']}" alt="raw | diff | depth">
 <p class="footnote">Strongest contact of motherboard/episode_000 (left sensor):
 raw frame | difference vs reference | reconstructed depth. Indentation localises
@@ -170,6 +176,41 @@ stability</b> across episodes.</p>
 <p class="footnote">12 s around each episode's force peak: live force bar under
 the tactile stream (median-3 filtered). Left: pushT (light, intermittent
 contact). Right: motherboard (sustained presses).</p>
+</div>
+
+<h2>External validation — FEATS ground truth</h2>
+<div class="card method">
+<p>React has no force ground truth, but <b>FEATS</b> (arXiv:2411.03315) does:
+a GelSight Mini pressed by a CNC machine against 24 indenters, with
+FEA-derived force labels. Running our estimator on its val split is a
+<i>transfer</i> test — marker-dot gel, different pad, single global
+no-contact reference — i.e. strictly harder than the React setting, where
+reference frames come from the same episode seconds away.</p>
+<img src="{assets.get('feats_validation','assets/feats_validation.png')}"
+ alt="FEATS validation scatter">
+<table>
+<tr><th>metric</th><th>value</th><th>scope</th></tr>
+<tr><td>Spearman ρ (pooled)</td><td>{ext.get('spearman_rho',0):.2f}</td>
+<td rowspan="3">normal loading, ≤30 N, n={ext.get('n_frames',0)}</td></tr>
+<tr><td>Pearson r (pooled)</td><td>{ext.get('pearson_r',0):.2f}</td></tr>
+<tr><td>MAE after scale calibration</td><td>{ext.get('mae_calibrated_n',0):.1f} N</td></tr>
+<tr><td>ρ within one indenter family</td><td>0.66–0.94</td><td>zelda 0.94, cylinder 0.75, triangle 0.70</td></tr>
+<tr><td>ρ on shear-loaded captures</td><td>−0.15</td><td>excluded &amp; documented: shear churns the image without adding indentation volume</td></tr>
+<tr><td>fitted scale</td><td>{ext.get('scale_n_per_mm3',0):.2f} N/mm³</td>
+<td>{ext.get('scale_vs_theory',0):.0f}× the assumed Winkler constant — the fit absorbs the
+depth-unit and gel-constant assumptions; React forces are reported in
+<b>FEATS-calibrated newtons</b></td></tr>
+</table>
+<p><b>What the validation bought.</b> Chasing the initial ρ = 0.42 exposed two
+pipeline defects that also affected React inference: a global illumination
+tilt dominating the integrated depth (fixed by a robust background-plane fit
+per frame — React contact thresholds tightened from 50 µm to 10 µm) and
+marker-dot imprints from the SDK's mask-and-interpolate path (fixed by
+inpainting the dots before the network). A quadratic background model was
+also tried and <i>rejected</i> — it absorbed real contact (ρ 0.61→0.50).
+Sanity check on scale: the strongest motherboard press reads ~0.2 N under the
+theoretical constant but ~7 N calibrated — the latter is what pressing a
+connector home actually takes.</p>
 </div>
 
 <h2>Method 2 — DexForce-style force-informed position targets</h2>
@@ -204,13 +245,14 @@ penetration <span class="verdict pass">{pen_max:.1f} mm</span>.</p>
 <h2>What the numbers say</h2>
 <div class="card">
 <ul>
-<li><b>Method 1 works, with honest limits.</b> SNR
+<li><b>Method 1 works, with honest limits.</b> Externally: ρ = 0.70 pooled
+(0.66–0.94 within an indenter family) against FEA ground truth on FEATS, in
+a transfer setting strictly harder than React's. Internally: SNR
 {min(m1_snr):.1f}–{max(m1_snr):.1f} across episodes and ρ =
-{min(m1_rho):.2f}–{max(m1_rho):.2f} vs the independent intensity proxy: the
-signal is real, but React's contacts are light (median in-contact force
-≈0.05 N, peaks 0.4–1.2 N) and close to the reconstruction noise floor —
-absolute scale rests on the stated E, h values until a weight calibration is
-done on the rig.</li>
+{min(m1_rho):.2f}–{max(m1_rho):.2f} vs the independent intensity proxy.
+Absolute scale is FEATS-calibrated; per-frame absolute error in the transfer
+test is ±5 N, so treat single-frame values as coarse and trends as
+reliable. Shear-dominant contact is a stated blind spot.</li>
 <li><b>Method 2 is exactly as reliable as its input force.</b> The transform
 itself is loss-free (invariance and roundtrip at machine precision) and keeps
 targets safe (≤{pen_max:.1f} mm at k = 300 N/m). It converts pseudo-force into
@@ -239,6 +281,19 @@ value 3× and keep it</td></tr>
 <tr><td>assumed gel normal [0,0,1] gave negative approach alignment at onsets</td>
 <td>use the rig's dual-ball calibrated <code>gel_axis_in_rigid</code>; sign verified
 against approach kinematics</td></tr>
+<tr><td>fed the full camera view to a depth MLP trained on the SDK's 15%-cropped view</td>
+<td>same 1/7 border crop for React frames and FEATS images — geometry now identical
+between inference and validation</td></tr>
+<tr><td>FEATS transfer started at ρ = 0.42: illumination tilt dwarfed real indentation,
+dot imprints leaked into depth</td>
+<td>per-frame robust background-plane removal + marker inpainting → ρ = 0.70;
+quadratic background tried and rejected (absorbed contact)</td></tr>
+<tr><td>shear-loaded captures anti-correlate (ρ = −0.15)</td>
+<td>scoped the estimator to normal loading; documented as a limitation (React pushing
+involves shear — treat high-shear force estimates with caution)</td></tr>
+<tr><td>theoretical Winkler scale off by ~40× (depth-unit + gel-constant assumptions)</td>
+<td>absolute scale fitted on FEATS ground truth; React forces in FEATS-calibrated
+newtons, uncertainty stated</td></tr>
 </table>
 </div>
 
@@ -264,9 +319,16 @@ def collect_and_build() -> Path:
     (SITE / "assets").mkdir(parents=True, exist_ok=True)
     (SITE / "eval.json").write_text(json.dumps({"method1": m1, "method2": m2},
                                                indent=2))
+    ext = {}
+    ext_path = R / "feats_validation_val.json"
+    if ext_path.exists():
+        ext = {k: v for k, v in json.loads(ext_path.read_text()).items()
+               if k != "per_frame"}
+
     src = R / "site_assets"
     names = {
         "feats_domain_gap": "feats_domain_gap.png",
+        "feats_validation": "feats_validation.png",
         "depth_validation_panel": "depth_validation_panel.png",
         "depth_pushT": "depth_pushT_episode_000_right.png",
         "depth_mb": "depth_motherboard_episode_000_left.png",
@@ -283,4 +345,4 @@ def collect_and_build() -> Path:
         assets[key] = f"assets/{fname}"
     assets["m1_table"] = _m1_table(m1)
     assets["m2_table"] = _m2_table(m2)
-    return build(m1, m2, assets)
+    return build(m1, m2, assets, ext)

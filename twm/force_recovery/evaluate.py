@@ -41,7 +41,9 @@ from scipy.stats import spearmanr
 from .dexforce import force_informed_targets, gel_axis, roundtrip_force
 from .run_episode import OUT_ROOT, STAGE_ROOT
 
-CONTACT_N = 0.02          # rows above this are "in contact" for the SNR split
+# Rows above this are "in contact" for the SNR split. In FEATS-calibrated
+# newtons: ~5x the typical no-contact noise, ~1/6 of a median press.
+CONTACT_N = 0.1
 
 
 def median3_fresh(force: np.ndarray, is_new: np.ndarray) -> np.ndarray:
@@ -100,11 +102,11 @@ def eval_method1(task: str, date: str, ep: str, side: str) -> dict:
 
     # E1.3 — fresh-sample spikes: up then straight back down, before and
     # after the median filter (after should be ~0 if spikes are 1-frame)
-    def spike_rate(x):
+    def spike_rate(x, jump=5.0 * CONTACT_N):
         dx = np.diff(x)
         if len(dx) < 2:
             return 0.0
-        return float(((dx[:-1] > 0.1) & (dx[1:] < -0.1)).mean())
+        return float(((dx[:-1] > jump) & (dx[1:] < -jump)).mean())
 
     return {
         "episode": f"{task}/{date}/{ep}", "side": side,
