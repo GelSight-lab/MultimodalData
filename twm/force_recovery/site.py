@@ -92,6 +92,8 @@ def build(m1: list[dict], m2: list[dict], assets: dict[str, str],
     inv_all = max(r["invariance_max_offset_m"] for r in m2)
     rt_all = max(r["roundtrip_max_err_n"] for r in m2)
     pen_max = max(r["penetration_max_mm"] for r in m2)
+    pens = sorted(r["penetration_p50_mm"] for r in m2)
+    pen_p50 = pens[len(pens) // 2]
     ext = ext or {}
 
     page = f"""<!DOCTYPE html>
@@ -221,7 +223,7 @@ connector home actually takes.</p>
 force becomes a <b>virtual position target past the contact surface</b>
 (DexForce, arXiv:2501.10356):</p>
 <p class="formula">p<sub>target</sub> = p<sub>observed</sub> + (F̂<sub>n</sub> / k) · n̂,
-&nbsp;&nbsp; k = 300 N/m (deployment impedance)</p>
+&nbsp;&nbsp; k = 1500 N/m (deployment impedance)</p>
 <p>The action stays a pose — it composes with the existing 30 Hz pose actions,
 needs only an impedance controller at deployment, and in free space reduces
 exactly to the observed pose. The pressing direction n̂ is <b>not</b> a guessed
@@ -257,7 +259,7 @@ test is ±5 N, so treat single-frame values as coarse and trends as
 reliable. Shear-dominant contact is a stated blind spot.</li>
 <li><b>Method 2 is exactly as reliable as its input force.</b> The transform
 itself is loss-free (invariance and roundtrip at machine precision) and keeps
-targets safe (≤{pen_max:.1f} mm at k = 300 N/m). It converts pseudo-force into
+targets bounded ({pen_p50:.1f} mm median, {pen_max:.1f} mm at the single hardest ~23 N press — clamp or gain-schedule k in deployment if that exceeds the task tolerance). It converts pseudo-force into
 a deployable action without changing the policy's output space.</li>
 <li><b>Recommended recipe</b>: train on force-informed targets (Method 2) with
 the Method 1 force as an auxiliary prediction head — matching the conclusions

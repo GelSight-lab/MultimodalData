@@ -16,7 +16,21 @@
 - [x] P3: 方法2 实现 + 评估:invariance=0、roundtrip=1e-14N、穿透≤2.6mm;
       关键修正:gel 法向不是 [0,0,1],用标定的 gel_axis_in_rigid(双球标定,1°一致)
 - [x] P4: 可视化(timeline、depth panels、DexForce offset 图、overlay mp4)
-- [ ] P5: 批量完成后全量 eval + 站点重建 + 发布 HF Space + 回读验证
+- [x] P5: 全量 eval + 站点 + 发布 → https://huggingface.co/spaces/yxma/react-force-recovery ✓(回读 4 表)
+
+## Goal 3(批量+外部验证+改进)结果
+- **批量**:36 集 × 2 side 全部处理,0 失败(4 worker 双 GPU,~1.3h)
+- **外部验证(FEATS 真值)**:val ρ=0.70/r=0.63(≤30N 法向);**未见 indenter ρ=0.85**;
+  shear captures ρ=−0.15(记录为盲区);跨 split 绝对刻度漂移 2-4×(集内相对力可靠)
+- **验证驱动的改进**(每项都有 before/after):
+  1. 1/7 边缘裁剪统一(MLP 训练域)  2. 逐帧稳健背景平面移除(ρ 0.42→0.61,
+  React 阈值 50µm→10µm)  3. marker 点 inpaint(替代 SDK mask 路线)
+  4. 二次背景面试过并否决(ρ 降到 0.50)  5. FEATS 定标绝对刻度(40× 理论值;
+  motherboard 最强按压 0.2N→7N,符合直觉)  6. 下游常数随刻度更新(k=1500N/m)
+- **改进后的 React 内部指标**(72 sides):SNR 中位 1209(此前 ~1);
+  ρ vs intensity 中位 0.84(此前 0.36-0.60);尖峰滤后 0.00%;力峰 1.5-22.8N
+- **事故与修复**:test split 验证覆盖了正式定标文件 → 只允许 val 写 + 
+  normalize_scale 从 volume 精确重算(抓到 2 个受污染 npz)
 
 ## Debug log (Goal 2)
 1. UNet 参数名 output_size→out_sz
