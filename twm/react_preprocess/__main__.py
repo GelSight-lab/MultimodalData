@@ -12,7 +12,7 @@ import json
 import sys
 from pathlib import Path
 
-from . import backfill
+from . import backfill, curation
 from .config import H5_ROOTS, STAGE_ROOT
 from .h5io import discover
 from .pipeline import build_episode
@@ -126,6 +126,22 @@ def cmd_verify(args) -> int:
     return 1 if bad else 0
 
 
+def cmd_curate(args) -> int:
+    """Rebuild bad_frames.json / segments.json / episodes.jsonl for a task."""
+    for task in ([args.task] if args.task else sorted(H5_ROOTS)):
+        try:
+            s = curation.build_task(task, STAGE_ROOT, write=not args.dry_run)
+        except FileNotFoundError as exc:
+            print(f"[curate] {task}: {exc}", file=sys.stderr)
+            continue
+        verb = "would write" if args.dry_run else "wrote"
+        print(f"[curate] {task}: {s['episodes']} episodes, {s['segments']} segments, "
+              f"{s['total_frames']:,} frames, {s['bad_frames']} bad "
+              f"({s['bad_fraction']*100:.2f}%), clean {s['clean_frames']:,} "
+              f"({s['clean_minutes']:.1f} min) — {verb}")
+    return 0
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(prog="react_preprocess")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -151,6 +167,11 @@ def main(argv=None) -> int:
     f.add_argument("--task", choices=sorted(H5_ROOTS))
     f.add_argument("--dry-run", action="store_true")
     f.set_defaults(func=cmd_backfill)
+
+    c = sub.add_parser("curate", help="rebuild bad_frames/segments/episodes indices")
+    c.add_argument("--task", choices=sorted(H5_ROOTS))
+    c.add_argument("--dry-run", action="store_true")
+    c.set_defaults(func=cmd_curate)
 
     v = sub.add_parser("verify-flags", help="check flags against ground truth")
     v.add_argument("--root")

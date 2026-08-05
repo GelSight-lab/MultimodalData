@@ -58,6 +58,24 @@ build_previews_index, build_episode_previews, build_lerobot_dataset
 - 回填幂等:重跑结果逐位一致
 - 代码可从数据目录独立运行(模拟用户只下载数据集的情形)✓
 
+## Phase 6 交付记录
+- commit `726db47` — react_preprocess 包
+- HF `yxma/React` 一次 commit 推送 60 个文件:23 代码 + 36 parquet + README
+- 回读验证:Hub 上 preprocess/ 12 文件、toolbox/ 13 文件;
+  下载 parquet 确认 19 列、`tactile_*_is_new` 为 bool、fresh 29.2%/29.1% ✓
+- 顺带发现并记录:`motherboard/2026-05-19/episode_{003,004}` 只有 4.0s / 7.0s
+  (中位数 213s),是中断的录制 → README 标注建议过滤,不删除以保持编号稳定
+
+## Phase 7(追加):补全最后 2 个未迁移脚本
+- `detect.py` + `curation.py`:全部 5 类检测区间、36 集,与已发布 JSON **逐区间 0 差异**;
+  segments 逐字段 identical(76+17 段)。顺带修复了我重组 scripts 时弄断的
+  `build_release_curation.py -> build_segments`(find_clean_segments 移入包)。
+- `previews.py`:只迁移策略(标定选择/trim/world offset/输出布局),渲染器留在
+  scripts 作 thin adapter(需要 rig 本地标定,不随 release 发布)。
+  端到端验证:重渲 pushT/episode_000 与已发布 preview **首帧 MAD 0.00**、同 900 帧。
+- 旧脚本移入 `scripts/superseded/` 并附 README(保留 provenance,禁止运行)。
+- 8/8 核心 pipeline 脚本全部有包内归属;CLI 增加 `curate` 子命令。
+
 ## Status
-**Phase 5 完成** — 包已建、验证通过、回填完成、代码已入数据目录。
-剩余:更新 README 数字 + commit
+**全部完成**(Phase 1-7)。commit 726db47 + 本次追加 commit;
+HF 已发布 60 文件(代码+parquet+README)并回读验证。

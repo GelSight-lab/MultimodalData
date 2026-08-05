@@ -32,9 +32,19 @@ release/<task>/{videos,depth,meta}/<date>/episode_NNN/…
 | `encode` | ffmpeg writers |
 | `tactile` | two-pass GelSight processing |
 | `meta` | parquet assembly and index columns |
+| `detect` | bad-interval detectors + clean-span complement |
+| `curation` | per-task `bad_frames.json` / `segments.json` / `episodes.jsonl` |
+| `previews` | preview policy (calibration choice, trim, world offset, layout) |
 | `pipeline` | per-episode orchestration |
 | `backfill` | recover flags for already-published parquet |
 | `publish` | mirror data + code to the Hub |
+
+`previews` holds policy only — the panel renderer needs rig-local calibration
+the release does not ship, so it stays in `twm/scripts/build_release_previews.py`
+as a thin adapter over `previews.plan()`. Port checks: `detect`/`curation`
+reproduce the published `bad_frames.json` and `segments.json` for all 36
+episodes with zero differences; the preview adapter re-renders
+`pushT/episode_000` bit-identically (first-frame MAD 0.00, same 900 frames).
 
 ## Tactile time alignment
 

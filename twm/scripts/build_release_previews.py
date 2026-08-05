@@ -1,13 +1,13 @@
-"""Generate canonical-layout preview MP4s for the task-first release.
+"""Render the release preview panels.
 
-Reuses build_episode_previews.build_one_preview (the exact "same as before"
-1280x480 panel: 3 cams + OptiTrack + GelSight raw/diff + projection overlay,
-first 30s @ 2x). Per task it swaps in:
-  - the correct calibration dir (motherboard=May-12, pushT=June-26)
-  - the correct H5 root
-  - output under data/<task>/previews/<date>/episode_NNN.mp4
-  - trim offset read from the release `_detect.pt` sidecar
-  - per-(task,date) world-frame offset (motherboard/2026-05-19)
+Thin adapter: `react_preprocess.previews` decides *what* to render (which
+episodes, which calibration, trim offset, world-frame offset, output path) and
+`build_episode_previews` does the drawing — the 1280x480 panel of 3 cams +
+OptiTrack + GelSight raw/diff + projection overlay. The renderer stays here
+rather than in the package because it needs rig-local calibration that the
+release does not ship.
+
+    python scripts/build_release_previews.py --task motherboard [--overwrite]
 """
 from __future__ import annotations
 
@@ -16,77 +16,74 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
 import build_episode_previews as BEP
-
-CALIB = Path("/home/yxma/MultimodalData/twm/calibration")
-STAGE = Path("/media/yxma/Disk1/twm/release")
-
-TASK_CFG = {
-    "motherboard": {
-        "h5_root": Path("/media/yxma/Disk1/twm/data/motherboard"),
-        "calib_dir": CALIB / "result backup",       # May-12
-    },
-    "pushT": {
-        "h5_root": Path("/media/yxma/Disk1/twm/data/pushT"),
-        "calib_dir": CALIB / "result",              # June-26
-    },
-}
-WORLD_OFFSET = {("motherboard", "2026-05-19"): (0.23, 0.0, 0.175)}
+from react_preprocess import previews
 
 
-def _release_trim(task, date, ep_stem):
-    import torch
-    det = STAGE / task / "meta" / date / f"{ep_stem}._detect.pt"
-    if not det.exists():
-        return 0
-    d = torch.load(str(det), weights_only=False, map_location="cpu")
-    return int(d["_contact_meta"].get("trim_offset", 0))
+def make_renderer(calib_dir: Path, clip_s: float, speed: float):
+    """Bind the renderer to one task's calibration.
+
+    `_load_proj_calibs` reads module-level `CALIB_DIR`, so it is set just long
+    enough to load and then restored; the loaded calibration is captured in the
+    closure. The renderer therefore stops depending on that global, and two
+    tasks can be rendered in one process.
+    """
+    previous = BEP.CALIB_DIR
+    BEP.CALIB_DIR = calib_dir
+    try:
+        project_cams, glc, grc = BEP._load_proj_calibs()
+    finally:
+        BEP.CALIB_DIR = previous
+
+    def render(job: dict) -> None:
+        dx, dy, dz = job["world_offset"]
+        # The release sidecar is the authority on where the episode starts.
+        prior = BEP._get_trim_offset
+        BEP._get_trim_offset = lambda _p, _t=job["trim_offset"]: _t
+        try:
+            BEP.build_one_preview(job["h5"], job["out"], clip_s, speed,
+                                  project_cams, glc, grc, dx=dx, dy=dy, dz=dz)
+        finally:
+            BEP._get_trim_offset = prior
+
+    return render, len(project_cams)
 
 
-def main():
+def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--task", required=True, choices=list(TASK_CFG))
-    ap.add_argument("--clip_s", type=float, default=30.0)
-    ap.add_argument("--speed", type=float, default=2.0)
+    ap.add_argument("--task", required=True, choices=sorted(previews.CALIB_DIRS))
+    ap.add_argument("--clip-s", type=float, default=previews.CLIP_SECONDS)
+    ap.add_argument("--speed", type=float, default=previews.SPEED)
+    ap.add_argument("--overwrite", action="store_true")
+    ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()
-    cfg = TASK_CFG[args.task]
 
-    # Point the reused module at this task's calibration + roots.
-    BEP.CALIB_DIR = cfg["calib_dir"]
-    BEP.H5_ROOT = cfg["h5_root"]
-    BEP.OUT_ROOT = STAGE / args.task / "previews"
-    # Override trim source to use the release sidecar.
-    BEP._get_trim_offset = lambda h5_path: _release_trim(
-        args.task, Path(h5_path).parent.name, Path(h5_path).stem)
+    jobs = list(previews.plan(args.task))
+    calib = previews.CALIB_DIRS[args.task]
+    print(f"[previews] {args.task}: {len(jobs)} episodes, calib={calib.name}", flush=True)
+    if args.dry_run:
+        for j in jobs:
+            print(f"  {j['date']}/{j['episode']} trim={j['trim_offset']} "
+                  f"world_offset={j['world_offset']}")
+        return 0
 
-    project_cams, glc, grc = BEP._load_proj_calibs()
-    print(f"[previews] {args.task}: calib={cfg['calib_dir'].name}  "
-          f"cams={len(project_cams)}", flush=True)
+    render, n_cams = make_renderer(calib, args.clip_s, args.speed)
+    print(f"[previews] projection cameras: {n_cams}", flush=True)
 
-    # Only episodes that actually have a release video (skip corrupt H5).
-    vids_root = STAGE / args.task / "videos"
-    for date_dir in sorted(vids_root.iterdir()):
-        if not date_dir.is_dir():
-            continue
-        date = date_dir.name
-        off = WORLD_OFFSET.get((args.task, date), (0.0, 0.0, 0.0))
-        out_dir = BEP.OUT_ROOT / date
-        for ep_dir in sorted(date_dir.iterdir()):
-            ep_stem = ep_dir.name
-            h5 = cfg["h5_root"] / date / f"{ep_stem}.h5"
-            if not h5.exists():
-                print(f"  {date}/{ep_stem}: no H5, skip", flush=True); continue
-            out_mp4 = out_dir / f"{ep_stem}.mp4"
-            try:
-                BEP.build_one_preview(h5, out_mp4, args.clip_s, args.speed,
-                                      project_cams, glc, grc,
-                                      dx=off[0], dy=off[1], dz=off[2])
-                print(f"  {date}/{ep_stem}: OK ({out_mp4.stat().st_size/1024:.0f} KB)",
-                      flush=True)
-            except Exception as e:
-                print(f"  {date}/{ep_stem}: FAIL ({type(e).__name__}: {e})", flush=True)
-    print("[previews] done", flush=True)
+    results = previews.build_task(args.task, render, overwrite=args.overwrite)
+    for r in results:
+        detail = (f"({r['bytes']/1024:.0f} KB)" if r["status"] == "OK"
+                  else r.get("error", ""))
+        print(f"  {r['date']}/{r['episode']}: {r['status']} {detail}", flush=True)
+
+    ok = sum(r["status"] == "OK" for r in results)
+    skipped = sum(r["status"] == "SKIP" for r in results)
+    failed = sum(r["status"] == "FAIL" for r in results)
+    print(f"[previews] done — {ok} rendered, {skipped} skipped, {failed} failed")
+    return 1 if failed else 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
