@@ -2385,9 +2385,29 @@ EOF
 - Consumes: `gsmp.spec.SourceSpec`, `gsmp.baseline`, `gsmp.filters`, `gsmp.encode`, `gsmp.writer`
 - Produces:
   - `gsmp.runner.FrameRecord(rgb, capture, obj_name, split, episode, frame_idx, extra)`
-  - `gsmp.runner.run(spec, frames_by_unit, writer=None, dry_run=False) -> RunResult`
-  - `gsmp.runner.RunResult(kept_keys, n_candidates, n_kept, n_bg_kept)`
+  - `gsmp.runner.run(spec, units, writer=None, dry_run=False) -> RunResult`
+  - `gsmp.runner.RunResult(kept_keys, n_seen, n_kept, n_empty_kept, n_dup_dropped)`
   - 每个 source 模块导出 `SPEC`、`iter_units()`、`dry_run_keys(limit=None)`
+
+> ⚠️ **本节的 runner 设计已于 2026-08-05 重写。** 初稿与 legacy `process()`
+> （`make_parquet_v2.py:784-910`）在四处根本性地不一致，任何按初稿实现的
+> runner 都不可能通过回归，且失败会表现为"容差不够"而非"逻辑错误"——
+> 极易被误判为需要放宽断言。四处差异均已实测确认：
+>
+> | # | 初稿 | legacy 实际 | 证据 |
+> |---|---|---|---|
+> | 1 | `frames = list(frames)` 缓冲整个 unit | 流式消费，只缓冲 `BASE_FRAMES` 个 `grey_center` 裁剪（每个约 9.6KB） | gelslam 最大 episode 45,557 帧，全缓冲需 **10.5GB**，而可用内存 22GB |
+> | 2 | baseline 帧也参与过滤与输出 | 前 10 帧被**消费掉**，`continue`，永不输出 | 已发布 gelslam 每个 capture 的最小 `frame_idx` **恰好是 10** |
+> | 3 | `rng.random() < bg_keep_rate` 随机保留 | **确定性配额**：`n_empty_kept >= rate * max(n_kept,1)` 就丢弃 | `:864-868`，`EMPTY_BUDGET` 用作比例上限而非概率 |
+> | 4 | phash 去重用全局 lookback | 每个 capture **重置** `cap_phashes` | `:829` capture 变化时清空 |
+>
+> **第 3 点的后果最重要：gelslam 路径完全没有随机性。** 因此回归断言对该源
+> 应要求**精确相等**，而不是套用 1.5% 随机容差。容差只对确实含随机采样的
+> 源（baseline 随机抽样类）才有意义。
+>
+> 另：legacy 的 stride 限速器仅在 `n_kept > BUDGET*0.95`（190,000）时才
+> 提升到 1.0 以上；已发布源最大为 sim_starstruck 166,104，**从未触发**。
+> 故 runner 不实现 stride，但需在 docstring 注明此结论及其依据。
 
 - [ ] **Step 1: 写失败测试**
 
@@ -2404,13 +2424,14 @@ from gsmp.spec import SourceSpec
 
 def _spec(**kw):
     base = dict(name="demo", domain="real", gel_variant="markerless",
-                license_repo="main", baseline=FirstNFrames(2), i_min=10.0,
+                license_repo="main", baseline=FirstNFrames(10), i_min=10.0,
                 phash_dist=None, bg_keep_rate=0.0)
     base.update(kw)
     return SourceSpec(**base)
 
 
 def _unit(values, capture="c0"):
+    """One frame per value. runner.BASE_FRAMES (=10) of them are consumed."""
     return capture, [
         FrameRecord(rgb=np.full((80, 120, 3), v, dtype=np.uint8),
                     capture=capture, frame_idx=i)
@@ -2418,50 +2439,84 @@ def _unit(values, capture="c0"):
     ]
 
 
-def test_keeps_only_frames_passing_the_filter():
-    # first 2 frames are the baseline (value 10); frame 2 is a strong contact
-    unit = _unit([10, 10, 200, 10])
+def test_first_ten_frames_are_consumed_as_baseline_and_never_emitted():
+    """Legacy's fingerprint: every published GelSLAM capture starts at
+    frame_idx 10, because the head of each capture builds the baseline."""
+    unit = _unit([10] * 10 + [200, 200])
     res = run(_spec(), [unit], dry_run=True)
-    assert res.kept_keys == {("c0", 2)}
-    assert res.n_candidates == 4
+    assert res.kept_keys == {("c0", 10), ("c0", 11)}
+    assert all(idx >= 10 for _, idx in res.kept_keys)
 
 
-def test_bg_keep_rate_zero_keeps_nothing_extra():
-    res = run(_spec(bg_keep_rate=0.0), [_unit([10, 10, 10, 10])], dry_run=True)
+def test_keeps_only_frames_passing_the_filter():
+    unit = _unit([10] * 10 + [200, 10, 200])
+    res = run(_spec(), [unit], dry_run=True)
+    assert res.kept_keys == {("c0", 10), ("c0", 12)}
+
+
+def test_background_quota_is_deterministic_not_random():
+    """bg_keep_rate is a running ratio cap, not a probability. Two identical
+    runs must produce identical sets, and the count must obey the quota."""
+    unit = _unit([10] * 10 + [10] * 100)
+    a = run(_spec(bg_keep_rate=0.015), [unit], dry_run=True)
+    b = run(_spec(bg_keep_rate=0.015), [unit], dry_run=True)
+    assert a.kept_keys == b.kept_keys
+    # With no passing frames, the quota admits at most one empty frame
+    # (n_empty_kept >= 0.015 * max(n_kept,1) blocks the rest).
+    assert a.n_empty_kept == len(a.kept_keys)
+    assert len(a.kept_keys) <= 2
+
+
+def test_bg_keep_rate_zero_keeps_nothing():
+    res = run(_spec(bg_keep_rate=0.0), [_unit([10] * 14)], dry_run=True)
     assert res.kept_keys == set()
-    assert res.n_bg_kept == 0
+    assert res.n_empty_kept == 0
 
 
-def test_bg_keep_rate_one_keeps_everything():
-    res = run(_spec(bg_keep_rate=1.0), [_unit([10, 10, 10, 10])], dry_run=True)
-    assert len(res.kept_keys) == 4
-
-
-def test_no_baseline_source_keeps_every_frame():
+def test_no_baseline_source_keeps_every_frame_including_the_head():
+    """NoBaseline sources consume no head frames, so frame 0 survives."""
     res = run(_spec(baseline=NoBaseline()), [_unit([1, 2, 3])], dry_run=True)
-    assert len(res.kept_keys) == 3
+    assert res.kept_keys == {("c0", 0), ("c0", 1), ("c0", 2)}
 
 
 def test_budget_caps_kept_frames():
-    unit = _unit([10, 10] + [200] * 50)
+    unit = _unit([10] * 10 + [200] * 50)
     res = run(_spec(budget=10), [unit], dry_run=True)
-    assert len(res.kept_keys) == 10
+    assert res.n_kept == 10
 
 
-def test_dedupe_drops_near_identical_frames():
+def test_dedupe_window_resets_between_captures():
+    """Legacy cleared cap_phashes per capture; a global window would wrongly
+    suppress an identical frame appearing in a different capture."""
     rng = np.random.default_rng(3)
     noise = rng.integers(0, 255, (80, 120, 3), dtype=np.uint8)
-    frames = [
-        FrameRecord(rgb=np.full((80, 120, 3), 10, dtype=np.uint8), capture="c0", frame_idx=0),
-        FrameRecord(rgb=np.full((80, 120, 3), 10, dtype=np.uint8), capture="c0", frame_idx=1),
-        FrameRecord(rgb=noise, capture="c0", frame_idx=2),
-        FrameRecord(rgb=noise.copy(), capture="c0", frame_idx=3),
-    ]
-    res = run(_spec(baseline=NoBaseline(), phash_dist=4, phash_lookback=10),
-              [("c0", frames)], dry_run=True)
-    # frame 3 is a byte-identical duplicate of frame 2 -> dropped
-    assert ("c0", 3) not in res.kept_keys
-    assert ("c0", 2) in res.kept_keys
+
+    def unit(name):
+        return name, [
+            FrameRecord(rgb=noise.copy(), capture=name, frame_idx=0),
+            FrameRecord(rgb=noise.copy(), capture=name, frame_idx=1),
+        ]
+
+    res = run(_spec(baseline=NoBaseline(), phash_dist=4, phash_lookback=30),
+              [unit("c0"), unit("c1")], dry_run=True)
+    # Within a capture the second copy is a duplicate; across captures it is not.
+    assert ("c0", 0) in res.kept_keys
+    assert ("c0", 1) not in res.kept_keys
+    assert ("c1", 0) in res.kept_keys
+    assert res.n_dup_dropped == 2
+
+
+def test_streaming_does_not_materialise_the_unit():
+    """The runner must consume an iterator, not require a list -- a GelSLAM
+    episode is 45,557 frames (10.5 GB) and cannot be buffered."""
+    def gen():
+        for i in range(30):
+            yield FrameRecord(rgb=np.full((80, 120, 3), 10 if i < 10 else 200,
+                                          dtype=np.uint8),
+                              capture="c0", frame_idx=i)
+
+    res = run(_spec(), [("c0", gen())], dry_run=True)
+    assert res.n_kept == 20
 ```
 
 - [ ] **Step 2: 运行测试确认失败**
@@ -2516,9 +2571,10 @@ class FrameRecord:
 @dataclasses.dataclass(frozen=True)
 class RunResult:
     kept_keys: Set[Key]
-    n_candidates: int
+    n_seen: int
     n_kept: int
-    n_bg_kept: int
+    n_empty_kept: int
+    n_dup_dropped: int
 
 
 def _row(spec: SourceSpec, rec: FrameRecord, rgb: np.ndarray) -> Dict[str, Any]:
@@ -2542,80 +2598,111 @@ def _row(spec: SourceSpec, rec: FrameRecord, rgb: np.ndarray) -> Dict[str, Any]:
     return row
 
 
+#: Frames consumed per capture to build the baseline. They are NOT emitted.
+BASE_FRAMES = 10
+
+
 def run(
     spec: SourceSpec,
-    units: Iterable[Tuple[str, Sequence[FrameRecord]]],
+    units: Iterable[Tuple[str, Iterable[FrameRecord]]],
     writer: Optional[ShardWriter] = None,
     dry_run: bool = False,
-    seed: Optional[int] = None,
 ) -> RunResult:
-    """Process `units`, where each unit is (unit_id, frames_of_that_unit).
+    """Process `units`, where each unit is (unit_id, iterable_of_frames).
 
-    A "unit" is whatever the baseline strategy is scoped to: a capture, an
-    episode, a touch, or the whole source for global strategies.
+    Mirrors legacy make_parquet_v2.process() decision-for-decision. Four
+    properties are load-bearing and were each verified against the published
+    release; none may be "simplified":
+
+    1. STREAMING. Frames are consumed one at a time and only BASE_FRAMES
+       greyscale centre-crops are held. Buffering a whole unit is not an
+       option: GelSLAM's largest episode is 45,557 frames, which is 10.5 GB
+       as uint8 RGB.
+
+    2. BASELINE FRAMES ARE CONSUMED. The first BASE_FRAMES frames of each
+       capture build the baseline and are never emitted. Every published
+       GelSLAM capture has minimum frame_idx == 10, which is this rule's
+       fingerprint.
+
+    3. THE BACKGROUND KEEP IS A DETERMINISTIC QUOTA, NOT A COIN FLIP. A
+       failing frame is kept only while n_empty_kept < bg_keep_rate *
+       max(n_kept, 1). Legacy used EMPTY_BUDGET as a running ratio cap. A
+       Bernoulli draw at the same rate keeps a different set of frames, so
+       for sources whose baseline needs no sampling this pipeline is fully
+       deterministic and regression must match EXACTLY.
+
+    4. DEDUPE STATE RESETS PER CAPTURE. Legacy cleared cap_phashes on every
+       capture change; a global window would suppress across captures.
+
+    Legacy also had a live stride rate-limiter, deliberately not reproduced:
+    it only rises above 1.0 once n_kept exceeds BUDGET * 0.95 (190,000), and
+    the largest published source is sim_starstruck at 166,104, so it never
+    activated in the build that produced the release.
     """
-    rng = random.Random(spec.rng_seed if seed is None else seed)
     kept: Set[Key] = set()
-    n_candidates = 0
-    n_bg = 0
-    recent_hashes: List[int] = []
+    n_seen = 0
+    n_kept = 0
+    n_empty_kept = 0
+    n_dup = 0
 
     for _unit_id, frames in units:
-        frames = list(frames)
-        if not frames:
-            continue
-
-        base = (
-            spec.baseline.compute([f.rgb for f in frames])
-            if needs_frames(spec.baseline)
-            else None
-        )
+        cap_buffer: List[np.ndarray] = []
+        base: Optional[np.ndarray] = None
+        cap_phashes: List[int] = []
+        uses_baseline = needs_frames(spec.baseline)
 
         for rec in frames:
-            n_candidates += 1
-            if len(kept) >= spec.budget:
+            if n_kept >= spec.budget:
                 break
 
-            if base is None:
-                passed = True
-            else:
-                passed = filters.passes_filter(
-                    rec.rgb, base, a_min=spec.a_min, i_min=spec.i_min
-                )
+            # (2) Consume the head of each capture to form the baseline.
+            if uses_baseline and base is None:
+                cap_buffer.append(filters.grey_center(rec.rgb))
+                n_seen += 1
+                if len(cap_buffer) >= BASE_FRAMES:
+                    base = np.median(np.stack(cap_buffer, axis=0), axis=0)
+                    cap_buffer = []
+                continue
 
-            is_bg = False
-            if not passed:
-                if rng.random() >= spec.bg_keep_rate:
-                    continue
-                is_bg = True
-            elif spec.touch_window_keep < 1.0:
-                # Bernoulli thinning inside the touch window (RTM only).
-                if rng.random() >= spec.touch_window_keep:
-                    continue
+            n_seen += 1
+
+            if base is None:
+                is_empty = False
+            else:
+                area, inten = filters.contact_metrics(rec.rgb, base)
+                is_empty = area < spec.a_min or inten < spec.i_min
+
+            # (3) Deterministic quota, not a Bernoulli draw.
+            if is_empty and n_empty_kept >= spec.bg_keep_rate * max(n_kept, 1):
+                continue
 
             rgb = filters.maybe_swap_channels(rec.rgb, spec.channel_mode)
 
+            # (4) Dedupe window is per-capture.
             if spec.dedupe_enabled:
                 h = filters.phash(rgb)
-                window = recent_hashes[-spec.phash_lookback:]
+                window = cap_phashes[-spec.phash_lookback:]
                 if any(filters.hamming(h, p) <= spec.phash_dist for p in window):
+                    n_dup += 1
                     continue
-                recent_hashes.append(h)
+                cap_phashes.append(h)
 
             kept.add((rec.capture, rec.frame_idx))
-            if is_bg:
-                n_bg += 1
+            n_kept += 1
+            if is_empty:
+                n_empty_kept += 1
             if not dry_run and writer is not None:
                 writer.add(_row(spec, rec, rgb))
 
-        if len(kept) >= spec.budget:
+        if n_kept >= spec.budget:
             break
 
     return RunResult(
         kept_keys=kept,
-        n_candidates=n_candidates,
-        n_kept=len(kept),
-        n_bg_kept=n_bg,
+        n_seen=n_seen,
+        n_kept=n_kept,
+        n_empty_kept=n_empty_kept,
+        n_dup_dropped=n_dup,
     )
 ```
 
