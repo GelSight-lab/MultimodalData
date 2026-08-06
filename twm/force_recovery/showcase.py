@@ -37,20 +37,32 @@ def _panel(img: np.ndarray, ind: np.ndarray, f_pred: float,
     ax.imshow(cv2.resize(img, (320, 240)))
     ax.set_title("raw GelSight frame", fontsize=8); ax.axis("off")
 
+    # Show only the interior region the force integration actually uses —
+    # the excluded border margin carries Poisson boundary artifacts that
+    # otherwise dominate the render and misrepresent the method.
+    from .depth_force import MARGIN_X, MARGIN_Y
+    core = ind[MARGIN_Y:-MARGIN_Y, MARGIN_X:-MARGIN_X]
+    vmax = max(float(core.max()), 0.05)
+
     ax = fig.add_subplot(1, 4, 2)
-    vmax = max(float(ind.max()), 0.05)
-    im = ax.imshow(ind, cmap="inferno", vmin=0, vmax=vmax)
-    ax.set_title("indentation δ [mm]", fontsize=8); ax.axis("off")
+    im = ax.imshow(core, cmap="inferno", vmin=0, vmax=vmax)
+    ax.set_title("indentation δ [mm] (interior)", fontsize=8); ax.axis("off")
     fig.colorbar(im, ax=ax, fraction=0.046)
 
     ax = fig.add_subplot(1, 4, 3, projection="3d")
-    step = 6
-    yy, xx = np.mgrid[0:ind.shape[0]:step, 0:ind.shape[1]:step]
-    ax.plot_surface(xx, yy, np.clip(ind[::step, ::step], 0, None),
-                    cmap="inferno", linewidth=0, antialiased=False)
-    ax.set_zlim(0, vmax); ax.set_title("3D reconstruction", fontsize=8)
-    ax.set_xticks([]); ax.set_yticks([]); ax.tick_params(labelsize=6)
-    ax.view_init(elev=55, azim=-60)
+    step = 4
+    z = np.clip(core[::step, ::step], 0, None)
+    yy, xx = np.mgrid[0:core.shape[0]:step, 0:core.shape[1]:step]
+    ax.plot_surface(xx, yy, z, cmap="inferno",
+                    rstride=1, cstride=1, edgecolor="k",
+                    linewidth=0.12, antialiased=True, shade=False)
+    ax.set_zlim(0, vmax)
+    ax.set_box_aspect((core.shape[1], core.shape[0],
+                       0.35 * max(core.shape)))
+    ax.set_title("3D reconstruction (mesh)", fontsize=8)
+    ax.set_xticks([]); ax.set_yticks([])
+    ax.tick_params(labelsize=6, pad=-2)
+    ax.view_init(elev=38, azim=-65)
 
     ax = fig.add_subplot(1, 4, 4)
     bars = [("predicted", f_pred, "#d95f02")]
