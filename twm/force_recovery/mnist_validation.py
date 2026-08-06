@@ -64,6 +64,13 @@ WHAT IT FOUND (n=420 touches, 106 objects; um)
   * unobserved LUT bins (14-17%) correlate only 0.10-0.29 with Type-2 error.
   * the |dI|>8 valid mask reaches IoU 0.614 / recall 0.917 against the true
     contact region while over-segmenting by 53% of its area.
+  * `sweep` re-presses the SAME digit meshes at 0.3..2.25 mm (Taxim reproduces
+    the shipped images to 1.76/255, and the re-rendered 2.25 mm row reproduces
+    the stage1 numbers, so this is a legitimate counterfactual): MAE / Type-2
+    goes 11/97 -> 35/186 -> 68/309 -> 127/515 -> 281/962 um and the peak ratio
+    1.00 -> 0.55. The digits are not the problem, the 2.25 mm press is: at
+    <=0.6 mm we beat 3D Cal's published numbers on non-spherical GT with no
+    fitting at all.
 
 Run:
   python -m force_recovery.mnist_validation verify    # geometry + Taxim repro
@@ -72,6 +79,7 @@ Run:
   python -m force_recovery.mnist_validation report    # aggregate + print table
   python -m force_recovery.mnist_validation diagnose  # gradient angle + FOV
   python -m force_recovery.mnist_validation controls  # C1 clipping, C2 plateau
+  python -m force_recovery.mnist_validation sweep     # same digits, 0.3-2.25mm
   python -m force_recovery.mnist_validation figures   # 8-sample comparison PNG
 """
 from __future__ import annotations
@@ -942,6 +950,77 @@ def controls():
     return df
 
 
+def depth_sweep(n_touch=40, depths=(0.3, 0.6, 1.0, 1.5, 2.25)):
+    """The decisive experiment: the SAME digit geometry, re-pressed shallower.
+
+    Every shipped touch is a 2.25 mm press, and every one of them is clipped by
+    the sensor edge, so the dataset cannot separate "digits are hard" from
+    "contacts that leave the field of view are hard". Taxim reproduces the
+    shipped images to 1.76/255 (see `verify`), so re-rendering the same mesh at
+    a smaller press depth is a legitimate counterfactual: identical geometry
+    and photometry, only the penetration changes.
+    """
+    import pandas as pd
+    lut, cnt = load_sim_lut()
+    cal = np.load(CAL_OUT / "glowtact_lut.npz")
+    bg = background()
+    bg320 = background((SIM_H, SIM_W))
+    meshes = load_meshes()
+    rows = []
+    touches = []
+    for s in iter_touches(sorted(SIM_DIR.glob("printed_train-*.parquet")),
+                          meshes=meshes, rng=np.random.default_rng(5)):
+        touches.append(s["hm"])
+        if len(touches) >= n_touch:
+            break
+    for hm0 in touches:
+        for d in depths:
+            hm = hm0 + (PRESS_MM - d)          # raise the sensor
+            if (hm < 0).mean() < 0.002:
+                continue
+            img = up(taxim_render(hm))
+            gt = np.maximum(up(-hm), 0.0)
+            m = gt > 0
+            edge = bool(m[0].any() or m[-1].any() or m[:, 0].any()
+                        or m[:, -1].any())
+            for tag, (L, C) in (("A", (cal["lut"], cal["count"])),
+                                ("B", (lut, cnt))):
+                st = stages_full(img, bg, L, C)
+                rows.append(dict(press=d, tag=tag, clipped=edge,
+                                 area=float(m.mean()),
+                                 peak=float(st["depth"].max()),
+                                 gt_peak=float(gt.max()),
+                                 xcorr=float(np.corrcoef(st["depth"].ravel(),
+                                                         gt.ravel())[0, 1]),
+                                 iou=float((st["valid"] & m).sum()
+                                           / max((st["valid"] | m).sum(), 1)),
+                                 **err_split(st["depth"], gt)))
+    _ = bg320
+    df = pd.DataFrame(rows)
+    df.to_json(OUT / "depth_sweep.json", orient="records")
+    print(f"{'press':>6} {'tag':>3} {'n':>4} {'clipped':>8} {'area%':>6} "
+          f"{'MAE':>7} {'T1':>6} {'T2':>8} {'peak/GT':>8} {'corr':>6} "
+          f"{'IoU':>5}")
+    for d in depths:
+        for tag in ("A", "B"):
+            s = df[(df.press == d) & (df.tag == tag)]
+            if not len(s):
+                continue
+            print(f"{d:6.2f} {tag:>3} {len(s):4d} {s.clipped.mean()*100:7.0f}% "
+                  f"{s.area.mean()*100:5.1f} {s.mae.mean():7.1f} "
+                  f"{s.t1.mean():6.1f} {s.t2.mean():8.1f} "
+                  f"{(s.peak/s.gt_peak).mean():8.2f} {s.xcorr.mean():6.2f} "
+                  f"{s.iou.mean():5.2f}")
+    sub = df[df.tag == "A"]
+    for lbl, q in (("enclosed", ~sub.clipped), ("clipped", sub.clipped)):
+        t = sub[q]
+        if len(t):
+            print(f"  pooled {lbl:9s} n={len(t):3d} MAE {t.mae.mean():6.1f} "
+                  f"T2 {t.t2.mean():7.1f} peak/GT {(t.peak/t.gt_peak).mean():.2f} "
+                  f"corr {t.xcorr.mean():.2f}")
+    return df
+
+
 def glowtact_grad_control(n=10):
     """Same gradient-angle statistic on the real sensor the LUT came from."""
     from force_recovery.lut_calibration import (GLOWTACT, PAT, detect_circle)
@@ -1031,4 +1110,4 @@ if __name__ == "__main__":
     cmd = sys.argv[1] if len(sys.argv) > 1 else "report"
     {"verify": verify, "simlut": fit_sim_lut, "stage1": stage1,
      "report": report, "figures": figures, "diagnose": diagnose,
-     "controls": controls}[cmd]()
+     "controls": controls, "sweep": depth_sweep}[cmd]()
