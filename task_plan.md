@@ -382,3 +382,36 @@ scripts/tactile/common/{figure,render}.py: 全分辨率 mm 网格 TriangleMesh +
 
 注: 深度等高线(0.3/0.6 峰值)本来就正确恢复了 star/triangle/quad 形状——
 问题一直是渲染管线, 不是重建。基座扣除仅用于figure, 不进力特征。
+
+## 标定分组重构 + FeelAnyForce 纳入尝试 (用户指示)
+用户口径: cnc_Mini = 同一 gel pad(单组); GlowTact GelSight-Mini 子集(改名
+mini_26) = 多个 pad, 需逐 pad 拟合; 其他数据集 = 原厂 gel, 假设同刚度。
+
+### GlowTact pad 标签调查 (未解决, 阻塞)
+- DATASET_MANIFEST.json 只覆盖 object 家族(balloon/bulb/pipe/rope), 无 pad 字段;
+  controlled 家族(A-E,quad,round,star,triangle) 无任何 pad 记录。
+- 经验证据: md5 显示 B/initial.jpg 与 round/initial.jpg **字节相同** ⇒ 同 session
+  ⇒ 同 pad; quad/quad_small/star/triangle 各自独立参考帧。
+- 参考帧两两距离: object 家族聚成一簇(相互 0.5-0.9), 与 controlled 家族距离
+  2.4-5.0(与 manifest 的两个源目录 mini_pad0_ob vs Mini_clean_final 吻合);
+  controlled 家族相互仅 0.6-1.5 = 参考帧漂移量级(1.1-2.3), 无法据此分 pad。
+- 结论: 无法从数据推断 pad 标签, 需用户提供映射。
+
+### FeelAnyForce 纳入: 帧级对齐失败 (负结果)
+- 本地 /media/yxma/Disk1/yuxiang/mini_data_parquet/feelanyforce 48197 帧,
+  **所有力标签列全为 null**(仅图像)。
+- 标签 CSV 可从 HF amirsh1376/FeelAnyForce 单独下载(3 个 csv, 110109 行,
+  FT 6 元组, Fz 为第 3 个)。已下载到 force_recovery/faf_labels/。
+- 尝试用 (capture, frame_idx) → 时间戳排序位置 对齐: 一致性检查全过
+  (42/42 capture 无越界, 无重复对), 但**正确性检查失败**:
+  | 检验 | rho(vol,|Fz|) |
+  |---|---|
+  | 真实对齐 | 0.455 |
+  | 对照A: capture 内打乱标签 | 0.442 ← 与真实几乎相同 |
+  | 对照B: 全局打乱 | -0.003 |
+  ⇒ 0.455 全部来自 capture 间结构(不同物体接触面积/力程不同),
+  帧级对齐**未被证实**。逐 capture rho 中位仅 0.087-0.124。
+- 教训: 全局打乱是无效对照; 必须用"组内打乱"才能检验组内信号。
+  (此前一度据全局对照宣称"join verified", 已撤回。)
+- 若要真正纳入: 需下载原始带时间戳文件名的图像 (HF 上 dataset.zip 分卷,
+  合计 ~157 GB) 或获得官方 frame 映射。
