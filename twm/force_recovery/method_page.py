@@ -103,6 +103,7 @@ Cuts single-frame spikes from 4–8% to ≈0.</p>
 <tr><td>vs FEA ground truth (FEATS)</td><td class="ok">ρ = 0.70</td><td>transfer: marker gel, ≤30 N, normal loading</td></tr>
 <tr><td>unseen indenter shapes</td><td class="ok">ρ = 0.85</td><td>same, shape generalization</td></tr>
 <tr><td>vs press depth (FoTa/T3, 61 captures)</td><td class="ok">ρ median 0.43 markerless / 0.24 markered, 84% positive</td><td>third-party Panda rig, household objects; no force GT — pose press-depth as monotone proxy (includes free approach, so ρ is attenuated)</td></tr>
+<tr><td>vs F/T ground truth (GlowTact, 600 of 14,715 frames)</td><td class="ok">ρ = 0.63 pooled, per-family up to 0.93</td><td>cleaned markerless-Mini presses, 0–20 N, controlled probes + deformable objects; friendliest GT conditions (10 free reference frames, centred presses — edge filtering changes nothing). Fitted scale 2.61 N/mm³, third independent estimate inside the 2–4× band</td></tr>
 <tr><td>vs F/T ground truth (FoTa cnc_Mini, 400 frames)</td><td class="ok">ρ = 0.34 pooled, 0.49 central presses; all 6 probes positive</td><td>CNC gantry + F/T sensor, markerless Mini, third-party rig. Fitted scale 1.08 N/mm³ vs 1.89 on FEATS — inside the stated 2–4× cross-sensor band. Only 4 truly free frames exist for referencing, and 62% of presses sit near the pad border where illumination falloff degrades reconstruction (controlled same-probe comparisons are cleanly monotone)</td></tr>
 <tr><td>React internal (72 sides)</td><td class="ok">SNR p50 ≈ 1200, ρ = 0.84 vs intensity</td><td>in-domain, per-episode references</td></tr>
 <tr><td>shear-dominant contact</td><td class="warn">ρ = −0.15</td><td>out of scope — stated blind spot</td></tr>
@@ -128,14 +129,15 @@ press depth only reaches ρ 0.78–0.88 <i>within</i> a probe — force at equal
 depth genuinely varies with texture and position.</p>
 </div>
 
-<h2>Three estimators, one ground truth</h2>
+<h2>Three estimators, two ground truths</h2>
 <div class="card">
 <img src="assets/three_way_comparison.png" alt="ours vs FEATS vs FeelAnyForce">
+<img src="assets/glowtact_comparison.png" alt="GlowTact comparison">
 <table>
 <tr><th>estimator</th><th>training data</th><th>ρ pooled / non-edge</th><th>MAE</th></tr>
-<tr><td>ours (physics + flatfield)</td><td>none — 1 fitted scalar</td><td>0.43 / 0.65</td><td>0.83 N</td></tr>
-<tr><td>FEATS U-net</td><td>FEA labels, marker gel</td><td class="warn">0.07 / 0.13</td><td>3.7 N</td></tr>
-<tr><td>FeelAnyForce (DINOv2)</td><td>200K ATI-labeled, markerless</td><td class="ok"><b>0.83 / 0.92</b></td><td>1.05 N</td></tr>
+<tr><td>ours (physics + flatfield)</td><td>none — 1 fitted scalar</td><td>cnc_Mini 0.43 / 0.65 · GlowTact 0.63</td><td>0.83 N</td></tr>
+<tr><td>FEATS U-net</td><td>FEA labels, marker gel</td><td class="warn">cnc_Mini 0.07 / 0.13</td><td>3.7 N</td></tr>
+<tr><td>FeelAnyForce (DINOv2)</td><td>200K ATI-labeled, markerless</td><td class="ok"><b>cnc_Mini 0.83 / 0.92 · GlowTact 0.90</b></td><td>1.05–2.1 N</td></tr>
 </table>
 <p>The honest conclusion for <b>labelling React</b>: FeelAnyForce is the
 strongest single estimator on markerless Mini — and on React itself the two
@@ -239,6 +241,12 @@ Cuts single-frame spikes from 4–8% to ≈0.</p>""",
     ("<td>same, shape generalization</td>", "<td>同上,形状泛化</td>"),
     ("<td>vs press depth (FoTa/T3, 61 captures)</td>",
      "<td>对按压深度(FoTa/T3,61 captures)</td>"),
+    ("<td>vs F/T ground truth (GlowTact, 600 of 14,715 frames)</td>",
+     "<td>对 F/T 真值(GlowTact,14,715 帧抽 600)</td>"),
+    ('<td class="ok">ρ = 0.63 pooled, per-family up to 0.93</td>',
+     '<td class="ok">混合 ρ = 0.63,单一家族最高 0.93</td>'),
+    ("<td>cleaned markerless-Mini presses, 0–20 N, controlled probes + deformable objects; friendliest GT conditions (10 free reference frames, centred presses — edge filtering changes nothing). Fitted scale 2.61 N/mm³, third independent estimate inside the 2–4× band</td>",
+     "<td>清洗过的无点 Mini 按压,0–20 N,受控探头 + 可形变物体;最友好的真值条件(10 帧自由参考、按压居中——边缘过滤不再有影响)。拟合刻度 2.61 N/mm³,第三个独立估计仍在 2–4× 带内</td>"),
     ("<td>vs F/T ground truth (FoTa cnc_Mini, 400 frames)</td>",
      "<td>对 F/T 真值(FoTa cnc_Mini,400 帧)</td>"),
     ('<td class="ok">ρ = 0.34 pooled, 0.49 central presses; all 6 probes positive</td>',
@@ -282,11 +290,11 @@ depth genuinely varies with texture and position.</p>""",
 纯体积 0.63)优于最大深度(0.63),明显优于接触面积(0.35);3 特征小线性模型 ρ 持平
 但 MAE 减半(0.61 N)。天花板也要认识:连 CNC 自己的指令压深在<i>探头内</i>也只有
 ρ 0.78–0.88——同样深度下力确实随纹理和位置变化。</p>"""),
-    ("<h2>Three estimators, one ground truth</h2>", "<h2>三个估计器,同一份真值</h2>"),
+    ("<h2>Three estimators, two ground truths</h2>", "<h2>三个估计器,两份真值</h2>"),
     ("<tr><th>estimator</th><th>training data</th><th>ρ pooled / non-edge</th><th>MAE</th></tr>",
      "<tr><th>估计器</th><th>训练数据</th><th>ρ 混合 / 非边缘</th><th>MAE</th></tr>"),
-    ("<td>ours (physics + flatfield)</td><td>none — 1 fitted scalar</td>",
-     "<td>我们(物理 + 平场)</td><td>零训练——1 个拟合标量</td>"),
+    ("<td>ours (physics + flatfield)</td><td>none — 1 fitted scalar</td><td>cnc_Mini 0.43 / 0.65 · GlowTact 0.63</td>",
+     "<td>我们(物理 + 平场)</td><td>零训练——1 个拟合标量</td><td>cnc_Mini 0.43 / 0.65 · GlowTact 0.63</td>"),
     ("<td>FEATS U-net</td><td>FEA labels, marker gel</td>",
      "<td>FEATS U-net</td><td>FEA 标签,有点 gel</td>"),
     ("<td>FeelAnyForce (DINOv2)</td><td>200K ATI-labeled, markerless</td>",
