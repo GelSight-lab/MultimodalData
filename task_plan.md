@@ -239,3 +239,14 @@ build_previews_index, build_episode_previews, build_lerobot_dataset
 ## Status
 **全部完成**(Phase 1-7)。commit 726db47 + 本次追加 commit;
 HF 已发布 60 文件(代码+parquet+README)并回读验证。
+
+## Goal 6 F2+F4 结果 (2026-08-06, held-out, GlowTact 0-20N)
+**Outlier 归因**: top-20 误差帧 19/20 = EDGE+DEEP+HIGH-F(贴边 4-5mm 深压:
+印痕出视野 + gel 触底,力涨而可见压入饱和,全部严重低估)→ 物理作用域:
+接触完整在视野内 (质心±等效半径在 interior 框内) 且 z≤4.2mm(pad 厚)
+**作用域内 7 种子**: pooled ρ 0.904 [0.876,0.919], MAE 0.95N [0.87,1.04]
+逐 indenter 中位: quad 0.988✓ triangle 0.971✓ B 0.927 quad_small 0.907
+star 0.860 round 0.811(round=受限力程效应:in-view 剔除了其大深压帧)
+**途中 bug**: 缓存 area 是像素数,误除 MM_PER_PIXEL 使等效半径×24 →作用域 0/6257
+**待续**: round/star 提升(受限力程分析、halo 积分修正)、cnc_Mini z 监督
+通用化、站点更新
