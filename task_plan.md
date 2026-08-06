@@ -351,3 +351,34 @@ cnc=0.319 (原 0.074)。旧值存 results_metrics.json history 字段。已发�
 results_metrics.json(本次曾清掉手动更新)——更新数字后只跑 build_pages()。
 矩阵页现值: Ours glowtact 0.99 / cnc 0.94(视野内) / feats 0.74;
 "每网络统治本域"结论文本同步 0.74–0.99。
+
+## 2026-08-06 · Site media regenerated on LUT-v2 (retired the last MLP-era figures/videos)
+Producers rewritten/edited: showcase.py (full rewrite around debug_gallery.stages),
+visualize.py (dexforce_figure/overlay_clip take force override), site.py (LUT flow +
+matrix 0.77/0.94-in-view/0.98 + rebuild_from_cache), method_page.py (validation text
+0.74–0.99, gallery clip picked at build), actions_page.py (force-source text EN+ZH).
+Regenerated: gallery 20 panels (cnc in-view rho=0.920 MAE=0.29 N; feats rho=0.757
+MAE=5.37 N) + 10 React clips (live LUT depth, peaks 0.75–1.73 N), index depth panel
+(motherboard ep000 left rows 1990/3044/3665, 1.1–1.3 mm), dexforce figure, root
+overlay clip, action_trace.json (peak 2.37 N). React newtons via GlowTact sphere
+calibration (round, in-view, 0–8 N, pixel-space gain field): holdout rho=0.979
+MAE=0.24 N — pooled multi-object fit rejected (rho=0.47, isotonic saturation gave
+fake repeated 11–13 N peaks). 10 orphaned MLP-era assets (timeline_*, depth_*ep*,
+pushT clip, old validation scatters) moved out of site tree to _old_site_assets_mlp/.
+results_*.png and debug_pipeline pages were already LUT-v2 (untouched). Published:
+https://huggingface.co/spaces/yxma/react-force-recovery
+
+## Open3D 网格可视化 + "噪声"根因 (用户提问)
+工具: twm/force_recovery/o3d_view.py (移植自 Yuxiang-Ma/ProbingPi
+scripts/tactile/common/{figure,render}.py: 全分辨率 mm 网格 TriangleMesh +
+梯度灰度烘焙顶点色, light_on=False 离屏渲染)。
+
+| found | evidence | fix | verified |
+|---|---|---|---|
+| open3d 0.15.2 visible=False 段错误 | core dumped | 必须 xvfb-run 包裹 | 几何占比 13.9% |
+| "重建有噪声"归因错误 | 深度域 HF 噪声仅占峰值 0.3% (0.0065/1.9mm) | 无需去噪 | 中值/双边/梯度平滑 A/B 增益 <4% |
+| 真实噪声在梯度域 | 22.2% HF, 9.8% 接触像素落在未观测 LUT bin(最近邻填充) | Poisson 积分本身低通掉 | 深度 0.3% |
+| 3D 看起来像土包 | valid mask(|dI|>8) 被光晕主导→blob, 积分抬起宽基座 | remove_halo_pedestal (环形中值基座扣除, 仅渲染用) | star 5 臂/triangle/quad 清晰可辨 |
+
+注: 深度等高线(0.3/0.6 峰值)本来就正确恢复了 star/triangle/quad 形状——
+问题一直是渲染管线, 不是重建。基座扣除仅用于figure, 不进力特征。
