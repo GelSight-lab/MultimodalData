@@ -419,7 +419,9 @@ figure{{margin:14px 0}} figcaption{{color:var(--dim);font-size:.72rem;
 font-family:'IBM Plex Mono',monospace;margin-top:2px}}</style></head>
 <body><div class="wrap">
 <header><div class="kicker">React force recovery · gallery</div>
-<h1>Samples: raw | depth | Open3D mesh | force</h1>
+<h1>Samples: every stage from raw frame to force</h1>
+<p>raw &rarr; reference &rarr; difference image &rarr; valid mask &rarr; LUT surface
+gradient &rarr; depth &rarr; Open3D mesh &rarr; predicted vs ground truth.</p>
 <a class="pill" href="method.html">↖ method</a>
 <a class="pill" href="index.html">results</a></header>
 <h2>{len(imgs)} image samples (cnc_Mini + FEATS, with ground truth)</h2>

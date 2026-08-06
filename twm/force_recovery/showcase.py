@@ -198,34 +198,48 @@ def mesh_tile(depth: np.ndarray, w: int = 320, h: int = 240, stride: int = 2,
 
 # ------------------------------------------------------------------ panels
 def _panel(img: np.ndarray, depth: np.ndarray, f_pred: float,
-           f_true: float | None, title: str, out: Path) -> None:
-    """raw | depth heat map | Open3D mesh | force bars.
+           f_true: float | None, title: str, out: Path,
+           ref: np.ndarray | None = None, st: dict | None = None) -> None:
+    """Every stage the force number is built from, left to right:
 
-    The 3D view is an Open3D TriangleMesh over the full cropped depth map —
-    with the LUT pipeline the whole 320x240 crop is the region used for force
-    integration (no excluded border margin).
+        raw | reference | dI = img-ref | valid mask | |LUT gradient| |
+        depth [mm] | Open3D mesh | predicted vs ground truth
+
+    The middle four are what the pipeline actually operates on, and they are
+    what makes a wrong result diagnosable: on a marker gel the mask speckles
+    and the gradient shows a ring at every dot, which no amount of looking at
+    the raw frame reveals.
     """
-    fig = plt.figure(figsize=(11.5, 3.1))
-    ax = fig.add_subplot(1, 4, 1)
-    ax.imshow(np.clip(img, 0, 255).astype(np.uint8))
-    ax.set_title("raw GelSight frame (cropped view)", fontsize=8)
-    ax.axis("off")
-
     d = np.clip(depth, 0, None)
     vmax = max(float(d.max()), 0.05)
+    have = ref is not None and st is not None
+    ncol = 8 if have else 4
+    fig = plt.figure(figsize=(2.55 * ncol, 3.1))
+    k = 1
 
-    ax = fig.add_subplot(1, 4, 2)
-    im = ax.imshow(d, cmap="inferno", vmin=0, vmax=vmax)
-    ax.set_title("LUT depth [mm]", fontsize=8)
-    ax.axis("off")
-    fig.colorbar(im, ax=ax, fraction=0.046)
+    def add(data, title_, cmap=None, colorbar=False):
+        nonlocal k
+        a = fig.add_subplot(1, ncol, k)
+        im = a.imshow(data, cmap=cmap)
+        a.set_title(title_, fontsize=8)
+        a.axis("off")
+        if colorbar:
+            fig.colorbar(im, ax=a, fraction=0.046)
+        k += 1
 
-    ax = fig.add_subplot(1, 4, 3)
-    ax.imshow(mesh_view(d))
-    ax.set_title("3D reconstruction (Open3D mesh)", fontsize=8)
-    ax.axis("off")
+    add(np.clip(img, 0, 255).astype(np.uint8), "raw GelSight frame")
+    if have:
+        add(np.clip(ref, 0, 255).astype(np.uint8), "reference (no contact)")
+        # x3 gain: dI is only a few gray levels away from contact, and the
+        # site figure has to show that it is NOT zero there either
+        add(np.clip((img - ref) * 3 + 128, 0, 255).astype(np.uint8),
+            "difference image  dI = img − ref  (×3)")
+        add(st["valid"], "valid mask  |dI| > 8", cmap="gray")
+        add(st["gmag"], "|LUT surface gradient|", cmap="magma")
+    add(d, "LUT depth [mm]", cmap="inferno", colorbar=True)
+    add(mesh_view(d), "3D reconstruction (Open3D mesh)")
 
-    ax = fig.add_subplot(1, 4, 4)
+    ax = fig.add_subplot(1, ncol, k)
     bars = [("predicted", f_pred, "#d95f02")]
     if f_true is not None:
         bars.append(("ground truth", f_true, "#1b9e77"))
@@ -293,7 +307,7 @@ def image_samples(n_cnc: int = 14, n_feats: int = 6) -> list[Path]:
         out = GALLERY / f"cnc_{k:02d}.png"
         _panel(img, st["depth"], float(pred[i]), float(f[i]),
                f"cnc_Mini {rows[i]['group']}  z={rows[i]['z']:.1f} mm",
-               out)
+               out, ref=ref, st=st)
         outs.append(out)
 
     # --- FEATS val, marker gel (difference imaging cancels the dots)
@@ -318,7 +332,7 @@ def image_samples(n_cnc: int = 14, n_feats: int = 6) -> list[Path]:
         st = stages(img, ref)
         out = GALLERY / f"feats_{k:02d}.png"
         _panel(img, st["depth"], float(predf[i]), float(ff[i]),
-               f"FEATS {rows[i]['group']}", out)
+               f"FEATS {rows[i]['group']}", out, ref=ref, st=st)
         outs.append(out)
 
     (GALLERY / "metrics.json").write_text(json.dumps({
