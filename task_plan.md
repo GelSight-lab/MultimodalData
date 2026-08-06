@@ -415,3 +415,31 @@ mini_26) = 多个 pad, 需逐 pad 拟合; 其他数据集 = 原厂 gel, 假设�
   (此前一度据全局对照宣称"join verified", 已撤回。)
 - 若要真正纳入: 需下载原始带时间戳文件名的图像 (HF 上 dataset.zip 分卷,
   合计 ~157 GB) 或获得官方 frame 映射。
+
+## 会话级预处理取代手工 pad 标签 (设计, 用户提议)
+问题: 逐 pad 拟合依赖不存在的标签, 且"逐组拟合"把 gel 差异吸收进权重,
+使 rho 只是组内相关, 无法证明绝对牛顿可迁移。
+方案: 把 pad 差异在**输入端**归一化, 而不是在输出端用权重吸收。
+
+SessionCalibration (每个 session = batch/probe/family/capture, 全自动):
+ 1. rest frame: 用数据集自带的无接触标志取中值
+    (Sparsh in_contact==0 / GlowTact initial.jpg / cnc,FEATS 最小力帧)
+ 2. 光度归一化: 把本 session 的 dI 分布(接触像素稳健分位)仿射映射到 LUT
+    宿主 pad 的分布 -> 一个 LUT 即可跨 pad 使用
+ 3. 几何锚定(有球压时): a^2=d(2R-d) 反解 R 与深度基准 -> 绝对 mm 与
+    物理锚定的深度增益(非力标签拟合)
+ 4. 空间增益场 u(x,y) 每 session 估计(已有机制)
+验收: 归一化后用**单一共享力模型**跨所有 session/数据集, 若能逼近逐组拟合
+的 rho, 即证明绝对牛顿可迁移(当前缺的正是这一点)。两者都报告。
+
+### 新数据集: facebook/gelsight-force-estimation (Sparsh, CoRL2024) 已验证可用
+- 结构 {sphere x6, flat x2, sharp x2} batch, 每 batch: 4x dataset_gelsight_NN.pkl
+  (67MB, 各 5000 帧, PNG bytes 320x240 RGB) + dataset_slip_forces.pkl (1.8MB)
+  注意: org_dataset_*.pkl 是 1.6GB 原版, **不需要**; 全部 10 batch 仅约 2.7GB
+  (不是 52.8GB)。
+- 标签: {'in_contact': (17288,) 每帧标志, 'trajectories': {tid: {indexes(N,),
+  forces(N,3), poses(N,7), slip_label, coef_friction,...}}}
+- **indexes 是显式帧索引** (batch_1: 10740 帧全唯一, 范围 88..17166), 与
+  FeelAnyForce 的推断式对齐形成对比 -> 可直接 join, 无需猜测。
+- 力: batch_1 Fz 0.063..1.888 N (含剪切 Fx,Fy), 球/平/尖三种压头, 有滑移标签。
+- 10 个 batch 天然就是 session/pad 分组 -> 正是验证"会话归一化"的理想测试床。
