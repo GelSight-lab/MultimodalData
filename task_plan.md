@@ -693,3 +693,18 @@ site 图: sparsh_figure.py -> results_sparsh.png (GlowTact表 vs 自标定表 vs
 => 本传感器上"表"和"解算器"都是好的, 缺陷在覆盖率/掩码/平顶几何。
 修正: 图标题曾对所有行硬写"(plateau)", 但 1.4 对球是对的、对平顶是错的,
 已去掉依赖压头的判定词, 只报数字。
+
+## 数据集筛选: 用户明确限定"只要 GelSight Mini"
+| 候选 | 传感器 | 裁定 |
+|---|---|---|
+| **TacVerse** (HF Lan-2025/Tactile) | **确证 GelSight Mini**, 无marker 16917 + 有marker 15487, 2mm球, 0.1mm步进, 六轴 M3813B | ✅ 唯一确定符合; **gated(401)需填表**; 力单位未声明; 许可冲突(HF卡 cc-by-4.0 vs 论文 CC BY-NC-ND) |
+| ToucHD-Force (BAAI) | README **从未列出五个传感器** -> 含Mini未证实; 且滑动采集(剪切主导) | ⚠️ 降级 |
+| DAR_OTS | GelSight系但**型号未声明**; 另发现 mb0i0(marker)力标签与 wmb0i0(markerless) 为同一多重集(仅顺序不同)=标签搬运 | ❌ |
+| GenForce | 型号未证实; 且仅 240x160 单通道 marker 图, **无RGB** -> 无法驱动光度LUT | ❌ |
+| AllSight | 圆柱指非平面gel; depth字段与法向力相关仅0.108 | ❌ |
+| facebook/digit-force-estimation | DIGIT | ❌ |
+| GelSight-YoungsModulus | Wedge; 力疑为夹爪估计非实测 | ❌ |
+已验证的负结果(勿再查): 9DTact无数据集发布; TLabel-Bench无力标签;
+GelSlim 4.0无牛顿力发布; Awesome-Touch列表无新增。
+=> 行动项: 填 TacVerse gate 表单(唯一 Mini + marker + 已知球 + 步进深度,
+   正是我们的标定几何; 力子集 6.8GB)。
