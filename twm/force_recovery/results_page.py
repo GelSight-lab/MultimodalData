@@ -238,22 +238,39 @@ scale — see <a href="method.html">per-dataset calibration</a>.</p></div>
 
 <h2>Sparsh (Meta) — a fourth dataset, and where the method breaks</h2>
 <div class="card"><img src="assets/results_sparsh.png" alt="Sparsh results">
-<p class="footnote">10 gel pads (6 sphere, 2 flat, 2 sharp), force in newtons,
-7500 frames. Calibrated per pad: &rho;=0.56, MAE 0.138 N, against a
-labels-shuffled-within-pad control of &rho;=0.16 — the join is real. Fitting on
-one pad and applying it <b>unchanged</b> to another costs almost nothing
-(off-diagonal 0.42&ndash;0.59 vs diagonal 0.47&ndash;0.59), so one calibration
-does carry across pads.</p>
-<p class="footnote"><b>The honest caveat:</b> on this sensor our
-GlowTact-calibrated LUT does not reconstruct valid geometry — a sphere press
-comes out bilobed with a central dip instead of a dome, because the
-illumination geometry differs. So these correlations track d<i>I</i>
-magnitude, not depth. Read 0.56 as a <b>transfer limit for a foreign sensor</b>,
-not as a reconstruction result. Three dataset defects also had to be fixed
-first: flat/sharp trajectories ship 5 more frame indices than forces (silently
-drifting the labels, &rho;&asymp;0 until paired within each trajectory),
-sharp/batch_2 is stored BGR while the other nine are RGB, and flat/batch_2
-ships only 3 of 4 image files.</p></div>
+<p class="footnote">10 gel pads (6 sphere, 2 flat, 2 sharp), force in newtons.
+Our GlowTact table applied to this foreign sensor reaches &rho;=0.878 on
+in-view frames. Rebuilding the table from <b>Sparsh's own sphere presses</b>
+— 708 frames, radius fitted at R=2.44 mm from a&sup2;=d(2R&minus;d) — takes it
+to <b>&rho;=0.968, MAE 0.042 N</b>, against a labels-shuffled-within-pad
+control of 0.23. Fitting on one pad and applying it <b>unchanged</b> to another
+costs nothing measurable (0.96&ndash;0.98 everywhere): one table, six gel pads.</p>
+<img src="assets/sparsh_dome.png" alt="dome before and after">
+<p class="footnote">Why the table matters more than the fit: with the wrong
+sensor's table a sphere press integrates to a <b>bilobed shape with a central
+dip</b>; with the self-calibrated table it is a single dome matching the
+analytic spherical cap (residual RMS 0.179 &rarr; <b>0.0545 mm</b>). Measured
+before any integration, the LUT gradient sits <b>93.3&deg;</b> from the analytic
+sphere gradient — chance is 90&deg; — and self-calibration brings it to
+<b>4.5&deg;</b> (within 30&deg;: 15% &rarr; 99%). Reverse control: the Sparsh
+table fails on GlowTact frames too, so this is a per-sensor property, not a
+bad table.</p>
+<p class="footnote"><b>What this costs and where it still fails.</b> The price
+is one set of sphere presses with logged depth on the target sensor: this is
+<b>calibrate once per sensor</b>, not zero-shot. Rank order transfers across
+indenter shapes but <i>absolute newtons do not</i> — a sphere-fitted model
+applied to a flat punch degrades to MAE 0.37&ndash;0.40 N, and it got
+<i>worse</i> with the correct table, because true geometry widens the real
+feature-scale gap between a sphere and a punch. The sharp indenter is
+unsupported (in-view &rho; 0.58). Shear stays out of reach by construction —
+the top shear decile keeps 1.6&times; the residual whichever table is used.
+Frames are restricted to a visible contact disc: 36% of presses show none and
+11% are clipped, and the clipped subset carries the <i>highest</i> median force
+yet scores worse, so this is visibility, not force-range filtering. Three
+dataset defects had to be fixed first: flat/sharp trajectories ship 5 more
+frame indices than forces (silently drifting the labels, &rho;&asymp;0 until
+paired within each trajectory), sharp/batch_2 is stored BGR while the other
+nine are RGB, and flat/batch_2 ships only 3 of 4 image files.</p></div>
 
 <h2>React — no ground truth, so: do independent methods agree?</h2>
 <div class="card"><img src="assets/results_react.png" alt="React agreement">
@@ -283,10 +300,10 @@ data: FEATS (2411.03315) · FoTa/T3 (2406.13640) · GlowTact
 ZH = [
     ('<h2>Sparsh (Meta) — a fourth dataset, and where the method breaks</h2>',
      '<h2>Sparsh (Meta) — 第四个数据集，以及方法的边界</h2>'),
-    ('<p class="footnote">10 gel pads (6 sphere, 2 flat, 2 sharp), force in newtons,\n7500 frames. Calibrated per pad: &rho;=0.56, MAE 0.138 N, against a\nlabels-shuffled-within-pad control of &rho;=0.16 — the join is real. Fitting on\none pad and applying it <b>unchanged</b> to another costs almost nothing\n(off-diagonal 0.42&ndash;0.59 vs diagonal 0.47&ndash;0.59), so one calibration\ndoes carry across pads.</p>',
-     '<p class="footnote">10 块 gel pad（6 球、2 平、2 尖），力为牛顿，7500 帧。\n逐 pad 标定：&rho;=0.56，MAE 0.138 N；对照组（pad 内打乱标签）&rho;=0.16 ——\n对齐是真实的。在一块 pad 上拟合后<b>原样</b>应用到另一块几乎不损失\n（非对角 0.42&ndash;0.59 vs 对角 0.47&ndash;0.59），说明一套标定确实能跨 pad。</p>'),
-    ('<p class="footnote"><b>The honest caveat:</b> on this sensor our\nGlowTact-calibrated LUT does not reconstruct valid geometry — a sphere press\ncomes out bilobed with a central dip instead of a dome, because the\nillumination geometry differs. So these correlations track d<i>I</i>\nmagnitude, not depth. Read 0.56 as a <b>transfer limit for a foreign sensor</b>,\nnot as a reconstruction result. Three dataset defects also had to be fixed\nfirst: flat/sharp trajectories ship 5 more frame indices than forces (silently\ndrifting the labels, &rho;&asymp;0 until paired within each trajectory),\nsharp/batch_2 is stored BGR while the other nine are RGB, and flat/batch_2\nships only 3 of 4 image files.</p>',
-     '<p class="footnote"><b>必须说明的警告：</b>在这个传感器上，我们基于 GlowTact\n标定的 LUT <b>无法重建出正确几何</b>——球压头压出来是"双瓣+中心凹陷"而不是圆顶，\n因为打光几何不同。所以这些相关性追踪的是 d<i>I</i> 幅值，不是深度。0.56 应读作\n<b>外来传感器的迁移上限</b>，而非重建结果。此外还先修了三个数据集缺陷：\nflat/sharp 的轨迹里帧索引比力多 5 个（标签会静默错位，逐轨迹配对前 &rho;&asymp;0）、\nsharp/batch_2 以 BGR 存储而其余九个是 RGB、flat/batch_2 只有 3 个图像文件。</p>'),
+    ('<p class="footnote">10 gel pads (6 sphere, 2 flat, 2 sharp), force in newtons.\nOur GlowTact table applied to this foreign sensor reaches &rho;=0.878 on\nin-view frames. Rebuilding the table from <b>Sparsh\'s own sphere presses</b>\n— 708 frames, radius fitted at R=2.44 mm from a&sup2;=d(2R&minus;d) — takes it\nto <b>&rho;=0.968, MAE 0.042 N</b>, against a labels-shuffled-within-pad\ncontrol of 0.23. Fitting on one pad and applying it <b>unchanged</b> to another\ncosts nothing measurable (0.96&ndash;0.98 everywhere): one table, six gel pads.</p>\n<img src="assets/sparsh_dome.png" alt="dome before and after">\n<p class="footnote">Why the table matters more than the fit: with the wrong\nsensor\'s table a sphere press integrates to a <b>bilobed shape with a central\ndip</b>; with the self-calibrated table it is a single dome matching the\nanalytic spherical cap (residual RMS 0.179 &rarr; <b>0.0545 mm</b>). Measured\nbefore any integration, the LUT gradient sits <b>93.3&deg;</b> from the analytic\nsphere gradient — chance is 90&deg; — and self-calibration brings it to\n<b>4.5&deg;</b> (within 30&deg;: 15% &rarr; 99%). Reverse control: the Sparsh\ntable fails on GlowTact frames too, so this is a per-sensor property, not a\nbad table.</p>',
+     '<p class="footnote">10 块 gel pad（6 球、2 平、2 尖），力为牛顿。我们用 GlowTact\n标定的表应用到这个外来传感器，视野内 &rho;=0.878。改用 <b>Sparsh 自己的球压帧</b>\n重建查找表（708 帧，由 a&sup2;=d(2R&minus;d) 拟合出 R=2.44 mm）后达到\n<b>&rho;=0.968，MAE 0.042 N</b>，对照组（pad 内打乱标签）为 0.23。\n在一块 pad 上拟合后<b>原样</b>应用到另一块没有可测代价（各处 0.96&ndash;0.98）：\n一张表，六块 gel pad。</p>\n<img src="assets/sparsh_dome.png" alt="重建前后对比">\n<p class="footnote">为什么"表"比"拟合"更关键：用错传感器的表，球压积分出的是\n<b>双瓣+中心凹陷</b>；用自标定的表则是与解析球冠吻合的单一圆顶\n（残差 RMS 0.179 &rarr; <b>0.0545 mm</b>）。在任何积分之前测量：LUT 梯度与解析球面\n梯度夹角为 <b>93.3&deg;</b>（随机水平是 90&deg;），自标定后降到 <b>4.5&deg;</b>\n（30&deg; 以内占比 15% &rarr; 99%）。反向对照：Sparsh 的表在 GlowTact 帧上同样失败，\n所以这是逐传感器属性，而非"我们的表不好"。</p>'),
+    ('<p class="footnote"><b>What this costs and where it still fails.</b> The price\nis one set of sphere presses with logged depth on the target sensor: this is\n<b>calibrate once per sensor</b>, not zero-shot. Rank order transfers across\nindenter shapes but <i>absolute newtons do not</i> — a sphere-fitted model\napplied to a flat punch degrades to MAE 0.37&ndash;0.40 N, and it got\n<i>worse</i> with the correct table, because true geometry widens the real\nfeature-scale gap between a sphere and a punch. The sharp indenter is\nunsupported (in-view &rho; 0.58). Shear stays out of reach by construction —\nthe top shear decile keeps 1.6&times; the residual whichever table is used.\nFrames are restricted to a visible contact disc: 36% of presses show none and\n11% are clipped, and the clipped subset carries the <i>highest</i> median force\nyet scores worse, so this is visibility, not force-range filtering. Three\ndataset defects had to be fixed first: flat/sharp trajectories ship 5 more\nframe indices than forces (silently drifting the labels, &rho;&asymp;0 until\npaired within each trajectory), sharp/batch_2 is stored BGR while the other\nnine are RGB, and flat/batch_2 ships only 3 of 4 image files.</p>',
+     '<p class="footnote"><b>代价与仍然失败之处。</b>代价是在目标传感器上采一组带深度记录的\n球压：这是<b>每个传感器标定一次</b>，不是零样本。秩序可以跨压头形状迁移，但\n<i>绝对牛顿不行</i>——球拟合的模型用到平头上 MAE 退化到 0.37&ndash;0.40 N，而且\n用正确的表反而<i>更差</i>，因为真实几何拉大了球与平头之间本就存在的特征尺度差异。\n尖头不受支持（视野内 &rho; 0.58）。剪切在结构上无法覆盖——无论用哪张表，\n剪切最高十分位的残差都保持 1.6 倍。帧被限制为接触圆盘可见：36% 的按压检测不到圆盘、\n11% 被裁切，而被裁切子集的力中位数<i>最高</i>却得分更差，说明这是可见性问题而非力程筛选。\n另外还先修了三个数据集缺陷：flat/sharp 的轨迹里帧索引比力多 5 个（标签会静默错位，\n逐轨迹配对前 &rho;&asymp;0）、sharp/batch_2 以 BGR 存储而其余九个是 RGB、\nflat/batch_2 只有 3 个图像文件。</p>'),
     ("Pipeline debug page</b></a>: raw\nimage &rarr; force step by step on all three datasets, and the cnc\nfield-of-view ablation (in-view &rho;=0.94).",
      "管线调试页</b></a>：三个数据集上从原始图像到力的逐步展示，以及 cnc 视野消融（视野内 &rho;=0.94）。"),
     ('<html lang="en">', '<html lang="zh-CN">'),
