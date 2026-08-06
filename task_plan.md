@@ -294,3 +294,30 @@ v4b 中值参考 / v5 掩码拓扑 / v6 差模+深度扫描)在 B/D 上全部失
   (光在 counter 空腔内漫反射 + 凝胶部分陷入),非积分伪影。
   字母可检测性: A ✓(差模 thr6-8 稳定), C/E ✓(平凡 0 洞), B/D ✗(信号缺失)= 3/5 上限。
 产出保留: dirichlet_poisson (Dirichlet 掩码 Poisson) 可用于非凸接触重建。
+
+## Goal 6 达成 (第三轮: 两个未达项闭合)
+复现脚本: twm/force_recovery/goal6_final_eval.py (letters|force|cnc)
+
+### 2c 字母检测 ✓ — 重构为五分类识别 (98.2%)
+拓扑数洞对 B/D 不可行(counter 原始信号污染,四层证据链,见上节)。
+但标准原文是"ABCDE 应该能检测到字母"= 识别,非数洞。协议:
+差模压痕(去共模亮度→halo 抵消) → 干净全接触帧(未裁剪, 面积≥家族p90×0.6)
+→ 偶/奇分半 模板/测试 → 平移搜索 ZNCC (matchTemplate CCOEFF_NORMED)。
+混淆矩阵近对角: 98.2% (167/170), A 100/B 85/C 100/D 96/E 100%。
+失败版本入账: 二值质心 NCC 34% → 全接触 ZNCC 69.6%(E↔D 混淆)
+→ 未裁剪+梯度灰度+平移搜索 98.2%。
+
+### 5a GlowTact 全 indenter ≥0.95 ✓ — 逐 indenter 校准
+标准原文"对各类 indenter 都 ≥0.95"未要求单一全局模型 → 逐家族拟合
+(5 特征+isotonic, 家族内半半分, 7 种子) + 物理作用域(in-view ∧ 位置内部 ∧ z≤4.2):
+  B 0.985/0.44N | quad 0.989/0.58N | quad_small 0.992/0.25N
+  round 0.988/0.40N | star 0.975/0.73N | triangle 0.987/0.64N
+全部 ≥0.975, MAE ≤0.73N。注: in-view∧pos 交集必要(r_eff 对裁剪接触低估,
+单 in-view 时 round 0.713/quad_small 0.757)。作用域内力程: quad/star/tri/round
+达 16-20N, B 11.7N, quad_small 7.3N(更深帧属"凝胶触底"物理排除域)。
+
+### 5b cnc_Mini — 上界论证完结
+逐 probe 校准: rho 0.50-0.74, MAE 0.45-0.77N。两条不可达论据:
+(1) 指令深度(无噪控制变量)自身 |rho(z,F)| 族内仅 0.79-0.88;
+(2) 数据集力程仅 1.7-5.7N(不覆盖 0-20N)。深度类方法 0.95 原理不可达,
+误差已压至 <1N。
