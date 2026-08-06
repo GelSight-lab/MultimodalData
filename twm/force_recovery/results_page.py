@@ -248,6 +248,10 @@ where no trained model matches the domain: the physics pipeline is the only
 option that works out of the box — and its FEATS-dataset score (0.74) shows
 what it does on a domain nobody tuned it for.</p></div>
 
+<p><a href="debug_pipeline.html"><b>Pipeline debug page</b></a>: raw
+image &rarr; force step by step on all three datasets, and the cnc
+field-of-view ablation (in-view &rho;=0.94).</p>
+
 <footer>React force recovery · <a href="index.html">overview</a> ·
 <a href="method.html">method design</a> · <a href="gallery.html">gallery</a> ·
 data: FEATS (2411.03315) · FoTa/T3 (2406.13640) · GlowTact
@@ -255,6 +259,8 @@ data: FEATS (2411.03315) · FoTa/T3 (2406.13640) · GlowTact
 </div></body></html>"""
 
 ZH = [
+    ("Pipeline debug page</b></a>: raw\nimage &rarr; force step by step on all three datasets, and the cnc\nfield-of-view ablation (in-view &rho;=0.94).",
+     "管线调试页</b></a>：三个数据集上从原始图像到力的逐步展示，以及 cnc 视野消融（视野内 &rho;=0.94）。"),
     ('<html lang="en">', '<html lang="zh-CN">'),
     ("<title>Results — Force Estimation on GelSight Mini</title>",
      "<title>评测结果 — GelSight Mini 力估计</title>"),
