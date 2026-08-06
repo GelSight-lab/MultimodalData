@@ -105,17 +105,23 @@ def depth_panels(task: str, date: str, ep: str, side: str) -> Path:
     return out
 
 
-def dexforce_figure(task: str, date: str, ep: str, side: str) -> Path:
+def dexforce_figure(task: str, date: str, ep: str, side: str,
+                    force: np.ndarray | None = None) -> Path:
     """Virtual-target separation along the pressing direction + histogram.
 
     Plotting a world coordinate hides the offset (0.2-4 mm against a
     ~100 mm trajectory), so both curves are projected onto the pressing
     direction at the force peak — there the separation IS the penetration.
+
+    `force` overrides the npz force (e.g. the LUT-v2 estimate); default
+    falls back to the force stored at episode-processing time.
     """
     from .evaluate import median3_fresh
 
     npz, _, is_new, pose = _load(task, date, ep, side)
-    force = median3_fresh(npz["force_normal_n"].astype(np.float64), is_new)
+    if force is None:
+        force = median3_fresh(npz["force_normal_n"].astype(np.float64),
+                              is_new)
     act = force_informed_targets(pose, force, gel_axis(task, side))
     pen_mm = act.penetration_m * 1000.0
     from .evaluate import CONTACT_N
@@ -234,15 +240,19 @@ def fota_validation_figure() -> Path:
 
 
 def overlay_clip(task: str, date: str, ep: str, side: str,
-                 seconds: float = 12.0, out_fps: int = 30) -> Path:
-    """Tactile view + live force bar + timeline cursor around the peak."""
+                 seconds: float = 12.0, out_fps: int = 30,
+                 force: np.ndarray | None = None) -> Path:
+    """Tactile view + live force bar + timeline cursor around the peak.
+
+    `force` overrides the npz force (e.g. the LUT-v2 estimate)."""
     import h5py
     import hdf5plugin  # noqa: F401
 
     from .evaluate import median3_fresh
 
     npz, _, is_new, _ = _load(task, date, ep, side)
-    force = median3_fresh(npz["force_normal_n"], is_new)
+    if force is None:
+        force = median3_fresh(npz["force_normal_n"], is_new)
     trim = int(npz["trim"])
     peak = int(np.argmax(force))
     half = int(seconds * 30 / 2)

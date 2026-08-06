@@ -129,7 +129,7 @@ episode data, and what the transformation is worth.</p>
 <div class="farr">+</div>
 <div class="fstep">GelSight frame<small>640×480 RGB</small></div>
 <div class="farr">→</div>
-<div class="fstep">F̂<sub>n</sub><small>depth → Winkler,<br>FEATS-calibrated</small></div>
+<div class="fstep">F̂<sub>n</sub><small>LUT depth → force,<br>GlowTact-calibrated</small></div>
 <div class="farr">→</div>
 <div class="fstep">n̂ = R<sub>t</sub>·a<sub>gel</sub><small>dual-ball calibrated axis</small></div>
 <div class="farr">→</div>
@@ -204,7 +204,7 @@ z = np.load("force_recovery/motherboard/2026-05-10/episode_000_left.npz")
 force = median3_fresh(z["force_normal_n"], is_new)      # de-spike on fresh frames
 act = force_informed_targets(pose, force, gel_axis("motherboard", "left"))
 train_targets = act.target_pos                          # (T,3) — drop-in pose labels</code></pre>
-<p>Caveats, stated plainly: absolute newtons carry the FEATS-calibration
+<p>Caveats, stated plainly: absolute newtons carry the GlowTact-calibration
 uncertainty (cross-sensor scale drifts 2–4×; within-episode relative force is
 the reliable part), shear-dominant contact is a blind spot of the normal-force
 estimator, and legacy recordings update tactile at ~8.5 fps — the
@@ -213,7 +213,7 @@ estimator, and legacy recordings update tactile at ~8.5 fps — the
 
 <footer>React force recovery · data <a href="https://huggingface.co/datasets/yxma/React">yxma/React</a>
 · methods &amp; external validation on the <a href="index.html">main page</a>
-· transform: DexForce (2501.10356) · force: gsrobotics photometric stereo + Winkler, FEATS-calibrated (2411.03315)</footer>
+· transform: DexForce (2501.10356) · force: per-sensor RGB-LUT photometric calibration + Poisson (LUT-v2), GlowTact-calibrated</footer>
 </div>
 
 <script>
@@ -334,8 +334,8 @@ UMI 类数据一样,演示位姿<i>就是</i>实际达到的位姿。刚度控�
     ("<h2>How an action is processed</h2>", "<h2>动作是怎么被处理的</h2>"),
     ("<small>OptiTrack, 30 Hz</small>", "<small>OptiTrack,30 Hz</small>"),
     ("GelSight frame<small>640×480 RGB</small>", "GelSight 图像<small>640×480 RGB</small>"),
-    ("<small>depth → Winkler,<br>FEATS-calibrated</small>",
-     "<small>深度 → Winkler,<br>FEATS 定标</small>"),
+    ("<small>LUT depth → force,<br>GlowTact-calibrated</small>",
+     "<small>LUT 深度 → 力,<br>GlowTact 定标</small>"),
     ("<small>dual-ball calibrated axis</small>", "<small>双球标定的 gel 轴</small>"),
     ("action target<small>virtual, past the surface</small>",
      "动作目标<small>虚拟,穿过接触面</small>"),
@@ -403,21 +403,21 @@ indenter shapes — see the <a href="index.html">main page</a>).</p>""",
      "# 每个 episode 的力估计以 npz 形式随 release 一起发布"),
     ("# de-spike on fresh frames", "# 只在 fresh 帧上去尖峰"),
     ("# (T,3) — drop-in pose labels", "# (T,3) —— 直接替换位姿标签"),
-    ("""<p>Caveats, stated plainly: absolute newtons carry the FEATS-calibration
+    ("""<p>Caveats, stated plainly: absolute newtons carry the GlowTact-calibration
 uncertainty (cross-sensor scale drifts 2–4×; within-episode relative force is
 the reliable part), shear-dominant contact is a blind spot of the normal-force
 estimator, and legacy recordings update tactile at ~8.5 fps — the
 <code>tactile_*_is_new</code> flags mark which rows carry fresh force evidence.</p>""",
-     """<p>需要直说的告诫:绝对牛顿值带有 FEATS 定标的不确定性(跨传感器刻度漂移 2–4×;
+     """<p>需要直说的告诫:绝对牛顿值带有 GlowTact 定标的不确定性(跨传感器刻度漂移 2–4×;
 集内相对力才是可靠的部分);剪切主导的接触是法向力估计器的盲区;
 旧录制的触觉有效更新率约 8.5 fps——<code>tactile_*_is_new</code>
 标记了哪些行携带新的力证据。</p>"""),
     ("""<footer>React force recovery · data <a href="https://huggingface.co/datasets/yxma/React">yxma/React</a>
 · methods &amp; external validation on the <a href="index.html">main page</a>
-· transform: DexForce (2501.10356) · force: gsrobotics photometric stereo + Winkler, FEATS-calibrated (2411.03315)</footer>""",
+· transform: DexForce (2501.10356) · force: per-sensor RGB-LUT photometric calibration + Poisson (LUT-v2), GlowTact-calibrated</footer>""",
      """<footer>React 力恢复 · 数据集 <a href="https://huggingface.co/datasets/yxma/React">yxma/React</a>
 · 方法与外部验证见<a href="index.html">主页(英文)</a>
-· 变换:DexForce (2501.10356) · 力估计:gsrobotics 光度立体 + Winkler,FEATS 定标 (2411.03315)</footer>"""),
+· 变换:DexForce (2501.10356) · 力估计:逐传感器 RGB-LUT 光度标定 + Poisson(LUT-v2),GlowTact 定标</footer>"""),
     # JS-embedded UI strings
     ("s.textContent='CONTACT';", "s.textContent='接触中';"),
     ("s.textContent='free — target ≡ pose';", "s.textContent='自由 — 目标 ≡ 位姿';"),

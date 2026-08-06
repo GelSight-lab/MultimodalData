@@ -139,20 +139,21 @@ markerless.</p>
 <div class="card method">
 <div class="flow">
 <span class="step">GelSight frame</span><span class="arr">→</span>
-<span class="step">flat-field<br>normalization</span><span class="arr">→</span>
-<span class="step">per-pixel MLP<br>→ surface normals</span><span class="arr">→</span>
+<span class="step">dI = img − ref<br>(difference image)</span><span class="arr">→</span>
+<span class="step">per-sensor RGB LUT<br>→ surface gradients</span><span class="arr">→</span>
 <span class="step">Poisson<br>integration</span><span class="arr">→</span>
-<span class="step">background<br>plane removal</span><span class="arr">→</span>
 <span class="step">indentation δ</span><span class="arr">→</span>
-<span class="step">F = c·Σδ·dA</span>
+<span class="step">F(vol, area, max δ)</span>
 </div>
-<p>Zero training frames; one fitted scalar (c, from force-sensor ground truth).
-Every design decision was driven by a measured defect — the full pipeline,
-the optimization journey, and the volume-vs-max-depth answer are on the
-<a href="method.html"><b>method page</b></a>.</p>
+<p>Zero training frames from our rig; the lookup table is self-calibrated from
+spherical presses (classic Dong/Yuan calibration, LUT-v2). Every design
+decision was driven by a measured defect — the full pipeline,
+the optimization journey, and the step-by-step reconstruction debug are on the
+<a href="method.html"><b>method page</b></a> and the
+<a href="debug_pipeline.html"><b>pipeline debug page</b></a>.</p>
 <img src="{assets['depth_validation_panel']}" alt="raw | diff | depth">
-<p class="footnote">Strongest motherboard press: raw | difference | reconstructed
-depth. More examples (20 panels, 10 clips) in the
+<p class="footnote">Strongest motherboard presses: raw | difference |
+LUT-reconstructed depth. More examples (20 panels, 10 clips) in the
 <a href="gallery.html">gallery</a>.</p>
 </div>
 
@@ -160,14 +161,14 @@ depth. More examples (20 panels, 10 clips) in the
 <div class="card method">
 <table>
 <tr><th>dataset (gel)</th><th>ours</th><th>FEATS U-net</th><th>FeelAnyForce</th></tr>
-<tr><td>FEATS val (marker)</td><td>0.74</td><td><b>0.96</b> in-domain</td><td>0.43</td></tr>
-<tr><td>FoTa cnc_Mini (markerless)</td><td>0.43 / 0.65</td><td>0.07</td><td><b>0.83 / 0.92</b></td></tr>
-<tr><td>GlowTact (markerless)</td><td>0.63</td><td>0.04</td><td><b>0.90</b></td></tr>
+<tr><td>FEATS val (marker)</td><td>0.77</td><td><b>0.96</b> in-domain</td><td>0.43</td></tr>
+<tr><td>FoTa cnc_Mini (markerless)</td><td>0.94 (in view)</td><td>0.07</td><td><b>0.83</b></td></tr>
+<tr><td>GlowTact (markerless)</td><td><b>0.98</b></td><td>0.04</td><td>0.90</td></tr>
 <tr><td>React (no GT — agreement)</td><td colspan="3">physics vs FeelAnyForce ρ = 0.91; both read ≈0 N off-contact</td></tr>
 </table>
 <p style="margin-bottom:0">Each network dominates its own gel domain and collapses
-outside it; the physics pipeline is the only one that works everywhere.
-Predicted-vs-ground-truth scatters, per dataset, on the
+outside it; the physics pipeline (0.74–0.99) is the only one that works
+everywhere. Predicted-vs-ground-truth scatters, per dataset, on the
 <a href="results.html"><b>results page</b></a>.</p>
 </div>
 
@@ -287,3 +288,22 @@ def collect_and_build() -> Path:
         "<details><summary>per-episode table — 72 sensor-sides "
         "(click to expand)</summary>" + _m2_table(m2) + "</details>")
     return build(m1, m2, assets, ext)
+
+
+def rebuild_from_cache() -> Path:
+    """Re-emit index.html from the cached eval.json (no episode re-runs).
+
+    Assets are assumed to be in place under site/assets — used when only a
+    figure or the page template changed, e.g. the LUT-v2 asset refresh."""
+    data = json.loads((SITE / "eval.json").read_text())
+    names = {
+        "feats_domain_gap": "feats_domain_gap.png",
+        "depth_validation_panel": "depth_validation_panel.png",
+        "dexforce_mb": "dexforce_motherboard_episode_000_left.png",
+    }
+    assets = {k: f"assets/{v}" for k, v in names.items()}
+    return build(data["method1"], data["method2"], assets)
+
+
+if __name__ == "__main__":
+    print(rebuild_from_cache())

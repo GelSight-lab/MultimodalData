@@ -126,14 +126,15 @@ supervised network reaches 2.1 N on the same range). A new sensor needs one
 2-minute ball-press pass — a calibration the React rig can adopt.</p>
 </div>
 
-<h2>Validation (v1 pipeline)</h2>
+<h2>Validation (LUT-v2 pipeline)</h2>
 <div class="card">
-<p style="margin-top:0">The v1 pipeline is validated on <b>three force-labeled
+<p style="margin-top:0">The LUT-v2 pipeline is validated on <b>three force-labeled
 datasets</b> (FEATS, FoTa cnc_Mini, GlowTact) and cross-checked against two
 neural estimators on identical frames — every predicted-vs-ground-truth
 scatter, per dataset, lives on the
 <a href="results.html"><b>results page</b></a>. Short version: physics
-0.43-0.74 everywhere; each network 0.90+ in its own gel domain and collapsing
+0.74-0.99 everywhere (GlowTact 0.98, cnc_Mini in-view 0.94, FEATS 0.77);
+each network 0.90+ in its own gel domain and collapsing
 outside it.</p>
 </div>
 
@@ -164,7 +165,7 @@ predicted vs ground-truth force) and 10 React episode clips
 gallery</a>.</p>
 <img src="assets/gallery/cnc_08.png" alt="sample panel">
 <video controls muted loop playsinline preload="metadata"
- src="assets/gallery/clip_motherboard_episode_000_left.mp4"></video>
+ src="assets/gallery/@@CLIP@@"></video>
 </div>
 
 <h2>NN vs model-based on the GelSight Mini — who has compared them?</h2>
@@ -200,12 +201,12 @@ code: <code>twm/force_recovery/</code></footer>
 ZH = [
     ('<h2>Photometric overhaul — classic per-sensor calibration (v2)</h2>',
      '<h2>光度重做——经典逐传感器标定(v2)</h2>'),
-    ('<h2>Validation (v1 pipeline)</h2>',
-     '<h2>验证</h2>'),
+    ('<h2>Validation (LUT-v2 pipeline)</h2>',
+     '<h2>验证(LUT-v2 管线)</h2>'),
     ('<a class="pill" href="results.html">↖ results matrix</a>\n<a class="pill" href="index.html">overview</a>',
      '<a class="pill" href="results_zh.html">↖ 评测结果</a>\n<a class="pill" href="index.html">总览(英文)</a>'),
-    ('<p style="margin-top:0">The v1 pipeline is validated on <b>three force-labeled\ndatasets</b> (FEATS, FoTa cnc_Mini, GlowTact) and cross-checked against two\nneural estimators on identical frames — every predicted-vs-ground-truth\nscatter, per dataset, lives on the\n<a href="results.html"><b>results page</b></a>. Short version: physics\n0.43-0.74 everywhere; each network 0.90+ in its own gel domain and collapsing\noutside it.</p>',
-     '<p style="margin-top:0">管线在<b>三个带力标注的数据集</b>(FEATS、FoTa cnc_Mini、GlowTact)上验证,并与两个神经网络估计器同帧对比——每个数据集的预测 vs 真值散点图都在<a href="results_zh.html"><b>评测结果页</b></a>。一句话版:物理方法在所有域 0.43–0.74;每个网络在自己的 gel 域 0.90+,出域即塌。</p>'),
+    ('<p style="margin-top:0">The LUT-v2 pipeline is validated on <b>three force-labeled\ndatasets</b> (FEATS, FoTa cnc_Mini, GlowTact) and cross-checked against two\nneural estimators on identical frames — every predicted-vs-ground-truth\nscatter, per dataset, lives on the\n<a href="results.html"><b>results page</b></a>. Short version: physics\n0.74-0.99 everywhere (GlowTact 0.98, cnc_Mini in-view 0.94, FEATS 0.77);\neach network 0.90+ in its own gel domain and collapsing\noutside it.</p>',
+     '<p style="margin-top:0">LUT-v2 管线在<b>三个带力标注的数据集</b>(FEATS、FoTa cnc_Mini、GlowTact)上验证,并与两个神经网络估计器同帧对比——每个数据集的预测 vs 真值散点图都在<a href="results_zh.html"><b>评测结果页</b></a>。一句话版:物理方法在所有域 0.74–0.99(GlowTact 0.98、cnc_Mini 视野内 0.94、FEATS 0.77);每个网络在自己的 gel 域 0.90+,出域即塌。</p>'),
     ('<html lang="en">',
      '<html lang="zh-CN">'),
     ('<title>Method in One Page — React Force Recovery</title>',
@@ -312,7 +313,9 @@ font-family:'IBM Plex Mono',monospace;margin-top:2px}}</style></head>
 
 
 def build() -> tuple[Path, Path]:
-    en = EN.replace("@@CSS@@", CSS)
+    clips = sorted(p.name for p in (SITE / "assets" / "gallery").glob("*.mp4"))
+    assert clips, "no gallery clips found — run showcase.video_samples first"
+    en = EN.replace("@@CSS@@", CSS).replace("@@CLIP@@", clips[0])
     (SITE / "method.html").write_text(en)
     zh = en
     for old, new in ZH:
