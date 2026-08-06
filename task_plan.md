@@ -1,4 +1,45 @@
-# Task Plan 5(活跃): 光度算法重做 + 接触模型升级 → ρ≥0.9, MAE<1N
+# Task Plan 6(活跃): 形状保真 + 通用化 + 双数据集逐indenter ρ≥0.95
+
+## Goal 6 验收标准
+1. 形状:ball→半球剖线;triangle/quad/star 可辨;A-E 字母可读
+2. 方法 general(无逐家族技巧;两个无点数据集通用)
+3. Drake 式接触模型;0-20N 各类 indenter ρ≥0.95;误差尽量低
+4. 高误差 outlier 逐帧分析原因
+
+## Goal 6 已确认证据
+- 形状画廊:round/star/triangle/quad 轮廓已可辨但软;字母 raw 清晰、重建成软团
+- 高通测试:LUT 高通里字母 counters 存在但软;**MLP 高通边缘锐利**(互补!)
+- nnmini+fast_poisson 直测 GlowTact round:幅值 14×、ρ=0 → 绝对色 MLP 在此传感器出域
+  (它只提供可靠高频,不提供幅值)
+- **方案:梯度域频带融合** g = lowpass(g_LUT) + s·highpass(g_MLP),
+  s 由中频带能量比自校准;单次 fast_poisson
+- 渲染注意:字母内浮雕仅占总深~10%,验收渲染用局部对比(高通或分层色标)
+
+## Goal 6 计划与进展
+- [x] F0: 证据收集完成,方案定向
+- [x] F1a: **半球验收 ✓**——round 剖线形状贴合解析球(幅值 +30% 全局偏置,可重标)
+- [x] F1b: **字母在梯度层清晰 ✓**——|g_LUT| 图里 B 的双 counter 锐利;
+      模糊源=积分步(光晕色误读 + Poisson 平滑),非色域限制
+- [x] **否决**: MLP-LUT 梯度域频带融合——8 种符号组合最高 corr=0.049,
+      MLP 在此传感器的"锐边"是 |n|≥1 饱和伪影(rms 220 vs LUT 0.027,已加物理钳制仍不相关)
+- [ ] F1c: 积分改进:光晕色处理(halo 色与接触坡色区分:用 dI 幅值分层
+      或 valid-mask 内外分治)+ 可选加权 Poisson;字母渲染用梯度-深度双层
+- [ ] F2: 全量特征(修 +30% 幅值偏置)+ hydroelastic p(δ) → GlowTact 逐 indenter ρ 表
+- [ ] F3: cnc_Mini 通用化:z 监督幅值校正路线(无球家族);参考=最轻帧中位
+- [ ] F4: 高误差 outlier 逐帧归因(渲染 top-20 误差帧,分类:贴边/深压饱和/
+      gel 损伤区(左上有划痕)/光晕误读)
+- [ ] F5: 站点 + commit
+
+## 复跑入口(context 丢失时)
+- 融合类: twm/force_recovery/fusion_recon.py (FusionReconstructor;_lut_gradients 可单用)
+- LUT: lut_calibration.py, 标定文件 /media/.../force_recovery/lut_calibration/glowtact_lut.npz
+- 全量特征缓存: feature_cache/lut_full.json (6264帧, 无 f01, 含 x,y,z,f,vol,vol2,area,maxd,cx,cy)
+- 探针小缓存: lut_probe_frames.json (365帧含 peak)
+- 最优力模型配置见 Task Plan 5 最终数字节
+
+---
+
+# Task Plan 5(已完成): 光度算法重做 + 接触模型升级 → ρ≥0.9, MAE<1N
 
 ## Goal 5
 1. 光度重建按 Dong/Yuan 经典管线重做:差分图 dI=(img−ref) → 逐传感器 RGB-LUT → 梯度 → Poisson
