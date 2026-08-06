@@ -708,3 +708,26 @@ site 图: sparsh_figure.py -> results_sparsh.png (GlowTact表 vs 自标定表 vs
 GelSlim 4.0无牛顿力发布; Awesome-Touch列表无新增。
 => 行动项: 填 TacVerse gate 表单(唯一 Mini + marker + 已知球 + 步进深度,
    正是我们的标定几何; 力子集 6.8GB)。
+
+## GelSight Mini 3D recon 外部验证: 场内无标准基准, 但真值就在本地
+### 关键结论: 该领域**没有**深度重建精度的标准基准, 每篇论文自造
+- 3D Cal 自定 Overall/Type-1/Type-2 (接触区内外分开报), 是最接近事实标准的做法
+- TacEva(2509.19037)明说存在这个空白, 但它本身是标量回归, 未被采用
+- GelSight 官方 FAQ 原话: "GS Mini is not a metrology device so there are no
+  study results that can be shared regarding the accuracy of the 3D reconstruction"
+
+### 可用于验证的 Mini 材料(已核实)
+| 来源 | 有什么 | 判定 |
+|---|---|---|
+| **SimTactileMNIST (本地!)** | object_id + object_pose + gel_pose + Taxim渲染Mini图; 网格从 HF tactile-mnist-mnist3d(printed_test 仅8.7MB, 13/13 对上) | ★ 可直接算**逐像素真值深度**, 非球面曲面几何 |
+| **RealTactileMNIST (本地!)** | 真实Mini帧 + 逐帧6-DoF gel位姿 | ★ 真外部校验(需拟合4个全局参数) |
+| TimSchneider42/taxim | **官方CMU Taxim无Mini配置, 此fork有**: 24张真实Mini球压图+多项式标定 | 可生成无限配对(RGB,精确深度) |
+| py3DCal/3DCal (本地) | 36270张Mini图, 但**全部 penetration=3.0mm 单一深度**(非扫深), 且其训练目标同样是解析球假设 | 只能作管线互校, 非独立深度真值 |
+| gsrobotics | 仅代码+权重, **无任何示例帧+期望输出**, 无法复现其数字 | ❌ |
+| gs_sdk / gelslam / normalflow | 有Mini示例帧与参考实现, 但**不含真值深度** | 参考实现 |
+### 已发表 Mini 精度数字(供对标)
+- 3D Cal(2511.03078 Table II) 逐像素: Overall 22.4/23.6/48.8µm,
+  **Type-2(接触区) 171.6/152.8/290.0µm** — 但**深度尺度是拟合的**(2D互相关对齐+
+  调CAD压深最小化MSE) => 验证的是形状不是绝对深度
+- TacEva: Mini 标量压深 MAE 29.4µm(无marker)/32.5µm(marker) — ResNet回归标量, 非深度图
+- 我们当前: 对解析球冠残差 35-105µm(深度亦为拟合) => 与3D Cal的Type-2同类可比且更好
