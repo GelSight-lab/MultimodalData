@@ -342,3 +342,8 @@ cnc 全量 (3351帧, LUT管线+z监督增益场, 每probe半半分, 7种子):
 dot 类型 (FEATS val, 全marker): 差分抵消静态marker, 原始管线 rho 0.717
 (按压恒居中→无视野/增益问题), depth 图在 marker 麻点下仍恢复形状。
 对照 glowtact 原始(无增益/无作用域) 0.46 — 增益场+作用域是两数据集共同的关键。
+
+## 三数据集评测矩阵更新 (LUT v2 管线, 旧 MLP 数字撤换)
+Ours: glowtact 0.634→0.987/0.52N, cnc 0.435→0.935/0.26N (严格视野内),
+feats 0.736 不变(按压恒居中,无视野/增益问题)。同作用域 FEATS U-net 在
+cnc=0.319 (原 0.074)。旧值存 results_metrics.json history 字段。已发布。
