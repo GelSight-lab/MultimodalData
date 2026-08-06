@@ -220,6 +220,57 @@ The trade is portability vs in-domain accuracy — and which one you need
 depends on whether you can collect labels on your own sensor.</p>
 </div>
 
+<h2>Where it can still improve — and does learning help?</h2>
+<div class="card">
+<p>Five candidate improvements, each with a control that could have killed it.
+Two survived. Reproduce with
+<code>python -m force_recovery.improvement_study all</code>.</p>
+<table>
+<tr><th>idea</th><th>result</th><th>verdict</th></tr>
+<tr><td>Extract shear-sensitive features<br>
+<span class="footnote">residual correlates with shear at &rho; 0.31&ndash;0.40</span></td>
+<td>feeding the <b>true</b> shear in as an oracle moves &rho; 0.9749 &rarr; 0.9757
+(MAE 0.0360 &rarr; 0.0345)</td><td><b>closed</b> — the correlation was
+confounded; both track force magnitude</td></tr>
+<tr><td>Small neural nets on the same features</td>
+<td>MLP 32&times;16 0.967 · MLP 64&times;64 0.972 · gradient boosting 0.972,
+vs <b>0.974 for linear+isotonic</b></td>
+<td><b>no</b> — with ~400 in-view frames per pad, flexible models overfit</td></tr>
+<tr><td><b>Log features</b> (error is multiplicative)</td>
+<td>&rho; 0.9735 &rarr; <b>0.9822</b>, MAE 0.0361 &rarr; <b>0.0310</b> (&minus;14%)</td>
+<td><b>adopted</b></td></tr>
+<tr><td>&ldquo;PINN-lite&rdquo; dimensionless contact law
+<i>F/A = g(&delta;/&radic;A)</i></td>
+<td>looked decisive on sphere&rarr;flat (MAE 0.426 &rarr; 0.150 N, beating an
+MLP's 0.297) — then <i>F = g(volume)</i> reached <b>0.0736 N</b></td>
+<td><b>rejected</b> — the gain was one monotone feature instead of five,
+not the physics form</td></tr>
+<tr><td><b>Match model complexity to the transfer regime</b></td>
+<td>see below</td><td><b>adopted</b></td></tr>
+</table>
+<p>The one real structural finding: <b>a single monotone volume feature
+generalises to unseen indenter shapes better than the five-feature model</b>,
+while five features stay better once the shape is calibrated. On GlowTact
+leave-one-indenter-out — the model never sees the held-out shape — this repairs
+exactly the two weak spots we reported earlier:</p>
+<table>
+<tr><th>held-out indenter</th><th>5-feature &rho;</th><th>volume-only &rho;</th></tr>
+<tr><td>round</td><td>0.958</td><td><b>0.993</b></td></tr>
+<tr><td>star</td><td>0.977</td><td><b>0.991</b></td></tr>
+<tr><td>quad_small</td><td>0.989</td><td><b>0.997</b></td></tr>
+<tr><td>B / quad / triangle</td><td>0.981&ndash;0.995</td><td>0.986&ndash;0.996</td></tr>
+</table>
+<p class="footnote">Every held-out indenter now lands at &rho; &ge; 0.986
+<i>without the model ever seeing that shape</i> — a stronger claim than the
+per-indenter calibrated numbers on the results page, which are fitted within
+each family. The cost is absolute newtons: five features still win MAE when
+the shape is known (Sparsh cross-pad 0.0372 vs 0.0443 N), so the rule is
+volume-only for unseen shapes, five features once calibrated. A learned
+<i>g</i> inside the physics law collapses entirely (&rho; &minus;0.249):
+isotonic clips monotonically outside the training range, a network
+extrapolates freely.</p>
+</div>
+
 <footer>React force recovery ·
 <a href="https://huggingface.co/datasets/yxma/React">dataset</a> ·
 <a href="index.html">results</a> ·
@@ -228,6 +279,38 @@ code: <code>twm/force_recovery/</code></footer>
 </div></body></html>"""
 
 ZH = [
+    ('<h2>Where it can still improve — and does learning help?</h2>',
+     '<h2>还能怎么改进——learning 有用吗？</h2>'),
+    ('<p>Five candidate improvements, each with a control that could have killed it.\nTwo survived. Reproduce with\n<code>python -m force_recovery.improvement_study all</code>.</p>',
+     '<p>五个候选改进，每个都配了一个足以否定它的对照。两个存活。复跑：\n<code>python -m force_recovery.improvement_study all</code>。</p>'),
+    ('<tr><th>idea</th><th>result</th><th>verdict</th></tr>',
+     '<tr><th>思路</th><th>结果</th><th>结论</th></tr>'),
+    ('<tr><td>Extract shear-sensitive features<br>',
+     '<tr><td>提取剪切敏感特征<br>'),
+    ('<span class="footnote">residual correlates with shear at &rho; 0.31&ndash;0.40</span></td>',
+     '<span class="footnote">残差与剪切相关 &rho; 0.31&ndash;0.40</span></td>'),
+    ('<td>feeding the <b>true</b> shear in as an oracle moves &rho; 0.9749 &rarr; 0.9757\n(MAE 0.0360 &rarr; 0.0345)</td><td><b>closed</b> — the correlation was\nconfounded; both track force magnitude</td></tr>',
+     '<td>把<b>真实</b>剪切作为预言机特征喂进去，&rho; 仅 0.9749 &rarr; 0.9757\n（MAE 0.0360 &rarr; 0.0345）</td><td><b>关闭</b>——相关性是混杂的，\n两者都随力的大小变化</td></tr>'),
+    ('<tr><td>Small neural nets on the same features</td>',
+     '<tr><td>在同样特征上用小神经网络</td>'),
+    ('<td>MLP 32&times;16 0.967 · MLP 64&times;64 0.972 · gradient boosting 0.972,\nvs <b>0.974 for linear+isotonic</b></td>\n<td><b>no</b> — with ~400 in-view frames per pad, flexible models overfit</td></tr>',
+     '<td>MLP 32&times;16 0.967 · MLP 64&times;64 0.972 · 梯度提升 0.972，\n而<b>线性+isotonic 为 0.974</b></td>\n<td><b>无用</b>——每块 pad 仅约 400 帧视野内数据，柔性模型过拟合</td></tr>'),
+    ('<tr><td><b>Log features</b> (error is multiplicative)</td>',
+     '<tr><td><b>对数特征</b>（误差是乘性的）</td>'),
+    ('<td>&rho; 0.9735 &rarr; <b>0.9822</b>, MAE 0.0361 &rarr; <b>0.0310</b> (&minus;14%)</td>\n<td><b>adopted</b></td></tr>',
+     '<td>&rho; 0.9735 &rarr; <b>0.9822</b>，MAE 0.0361 &rarr; <b>0.0310</b>（&minus;14%）</td>\n<td><b>采纳</b></td></tr>'),
+    ('<tr><td>&ldquo;PINN-lite&rdquo; dimensionless contact law\n<i>F/A = g(&delta;/&radic;A)</i></td>',
+     '<tr><td>&ldquo;PINN-lite&rdquo; 量纲无关接触律\n<i>F/A = g(&delta;/&radic;A)</i></td>'),
+    ("<td>looked decisive on sphere&rarr;flat (MAE 0.426 &rarr; 0.150 N, beating an\nMLP's 0.297) — then <i>F = g(volume)</i> reached <b>0.0736 N</b></td>\n<td><b>rejected</b> — the gain was one monotone feature instead of five,\nnot the physics form</td></tr>",
+     '<td>在 球&rarr;平 上看似决定性（MAE 0.426 &rarr; 0.150 N，胜过 MLP 的 0.297）——\n但 <i>F = g(体积)</i> 达到 <b>0.0736 N</b></td>\n<td><b>否决</b>——增益来自&ldquo;用一个单调特征而非五个&rdquo;，\n不是那个物理形式</td></tr>'),
+    ('<tr><td><b>Match model complexity to the transfer regime</b></td>\n<td>see below</td><td><b>adopted</b></td></tr>',
+     '<tr><td><b>让模型复杂度匹配迁移场景</b></td>\n<td>见下</td><td><b>采纳</b></td></tr>'),
+    ('<p>The one real structural finding: <b>a single monotone volume feature\ngeneralises to unseen indenter shapes better than the five-feature model</b>,\nwhile five features stay better once the shape is calibrated. On GlowTact\nleave-one-indenter-out — the model never sees the held-out shape — this repairs\nexactly the two weak spots we reported earlier:</p>',
+     '<p>唯一真正的结构性发现：<b>单一单调的体积特征在未见过的压头形状上比五特征模型\n泛化得更好</b>，而一旦该形状已被标定，五特征仍然更优。在 GlowTact 留一压头交叉验证中\n（模型从未见过被留出的形状），这恰好修复了我们此前报告的两个短板：</p>'),
+    ('<tr><th>held-out indenter</th><th>5-feature &rho;</th><th>volume-only &rho;</th></tr>',
+     '<tr><th>留出的压头</th><th>五特征 &rho;</th><th>仅体积 &rho;</th></tr>'),
+    ('<p class="footnote">Every held-out indenter now lands at &rho; &ge; 0.986\n<i>without the model ever seeing that shape</i> — a stronger claim than the\nper-indenter calibrated numbers on the results page, which are fitted within\neach family. The cost is absolute newtons: five features still win MAE when\nthe shape is known (Sparsh cross-pad 0.0372 vs 0.0443 N), so the rule is\nvolume-only for unseen shapes, five features once calibrated. A learned\n<i>g</i> inside the physics law collapses entirely (&rho; &minus;0.249):\nisotonic clips monotonically outside the training range, a network\nextrapolates freely.</p>',
+     '<p class="footnote">现在每个被留出的压头都达到 &rho; &ge; 0.986，<i>而模型从未见过该形状</i>——\n这比结果页上&ldquo;逐压头标定&rdquo;的数字是更强的论断（后者是在各家族内部拟合的）。\n代价在绝对牛顿：形状已知时五特征的 MAE 仍更优（Sparsh 跨 pad 0.0372 vs 0.0443 N），\n所以规则是：未见形状用仅体积，已标定则用五特征。把物理律里的 <i>g</i> 换成学习模型会完全崩溃\n（&rho; &minus;0.249）：isotonic 在训练范围外单调截断，而网络会自由外推。</p>'),
     ('<h2>Photometric overhaul — classic per-sensor calibration (v2)</h2>',
      '<h2>光度重做——经典逐传感器标定(v2)</h2>'),
     ('<h2>Validation (LUT-v2 pipeline)</h2>',
