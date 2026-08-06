@@ -443,3 +443,33 @@ SessionCalibration (每个 session = batch/probe/family/capture, 全自动):
   FeelAnyForce 的推断式对齐形成对比 -> 可直接 join, 无需猜测。
 - 力: batch_1 Fz 0.063..1.888 N (含剪切 Fx,Fy), 球/平/尖三种压头, 有滑移标签。
 - 10 个 batch 天然就是 session/pad 分组 -> 正是验证"会话归一化"的理想测试床。
+
+## 2026-08-06 · 站点所有 3D 视图改为 Open3D 网格 + "逐数据集标定"说明
+生产者改动: showcase.py 唯一持有 3D 面板 (全仓 grep `plot_surface|projection="3d"`
+仅此一处; visualize/site/method_page/results_page/debug_page 均无 3D 视图)。
+新增 `mesh_view()` / `mesh_tile()` 包装 o3d_view.render_depth_mesh
+(smooth_px=3, z_scale=1.6, front=(0,0.32,0.95), zoom=0.66), 渲染前必过
+`remove_halo_pedestal`; `_require_display()` 在耗时特征遍历之前先失败。
+method_page.py: CSS `img,video{max-width:100%}` (1280 宽片段原会溢出 880 wrap)。
+
+| found | evidence | fix | verified |
+|---|---|---|---|
+| 静图 3D 面板是 matplotlib inferno 曲面 | showcase.py:159 plot_surface | 换 Open3D 灰模网格 imshow | 20 张 headless-chrome 截图确认灰模 |
+| 视频完全没有 3D 面板 | 960×330 三栏 tactile/depth/force | 加第 4 栏 640-960 | 1280×330, ffprobe 确认 |
+| 视频网格白底像"挖洞" | 深色画布上白色方块 | bg=0.05 + mesh_tile 中心裁剪(1.35× 过采样) | 第 120 帧目视 |
+| 1280 宽片段溢出正文 | 截图中视频出血到页面外 | CSS video max-width | 重截确认贴合 |
+
+重新生成: 20 张静图 (cnc in-view rho=0.920 MAE=0.29N, feats rho=0.757
+MAE=5.37N — 与上次 LUT-v2 一致, 仅面板换了) + 10 个片段。
+片段 3D 面板**非降帧**: 每个 fresh 触觉帧渲染一次 (65-69 次 / 240 行,
+即传感器自身 ~8.5Hz 更新率), 重复行沿用上一帧 — 与旁边深度面板同节奏。
+mesh_stride=2 只降网格密度(320×240 面板看不出), 不降时间分辨率。
+渲染耗时实测: 700×560 0.80 s/帧, 320×256 0.37 s/帧。
+
+method 页新增 "Per-dataset calibration / 逐数据集标定" (EN+ZH, ZH 断言对齐):
+管线**无任何硬度/弹性模量常数**; 刚度被逐组最小二乘权重 + isotonic 标定吸收,
+逐数据集**且**逐压头/探头组重拟合; 跨数据集共享的物理常数只有球面标定 RGB LUT
+和 MM_PER_PIXEL; 故报告的 rho 是逐组秩相关, **不**证明存在可跨 gel 迁移的绝对
+牛顿模型(唯一试过的多物体混合拟合 rho 0.47)。并写入实测噪声: 深度域高频占峰值
+0.3%, 梯度域 22.2% (LUT 分箱量化, 9.8% 接触像素落在未观测 bin), Poisson 积分
+把 LUT 噪声低通掉。已发布: https://huggingface.co/spaces/yxma/react-force-recovery

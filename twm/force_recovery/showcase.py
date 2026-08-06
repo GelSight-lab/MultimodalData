@@ -5,15 +5,30 @@ per-sensor calibration (`stages()` in debug_gallery: dI = img - ref ->
 RGB LUT -> valid mask -> fast_poisson depth), NOT the retired gsrobotics
 MLP whose depth amplitude was broken (~25% of true indentation).
 
+Every 3D view on the site is an Open3D TriangleMesh render (`o3d_view`), not a
+matplotlib `plot_surface`: full-resolution mm-scale grid mesh with gradient-grey
+shading baked into the vertex colours. The halo pedestal is removed first
+(`remove_halo_pedestal`) — without it the diffuse `|dI| > 8` skirt integrates
+into a broad base and every press renders as a rounded mound.
+
+RUN REQUIREMENT: Open3D 0.15.2 segfaults offscreen without an X display here,
+so every entry point that renders a 3D panel must be invoked as
+
+    xvfb-run -a -s "-screen 0 1400x1000x24" python -m force_recovery.showcase
+
 Products:
   image_samples()   20 stills from the GT datasets (cnc_Mini + FEATS):
-                    raw frame | depth heat map | 3D mesh surface | predicted
+                    raw frame | depth heat map | Open3D mesh | predicted
                     vs ground-truth force. Predictions use the published
                     per-group half/half least-squares + isotonic models
                     (gain-field features on cnc, plain features on FEATS).
   video_samples()   10 clips from React episodes around their force peaks:
-                    tactile stream | live LUT depth | running force trace,
-                    force in GlowTact-calibrated newtons.
+                    tactile stream | live LUT depth | Open3D mesh |
+                    running force trace, force in GlowTact-calibrated newtons.
+                    The mesh panel is re-rendered on every *fresh* tactile
+                    frame (the sensor's own update rate, ~15 Hz against the
+                    30 Hz row clock) and held on duplicated rows, exactly like
+                    the depth panel next to it.
   react_showcase()  full-episode LUT force for motherboard/episode_000 left:
                     depth_validation_panel.png (index page), dexforce figure,
                     overlay clip (actions page) and action_trace.json.
@@ -33,7 +48,8 @@ import numpy as np
 
 from .debug_gallery import (OUT as DEBUG_OUT, feat_vec, load_cnc, load_feats,
                             stages)
-from .lut_calibration import crop
+from .lut_calibration import MM_PER_PIXEL, crop
+from .o3d_view import has_display, remove_halo_pedestal, render_depth_mesh
 from .run_episode import DATA_ROOT, LEGACY_SHIFT, OUT_ROOT, STAGE_ROOT
 
 ASSETS = OUT_ROOT / "site_assets"
@@ -132,13 +148,46 @@ def _glowtact_calib():
     return predict
 
 
+# ------------------------------------------------------------------ 3D view
+# Verified on GlowTact star/triangle/quad presses: this camera and z_scale make
+# the indenter geometry readable; a shallower front or z_scale=1 flattens it.
+MESH_KW = dict(smooth_px=3, z_scale=1.6, front=(0.0, 0.32, 0.95), zoom=0.66)
+
+
+def mesh_view(depth: np.ndarray, width: int = 700, height: int = 560,
+              stride: int = 1, bg: float = 1.0) -> np.ndarray:
+    """Open3D mesh render of one LUT depth map -> RGB uint8.
+
+    `remove_halo_pedestal` is mandatory here: it is a render-only correction
+    (the force features never see it), but without it the halo skirt lifts a
+    broad base under the imprint and the shape reads as a mound.
+    """
+    dp = remove_halo_pedestal(np.clip(depth, 0.0, None).astype(np.float32))
+    return render_depth_mesh(dp, MM_PER_PIXEL, stride=stride, bg=bg,
+                             width=width, height=height, **MESH_KW)
+
+
+def mesh_tile(depth: np.ndarray, w: int = 320, h: int = 240, stride: int = 2,
+              bg: float = 0.05, oversample: float = 1.35) -> np.ndarray:
+    """Video-sized mesh tile: render larger, then centre-crop.
+
+    The camera looks at the mesh centre, so a centre crop is exactly a zoom
+    about the imprint — it enlarges the geometry without touching the verified
+    view direction. Only the empty margin around the gel plane is lost.
+    """
+    rgb = mesh_view(depth, width=int(w * oversample),
+                    height=int(h * oversample), stride=stride, bg=bg)
+    y0, x0 = (rgb.shape[0] - h) // 2, (rgb.shape[1] - w) // 2
+    return rgb[y0:y0 + h, x0:x0 + w]
+
+
 # ------------------------------------------------------------------ panels
 def _panel(img: np.ndarray, depth: np.ndarray, f_pred: float,
            f_true: float | None, title: str, out: Path) -> None:
-    """raw | depth heat map | 3D mesh | force bars.
+    """raw | depth heat map | Open3D mesh | force bars.
 
-    The 3D view is a mesh surface over the full cropped depth map — with the
-    LUT pipeline the whole 320x240 crop is the region used for force
+    The 3D view is an Open3D TriangleMesh over the full cropped depth map —
+    with the LUT pipeline the whole 320x240 crop is the region used for force
     integration (no excluded border margin).
     """
     fig = plt.figure(figsize=(11.5, 3.1))
@@ -156,19 +205,10 @@ def _panel(img: np.ndarray, depth: np.ndarray, f_pred: float,
     ax.axis("off")
     fig.colorbar(im, ax=ax, fraction=0.046)
 
-    ax = fig.add_subplot(1, 4, 3, projection="3d")
-    step = 4
-    z = d[::step, ::step]
-    yy, xx = np.mgrid[0:d.shape[0]:step, 0:d.shape[1]:step]
-    ax.plot_surface(xx, yy, z, cmap="inferno",
-                    rstride=1, cstride=1, edgecolor="k",
-                    linewidth=0.12, antialiased=True, shade=False)
-    ax.set_zlim(0, vmax)
-    ax.set_box_aspect((d.shape[1], d.shape[0], 0.35 * max(d.shape)))
-    ax.set_title("3D reconstruction (mesh)", fontsize=8)
-    ax.set_xticks([]); ax.set_yticks([])
-    ax.tick_params(labelsize=6, pad=-2)
-    ax.view_init(elev=38, azim=-65)
+    ax = fig.add_subplot(1, 4, 3)
+    ax.imshow(mesh_view(d))
+    ax.set_title("3D reconstruction (Open3D mesh)", fontsize=8)
+    ax.axis("off")
 
     ax = fig.add_subplot(1, 4, 4)
     bars = [("predicted", f_pred, "#d95f02")]
@@ -184,9 +224,19 @@ def _panel(img: np.ndarray, depth: np.ndarray, f_pred: float,
     plt.close(fig)
 
 
+def _require_display() -> None:
+    """Fail before the (minutes-long) feature pass, not after it."""
+    if not has_display():
+        raise RuntimeError(
+            "the 3D panels need Open3D offscreen rendering, which segfaults "
+            "without a display here — rerun under: xvfb-run -a "
+            "-s '-screen 0 1400x1000x24'")
+
+
 def image_samples(n_cnc: int = 14, n_feats: int = 6) -> list[Path]:
     from scipy.stats import spearmanr
 
+    _require_display()
     GALLERY.mkdir(parents=True, exist_ok=True)
     outs = []
 
@@ -308,10 +358,18 @@ def _lut_force_rows(frame, ref, calib, rows, is_new,
     return force, depths
 
 
-def video_samples(n: int = 10, seconds: float = 8.0) -> list[Path]:
-    """React episode clips: tactile | live LUT depth | force trace."""
+def video_samples(n: int = 10, seconds: float = 8.0,
+                  mesh_stride: int = 2) -> list[Path]:
+    """React clips: tactile | live LUT depth | Open3D mesh | force trace.
+
+    The mesh panel costs ~0.2 s/frame, so it is rendered once per *fresh*
+    tactile frame (never per duplicated row) and held in between — the same
+    update rate the depth panel already has. `mesh_stride` decimates the mesh
+    grid (2 = every other pixel) purely for speed at the 320x256 panel size.
+    """
     from .evaluate import median3_fresh
 
+    _require_display()
     GALLERY.mkdir(parents=True, exist_ok=True)
     calib = _glowtact_calib()
     npzs = sorted(Path(OUT_ROOT).rglob("episode_*_*.npz"),
@@ -336,22 +394,30 @@ def video_samples(n: int = 10, seconds: float = 8.0) -> list[Path]:
         fmax = max(float(fwin.max()), 1e-3)
         vmax = max(0.2, max(float(d.max()) for d in depths.values()))
 
+        # one Open3D render per fresh depth frame, reused on duplicated rows
+        meshes = {r: cv2.cvtColor(mesh_tile(d, stride=mesh_stride),
+                                  cv2.COLOR_RGB2BGR)
+                  for r, d in sorted(depths.items())}
+
         out = GALLERY / f"clip_{task}_{ep}_{side}.mp4"
         tmp = out.with_suffix(".raw.mp4")
-        W_, H_ = 960, 330
+        W_, H_ = 1280, 330
         vw = cv2.VideoWriter(str(tmp), cv2.VideoWriter_fourcc(*"mp4v"),
                              30, (W_, H_))
         dep = np.zeros((240, 320), np.float32)
+        msh = np.full((240, 320, 3), 13, np.uint8)
         for row in range(lo, hi):
             img = frame(row)
             dep = depths.get(row, dep)
+            msh = meshes.get(row, msh)
             canvas = np.zeros((H_, W_, 3), np.uint8)
             canvas[:240, :320] = cv2.cvtColor(
                 cv2.resize(img, (320, 240)), cv2.COLOR_RGB2BGR)
             dn = (np.clip(dep / vmax, 0, 1) * 255).astype(np.uint8)
             canvas[:240, 320:640] = cv2.applyColorMap(dn,
                                                       cv2.COLORMAP_INFERNO)
-            xs = np.linspace(650, 950, hi - lo).astype(int)
+            canvas[:240, 640:960] = msh
+            xs = np.linspace(970, 1270, hi - lo).astype(int)
             ys = (200 - 170 * fwin / fmax).astype(int) + 20
             for i in range(1, len(xs)):
                 cv2.line(canvas, (xs[i - 1], ys[i - 1]), (xs[i], ys[i]),
@@ -359,7 +425,7 @@ def video_samples(n: int = 10, seconds: float = 8.0) -> list[Path]:
             cv2.circle(canvas, (xs[row - lo], ys[row - lo]), 4,
                        (30, 120, 240), -1)
             for x0, lab in ((0, "tactile"), (320, "LUT depth"),
-                            (650, "force")):
+                            (640, "3D mesh (Open3D)"), (970, "force")):
                 cv2.putText(canvas, lab, (x0 + 8, 262),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.5,
                             (200, 200, 200), 1, cv2.LINE_AA)
@@ -376,7 +442,8 @@ def video_samples(n: int = 10, seconds: float = 8.0) -> list[Path]:
                        check=True)
         tmp.unlink()
         outs.append(out)
-        print(f"  clip {out.name}  peak {fwin.max():.2f} N", flush=True)
+        print(f"  clip {out.name}  peak {fwin.max():.2f} N  "
+              f"{len(meshes)} mesh renders / {hi - lo} rows", flush=True)
     return outs
 
 

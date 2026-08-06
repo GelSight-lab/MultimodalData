@@ -43,7 +43,8 @@ th,td{padding:7px 10px;border-bottom:1px solid var(--line);text-align:right}
 th{color:var(--dim);font-family:'IBM Plex Mono',monospace;font-size:.72rem;
 text-transform:uppercase;letter-spacing:.08em}
 td:first-child,th:first-child{text-align:left}
-img{max-width:100%;border-radius:8px;border:1px solid var(--line);display:block;margin:12px auto}
+img,video{max-width:100%;height:auto;border-radius:8px;border:1px solid var(--line);
+display:block;margin:12px auto}
 a{color:#4fd8e0}a:hover{color:var(--force)}
 .pill{display:inline-block;border:1px solid var(--line);border-radius:999px;
 padding:3px 12px;font-size:.75rem;font-family:'IBM Plex Mono',monospace;
@@ -138,6 +139,34 @@ each network 0.90+ in its own gel domain and collapsing
 outside it.</p>
 </div>
 
+<h2>Per-dataset calibration</h2>
+<div class="card">
+<p style="margin-top:0">Worth stating plainly, because it bounds what those ρ
+mean: <b>the pipeline holds no hardness or elastic-modulus constant anywhere</b>.
+Nothing in the code knows a gel's Shore hardness or Young's modulus. Stiffness
+enters only implicitly — absorbed into the per-group least-squares weights and
+the isotonic calibration stacked on them — and those are refit <b>per dataset
+and per indenter/probe group</b>: every cnc_Mini probe, every GlowTact indenter
+family, every FEATS capture group gets its own fit, half the group fitting and
+half held out.</p>
+<p>The only physical constants shared across datasets are the sphere-calibrated
+RGB lookup table and <code>MM_PER_PIXEL</code>. Everything downstream of depth
+is refit. The reported ρ are therefore <b>per-group rank correlations</b> —
+evidence that the geometry recovered from the image is monotone in force
+<i>within</i> a group. They do <b>not</b> demonstrate a transferable
+absolute-newton model across gels; the one pooled multi-object fit we tried was
+much worse (ρ 0.47), which is why the sphere, with known geometry, is the
+calibration object.</p>
+<p>The reconstruction underneath is not the noise source it appears to be, and
+that is measured, not assumed: high-frequency content in the <b>depth</b> field
+is <b>0.3%</b> of peak depth (6.5 µm on a 1.9 mm press), while in the
+<b>gradient</b> field it is <b>22.2%</b> — LUT bin quantisation, with 9.8% of
+contact pixels landing in bins the sphere calibration never observed
+(nearest-filled). Poisson integration is a low-pass, so the LUT noise is gone
+by the time depth exists; the speckle visible in gradient-domain debug panels
+never reaches the force features.</p>
+</div>
+
 <h2>Optimizing against ground truth</h2>
 <div class="card">
 <p style="margin-top:0">The cnc_Mini force labels turned the pipeline's weak spots into
@@ -159,10 +188,10 @@ depth genuinely varies with texture and position.</p>
 
 <h2>Gallery</h2>
 <div class="card">
-<p style="margin-top:0">20 image samples (raw | indentation | 3D reconstruction |
-predicted vs ground-truth force) and 10 React episode clips
-(tactile | live depth | force trace): <a href="gallery.html">browse the full
-gallery</a>.</p>
+<p style="margin-top:0">20 image samples (raw | indentation | Open3D mesh of the
+reconstruction | predicted vs ground-truth force) and 10 React episode clips
+(tactile | live depth | live Open3D mesh | force trace): <a href="gallery.html">browse
+the full gallery</a>. The mesh panel re-renders on every fresh tactile frame.</p>
 <img src="assets/gallery/cnc_08.png" alt="sample panel">
 <video controls muted loop playsinline preload="metadata"
  src="assets/gallery/@@CLIP@@"></video>
@@ -247,6 +276,14 @@ ZH = [
      '<span class="d">Winkler 弹性地基:F = c·Σδ·dA。刻度 c 是唯一拟合量——来自 FEA 真值,而非假设的 gel 常数</span>'),
     ('<p>Post-processing: a 3-tap median over <i>fresh</i> tactile frames only\n(duplicated rows would let a row-wise filter count bad values three times).\nCuts single-frame spikes from 4–8% to ≈0.</p>',
      '<p>后处理:只在 <i>fresh</i> 触觉帧上做 3 点中值(逐行滤波会把重复行里的坏值数三次)。\n单帧尖峰从 4–8% 降到 ≈0。</p>'),
+    ('<h2>Per-dataset calibration</h2>',
+     '<h2>逐数据集标定</h2>'),
+    ('<p style="margin-top:0">Worth stating plainly, because it bounds what those ρ\nmean: <b>the pipeline holds no hardness or elastic-modulus constant anywhere</b>.\nNothing in the code knows a gel\'s Shore hardness or Young\'s modulus. Stiffness\nenters only implicitly — absorbed into the per-group least-squares weights and\nthe isotonic calibration stacked on them — and those are refit <b>per dataset\nand per indenter/probe group</b>: every cnc_Mini probe, every GlowTact indenter\nfamily, every FEATS capture group gets its own fit, half the group fitting and\nhalf held out.</p>',
+     '<p style="margin-top:0">这一点值得直说,因为它界定了上面那些 ρ 的含义:<b>管线里没有任何硬度或弹性模量常数</b>。代码不知道任何 gel 的邵氏硬度或杨氏模量。刚度只是隐式进入——被逐组最小二乘的权重、以及叠在其上的保序(isotonic)标定吸收掉了——而这些都是<b>逐数据集、逐压头/探头组</b>重新拟合的:每个 cnc_Mini 探头、每个 GlowTact 压头族、每个 FEATS 采集组各自拟合,组内一半拟合、一半留出。</p>'),
+    ('<p>The only physical constants shared across datasets are the sphere-calibrated\nRGB lookup table and <code>MM_PER_PIXEL</code>. Everything downstream of depth\nis refit. The reported ρ are therefore <b>per-group rank correlations</b> —\nevidence that the geometry recovered from the image is monotone in force\n<i>within</i> a group. They do <b>not</b> demonstrate a transferable\nabsolute-newton model across gels; the one pooled multi-object fit we tried was\nmuch worse (ρ 0.47), which is why the sphere, with known geometry, is the\ncalibration object.</p>',
+     '<p>跨数据集共享的物理常数只有两个:球面标定出的 RGB 查找表,以及 <code>MM_PER_PIXEL</code>。深度之后的一切都会重新拟合。因此报告的 ρ 是<b>逐组的秩相关</b>——它说明从图像恢复的几何在组<i>内</i>与力单调相关,但<b>不</b>说明存在一个可跨 gel 迁移的绝对牛顿值模型;我们唯一试过的多物体混合拟合差得多(ρ 0.47),这正是选用几何已知的球体作标定物的原因。</p>'),
+    ('<p>The reconstruction underneath is not the noise source it appears to be, and\nthat is measured, not assumed: high-frequency content in the <b>depth</b> field\nis <b>0.3%</b> of peak depth (6.5 µm on a 1.9 mm press), while in the\n<b>gradient</b> field it is <b>22.2%</b> — LUT bin quantisation, with 9.8% of\ncontact pixels landing in bins the sphere calibration never observed\n(nearest-filled). Poisson integration is a low-pass, so the LUT noise is gone\nby the time depth exists; the speckle visible in gradient-domain debug panels\nnever reaches the force features.</p>',
+     '<p>下面的重建也不是它看上去的那个噪声源,而且这是量出来的、不是假设的:<b>深度</b>场里的高频成分只占峰值深度的 <b>0.3%</b>(1.9 mm 按压上是 6.5 µm),而<b>梯度</b>场里是 <b>22.2%</b>——来自 LUT 分箱量化,9.8% 的接触像素落在球面标定从未观测到的 bin 里(用最近邻填充)。Poisson 积分本身就是低通,所以到深度这一步 LUT 噪声已经没了;梯度域调试面板里看到的麻点根本进不到力特征里。</p>'),
     ('<h2>Optimizing against ground truth</h2>',
      '<h2>用真值驱动的优化</h2>'),
     ('<p style="margin-top:0">The cnc_Mini force labels turned the pipeline\'s weak spots into\nmeasurable defects, fixed in order (each step verified on held-out data):</p>',
@@ -265,8 +302,8 @@ ZH = [
      '<p><b>体积还是最大深度?</b>实证裁决:体积家族胜出(δ<sup>1.5</sup> 加权 0.65、\n纯体积 0.63)优于最大深度(0.63),明显优于接触面积(0.35);3 特征小线性模型 ρ 持平\n但 MAE 减半(0.61 N)。天花板也要认识:连 CNC 自己的指令压深在<i>探头内</i>也只有\nρ 0.78–0.88——同样深度下力确实随纹理和位置变化。</p>'),
     ('<h2>Gallery</h2>',
      '<h2>图库</h2>'),
-    ('<p style="margin-top:0">20 image samples (raw | indentation | 3D reconstruction |\npredicted vs ground-truth force) and 10 React episode clips\n(tactile | live depth | force trace): <a href="gallery.html">browse the full\ngallery</a>.</p>',
-     '<p style="margin-top:0">20 个图像样本(原图 | 压入图 | 3D 重建 | 预测 vs 真值力)\n与 10 个 React 片段(触觉 | 实时深度 | 力曲线):<a href="gallery.html">浏览完整图库</a>。</p>'),
+    ('<p style="margin-top:0">20 image samples (raw | indentation | Open3D mesh of the\nreconstruction | predicted vs ground-truth force) and 10 React episode clips\n(tactile | live depth | live Open3D mesh | force trace): <a href="gallery.html">browse\nthe full gallery</a>. The mesh panel re-renders on every fresh tactile frame.</p>',
+     '<p style="margin-top:0">20 个图像样本(原图 | 压入图 | 重建的 Open3D 网格 | 预测 vs 真值力)\n与 10 个 React 片段(触觉 | 实时深度 | 实时 Open3D 网格 | 力曲线):<a href="gallery.html">浏览完整图库</a>。网格面板在每一个新触觉帧上重新渲染。</p>'),
     ('<h2>NN vs model-based on the GelSight Mini — who has compared them?</h2>',
      '<h2>GelSight Mini 上 NN 与 model-based 谁对比过?</h2>'),
     ('<p style="margin-top:0"><b>No published head-to-head that we could find.</b>\nThe literature runs in two camps that cite but don\'t benchmark each other.\nModel-based: marker displacement × elasticity\n(<a href="https://ieeexplore.ieee.org/document/8202149">Yuan 2017</a>),\nphotometric-stereo height + polynomial fit, inverse FEM\n(<a href="https://arxiv.org/abs/1810.04621">GelSlim, Ma 2019</a>).\nLearned, on the Mini specifically:\n<a href="https://openreview.net/forum?id=dUO0QQw4FW">CANFnet</a> (F/T-labeled, normal only),\n<a href="https://arxiv.org/abs/2411.03315">FEATS</a> (FEA-labeled, 3D distributions),\n<a href="https://arxiv.org/abs/2410.02048">FeelAnyForce</a> (200K ATI-labeled).\nEach motivates NN over physics qualitatively — FEA too slow for real time,\nlinear elasticity misses elastomer nonlinearity — but their reported baselines\nare other <i>networks</i>, not the physics pipeline.</p>',
@@ -299,7 +336,7 @@ figure{{margin:14px 0}} figcaption{{color:var(--dim);font-size:.72rem;
 font-family:'IBM Plex Mono',monospace;margin-top:2px}}</style></head>
 <body><div class="wrap">
 <header><div class="kicker">React force recovery · gallery</div>
-<h1>Samples: raw | depth | 3D | force</h1>
+<h1>Samples: raw | depth | Open3D mesh | force</h1>
 <a class="pill" href="method.html">↖ method</a>
 <a class="pill" href="index.html">results</a></header>
 <h2>{len(imgs)} image samples (cnc_Mini + FEATS, with ground truth)</h2>
