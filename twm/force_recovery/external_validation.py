@@ -66,7 +66,7 @@ def run(split: str = "val", max_frames: int = 300,
 
     refs = [_decode(r) for r in df.head(10).image]
     est = DepthForceEstimator(refs, use_gpu=use_gpu, already_cropped=True,
-                              inpaint=True)
+                              inpaint=True, flatfield=True)
 
     # Scope: pure normal loading, below gel saturation. Shear-loaded
     # captures measured spearman = -0.15 (shear churns the image without

@@ -16,7 +16,7 @@ import numpy as np
 
 from .run_episode import OUT_ROOT, STAGE_ROOT, process_side
 
-PIPELINE_VERSION = 2      # bump when the estimator changes; stale npz rerun
+PIPELINE_VERSION = 3      # v3: flatfield illumination normalization      # bump when the estimator changes; stale npz rerun
 
 
 def all_episodes() -> list[tuple[str, str, str]]:

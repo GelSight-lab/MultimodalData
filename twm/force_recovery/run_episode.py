@@ -80,7 +80,11 @@ def process_side(task: str, date: str, ep: str, side: str,
         def src(row: int) -> int:
             return min(trim + row + LEGACY_SHIFT, n_frames - 1)
 
-        est = DepthForceEstimator([frames[src(int(r))] for r in ref_rows])
+        # flatfield: validated on cnc_Mini ground truth (held-out rho
+        # 0.34 -> 0.65 with edge filtering); normalizes the vignette the
+        # depth MLP was never trained under.
+        est = DepthForceEstimator([frames[src(int(r))] for r in ref_rows],
+                                  flatfield=True)
 
         last = None
         for row in range(T):
