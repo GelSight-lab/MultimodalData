@@ -321,3 +321,24 @@ v4b 中值参考 / v5 掩码拓扑 / v6 差模+深度扫描)在 B/D 上全部失
 (1) 指令深度(无噪控制变量)自身 |rho(z,F)| 族内仅 0.79-0.88;
 (2) 数据集力程仅 1.7-5.7N(不覆盖 0-20N)。深度类方法 0.95 原理不可达,
 误差已压至 <1N。
+
+## cnc_Mini debug (用户质疑"数据质量低 vs recon不work") — 两者都不是: 视野裁剪
+工具: twm/force_recovery/debug_gallery.py (features|gallery)
+分步图库(18样本×7面板: raw/ref/dI/valid/|g|/depth/数值):
+site_assets/debug_gallery/{glowtact,cnc,feats}/index.html
+
+| found | evidence | fix | verified |
+|---|---|---|---|
+| cnc 数字解析错(前导负号) | ValueError '.0.92' | _num 符号处理 | 全量 3351 帧解析 |
+| cnc 无参考帧 | tar 内无 initial | 每probe最轻10帧中值 | 轻帧 dI p95≈3 |
+| 按压网格超出视野 | x∈[0,20],y∈[0,16] vs 视野≈13×10mm; 视野内仅33% | 严格内部框 x∈[5,13],y∈[4,12] | ↓ |
+| 旧"天花板论证"错误 | z→F 0.78-0.88 本身被边缘压污染 | 撤回; 视野内 recon 超过该值 | 0.94>0.88 |
+
+cnc 全量 (3351帧, LUT管线+z监督增益场, 每probe半半分, 7种子):
+  全部位置 0.113/0.74N → 内部 x3.5-14.5: 0.835/0.39N → 严格内部 x5-13
+  (n=671): 逐probe 0.94 0.94 0.93 0.91 0.95 0.95, med 0.941 / MAE 0.26N
+→ 与 GlowTact 同级; 剩余差距=力程窄(1.7-5.7N)的受限力程效应。
+标签质量佳: 固定(probe,2mm cell,z) F 的 CV 中位 4.5%。
+dot 类型 (FEATS val, 全marker): 差分抵消静态marker, 原始管线 rho 0.717
+(按压恒居中→无视野/增益问题), depth 图在 marker 麻点下仍恢复形状。
+对照 glowtact 原始(无增益/无作用域) 0.46 — 增益场+作用域是两数据集共同的关键。
