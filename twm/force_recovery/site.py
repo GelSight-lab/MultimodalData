@@ -260,7 +260,7 @@ penetration <span class="verdict pass">{pen_max:.1f} mm</span>.</p>
 <h2>What the numbers say</h2>
 <div class="card">
 <ul>
-<li><b>Method 1 works, with honest limits.</b> Externally: ρ = 0.70 pooled
+<li><b>Method 1 works, with honest limits.</b> Externally: ρ = 0.74 pooled
 (0.66–0.94 within an indenter family) against FEA ground truth on FEATS, in
 a transfer setting strictly harder than React's. Internally: SNR
 {min(m1_snr):.1f}–{max(m1_snr):.1f} across episodes and ρ =
