@@ -236,6 +236,25 @@ indenters with MAE ≤ 0.73 N. Caveat: that calibration is refit per family, so
 it measures rank agreement within a group, not a transferable absolute-newton
 scale — see <a href="method.html">per-dataset calibration</a>.</p></div>
 
+<h2>Sparsh (Meta) — a fourth dataset, and where the method breaks</h2>
+<div class="card"><img src="assets/results_sparsh.png" alt="Sparsh results">
+<p class="footnote">10 gel pads (6 sphere, 2 flat, 2 sharp), force in newtons,
+7500 frames. Calibrated per pad: &rho;=0.56, MAE 0.138 N, against a
+labels-shuffled-within-pad control of &rho;=0.16 — the join is real. Fitting on
+one pad and applying it <b>unchanged</b> to another costs almost nothing
+(off-diagonal 0.42&ndash;0.59 vs diagonal 0.47&ndash;0.59), so one calibration
+does carry across pads.</p>
+<p class="footnote"><b>The honest caveat:</b> on this sensor our
+GlowTact-calibrated LUT does not reconstruct valid geometry — a sphere press
+comes out bilobed with a central dip instead of a dome, because the
+illumination geometry differs. So these correlations track d<i>I</i>
+magnitude, not depth. Read 0.56 as a <b>transfer limit for a foreign sensor</b>,
+not as a reconstruction result. Three dataset defects also had to be fixed
+first: flat/sharp trajectories ship 5 more frame indices than forces (silently
+drifting the labels, &rho;&asymp;0 until paired within each trajectory),
+sharp/batch_2 is stored BGR while the other nine are RGB, and flat/batch_2
+ships only 3 of 4 image files.</p></div>
+
 <h2>React — no ground truth, so: do independent methods agree?</h2>
 <div class="card"><img src="assets/results_react.png" alt="React agreement">
 <p class="footnote">On the dataset we actually care about, the two surviving
@@ -262,6 +281,12 @@ data: FEATS (2411.03315) · FoTa/T3 (2406.13640) · GlowTact
 </div></body></html>"""
 
 ZH = [
+    ('<h2>Sparsh (Meta) — a fourth dataset, and where the method breaks</h2>',
+     '<h2>Sparsh (Meta) — 第四个数据集，以及方法的边界</h2>'),
+    ('<p class="footnote">10 gel pads (6 sphere, 2 flat, 2 sharp), force in newtons,\n7500 frames. Calibrated per pad: &rho;=0.56, MAE 0.138 N, against a\nlabels-shuffled-within-pad control of &rho;=0.16 — the join is real. Fitting on\none pad and applying it <b>unchanged</b> to another costs almost nothing\n(off-diagonal 0.42&ndash;0.59 vs diagonal 0.47&ndash;0.59), so one calibration\ndoes carry across pads.</p>',
+     '<p class="footnote">10 块 gel pad（6 球、2 平、2 尖），力为牛顿，7500 帧。\n逐 pad 标定：&rho;=0.56，MAE 0.138 N；对照组（pad 内打乱标签）&rho;=0.16 ——\n对齐是真实的。在一块 pad 上拟合后<b>原样</b>应用到另一块几乎不损失\n（非对角 0.42&ndash;0.59 vs 对角 0.47&ndash;0.59），说明一套标定确实能跨 pad。</p>'),
+    ('<p class="footnote"><b>The honest caveat:</b> on this sensor our\nGlowTact-calibrated LUT does not reconstruct valid geometry — a sphere press\ncomes out bilobed with a central dip instead of a dome, because the\nillumination geometry differs. So these correlations track d<i>I</i>\nmagnitude, not depth. Read 0.56 as a <b>transfer limit for a foreign sensor</b>,\nnot as a reconstruction result. Three dataset defects also had to be fixed\nfirst: flat/sharp trajectories ship 5 more frame indices than forces (silently\ndrifting the labels, &rho;&asymp;0 until paired within each trajectory),\nsharp/batch_2 is stored BGR while the other nine are RGB, and flat/batch_2\nships only 3 of 4 image files.</p>',
+     '<p class="footnote"><b>必须说明的警告：</b>在这个传感器上，我们基于 GlowTact\n标定的 LUT <b>无法重建出正确几何</b>——球压头压出来是"双瓣+中心凹陷"而不是圆顶，\n因为打光几何不同。所以这些相关性追踪的是 d<i>I</i> 幅值，不是深度。0.56 应读作\n<b>外来传感器的迁移上限</b>，而非重建结果。此外还先修了三个数据集缺陷：\nflat/sharp 的轨迹里帧索引比力多 5 个（标签会静默错位，逐轨迹配对前 &rho;&asymp;0）、\nsharp/batch_2 以 BGR 存储而其余九个是 RGB、flat/batch_2 只有 3 个图像文件。</p>'),
     ("Pipeline debug page</b></a>: raw\nimage &rarr; force step by step on all three datasets, and the cnc\nfield-of-view ablation (in-view &rho;=0.94).",
      "管线调试页</b></a>：三个数据集上从原始图像到力的逐步展示，以及 cnc 视野消融（视野内 &rho;=0.94）。"),
     ('<html lang="en">', '<html lang="zh-CN">'),
