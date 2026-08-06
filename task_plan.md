@@ -758,3 +758,31 @@ GelSlim 4.0无牛顿力发布; Awesome-Touch列表无新增。
   -> 深压时阴影区自身变得有色度, 判据失灵。
 - 陷阱记录: 圆度只对**非圆压头**有意义。round 的高圆度(0.83)是**正确**的,
   把它算作"形状恢复"是错的(与此前"(plateau)"标签同类错误)。
+
+## 3D recon 改进尝试汇总 (goal: 各种办法改进 + 重估力 + 更新全站)
+| 尝试 | 证据 | 裁定 |
+|---|---|---|
+| **marker inpaint (Telea, ref+frame)** | dimple 功率 1.523→**0.890**(x0.65), 91%帧下降, Wilcoxon p=2.6e-19; 检测器 63/63 且在无marker参考上返回0 | **采纳(仅几何/3D产物)** |
+| marker removal 用于力 | 基线 0.7747/5.03N (种子sd 0.029), 8个变体中位增量**全为负** | **否决**; 对照: 随机掩码 0.7697(无增益) |
+| 梯度域置零(vs inpaint) | 1.251 (x0.93, 仅61%帧) | 否决: g:=0 在每个洞边界留下偶极层 |
+| 阴影像素剔除 | 峰深 star 2.11→1.68mm, 但 c/r 1.38→**1.41**(未修复) | 未验证, 不采纳(无真值判定降低是否更正确) |
+| 内部梯度归零 | c/r 1.38→1.30; 内部|g|本就是边缘的 0.06-0.35倍 | 效果小, 不采纳 |
+
+### **自我修正(重要)**: 撤回"平顶应 c/r≈1.0"的判据
+该判据假设刚性阶跃边缘。**柔顺凝胶必然包裹边缘, 所以任何接触 c/r>1 都是预期的**。
+在拿到真值前, 无法量化 1.23-1.42 中有多少是伪影。站点相关表述需软化。
+
+### FEATS 真正的瓶颈(非 marker)
+最轻的20次按压 off-dot 处 |dI| 已达 11 灰度, 88% off-dot 像素通过 |dI|>8
+=> "valid"几乎是整幅图, 特征积分的是**参考失配**而非接触。
+换用逐indenter轻压参考更差(0.7747→0.7261)。这解释了 FEATS 0.77 vs 无marker 0.94-0.99。
+
+### Wedge 论文(ICRA2021)对阴影的实际表述(已读原文)
+- Fig.4 + Filters节: 扩散片**在硬件上**消除阴影(3M Diffuser 3635-70), 灰度滤片把内反射降到1/16
+- §IV-C: "gel deformation and shadows can influence the 3D reconstruction,
+  especially for sharp surfaces... **requires further processing from the
+  perception side in the future**" -> **文献无算法**, 明确留待未来
+- 但 Fig.10 给了完整的 **marker 算法**: 零填充 vs griddata nearest/linear/cubic,
+  nearest 10ms(200x150), linear/cubic 60/70ms -> 我们的 marker 步骤据此
+- 另一可借用点: Wedge 把 X,Y 像素坐标**放进映射输入**(RGBXY→Gx,Gy)补偿LED衰减;
+  我们的空间增益场在**输出端**。输入端更根本, 待试。
