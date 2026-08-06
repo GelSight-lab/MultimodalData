@@ -54,7 +54,10 @@ details summary { cursor:pointer; color:var(--accent2); font-size:.85rem;
   font-weight:600; padding:8px 12px; background:#f4f0ea; border-radius:8px; }
 details[open] summary { border-radius:8px 8px 0 0; }
 .twocol { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
-@media (max-width:760px){ .twocol { grid-template-columns:1fr; } }
+@media (max-width:760px){ .twocol { grid-template-columns:1fr; }
+header h1{font-size:1.4rem}
+table{display:block;overflow-x:auto;-webkit-overflow-scrolling:touch}
+th,td{min-width:100px} }
 """
 
 

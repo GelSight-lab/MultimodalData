@@ -54,7 +54,10 @@ border-radius:4px;font-size:.85em}
 footer{margin-top:60px;padding-top:18px;border-top:1px dashed var(--line);
 color:var(--dim);font-size:.8rem}
 @media(max-width:640px){.step{grid-template-columns:28px 1fr;grid-auto-flow:dense}
-.step .d{grid-column:2}}
+.step .d{grid-column:2}
+h1{font-size:1.45rem}
+table{display:block;overflow-x:auto;white-space:nowrap;-webkit-overflow-scrolling:touch}
+th,td{white-space:normal;min-width:110px}}
 """
 
 EN = """<!DOCTYPE html>

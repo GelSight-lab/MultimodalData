@@ -60,9 +60,12 @@ def dataset_figures() -> dict:
     from scipy.stats import spearmanr
 
     plt.rcParams.update({
-        "figure.dpi": 130, "font.size": 9, "axes.grid": True,
-        "grid.alpha": .25, "axes.spines.top": False,
-        "axes.spines.right": False})
+        "figure.dpi": 150, "font.size": 10, "axes.grid": True,
+        "grid.alpha": .18, "grid.linewidth": .6,
+        "axes.spines.top": False, "axes.spines.right": False,
+        "axes.linewidth": .8, "axes.titlesize": 10,
+        "figure.titlesize": 12, "figure.titleweight": "bold",
+        "xtick.labelsize": 8.5, "ytick.labelsize": 8.5})
 
     out_dir = SITE / "assets"
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -70,8 +73,8 @@ def dataset_figures() -> dict:
 
     datasets = {
         "feats": {
-            "title": "FEATS dataset — marker-dot gel, CNC + FEA/F-T labels "
-                     "(150 frames, ≤30 N, normal loading)",
+            "title": "Marker-dot gel: only the in-domain network is precise — "
+                     "physics transfers, the markerless network degrades",
             "panels": [
                 ("Ours (physics)", _load_ours_feats, ORANGE, "transfer"),
                 ("FEATS U-net", lambda: _load_json_pred("feats_on_feats_val.json"),
@@ -80,8 +83,8 @@ def dataset_figures() -> dict:
                  GREEN, "transfer (marker gel)"),
             ]},
         "cnc": {
-            "title": "FoTa cnc_Mini — markerless gel, CNC + F/T labels "
-                     "(0-5.7 N)",
+            "title": "Markerless gel (cnc_Mini): the marker-gel network goes blind — "
+                     "physics and FeelAnyForce both track force",
             "panels": [
                 ("Ours (physics)", _load_ours_cnc, ORANGE, "transfer"),
                 ("FEATS U-net",
@@ -91,8 +94,8 @@ def dataset_figures() -> dict:
                  "near-domain (markerless)"),
             ]},
         "glowtact": {
-            "title": "GlowTact — markerless gel, cleaned presses + F/T labels "
-                     "(0-20 N)",
+            "title": "Markerless gel (GlowTact, 0-20 N): supervision buys the "
+                     "object-dependent gain physics cannot know",
             "panels": [
                 ("Ours (physics)", _load_ours_glowtact, ORANGE, "transfer"),
                 ("FEATS U-net",
@@ -123,8 +126,13 @@ def dataset_figures() -> dict:
             ax.set_xlim(-lim * .03, lim)
             ax.set_ylim(min(-lim * .03, np.percentile(p, 0.5)),
                         max(lim, np.percentile(p, 99.5)))
-            ax.set_title(f"{name} — {domain}\nρ={rho:.2f}, MAE={mae:.2f} N",
-                         fontsize=8.6)
+            ax.set_title(f"{name}\n{domain}", fontsize=9)
+            ax.text(0.04, 0.96, f"ρ = {rho:.2f}",
+                    transform=ax.transAxes, fontsize=13, fontweight="bold",
+                    color=color, va="top")
+            ax.text(0.04, 0.84, f"MAE {mae:.2f} N",
+                    transform=ax.transAxes, fontsize=8.5, color="#666",
+                    va="top")
             ax.set_xlabel("ground truth [N]")
         axes[0].set_ylabel("predicted [N]")
         fig.suptitle(spec["title"], fontsize=10)
@@ -142,8 +150,9 @@ def dataset_figures() -> dict:
     ax.scatter(ours, af, s=12, alpha=.6, color=ORANGE)
     ax.set_xlabel("Ours (physics) [N]")
     ax.set_ylabel("FeelAnyForce [N]")
-    ax.set_title(f"React (no force GT) — two independent estimators\n"
-                 f"agreement ρ={rho:.2f}, n={len(rows)} frames", fontsize=9)
+    ax.set_title(f"React: zero-training physics and 200K-frame network\n"
+                 f"agree at ρ = {rho:.2f} (n={len(rows)}) — neither can copy the other",
+                 fontsize=9)
     fig.tight_layout()
     f = out_dir / "results_react.png"
     fig.savefig(f); plt.close(fig)
@@ -191,12 +200,12 @@ each row, and differences between panels are differences between methods.</p>
 <tr><th>dataset (gel type)</th><th>Ours — physics,<br>0 training frames</th>
 <th>FEATS U-net<br>(trained: marker gel)</th>
 <th>FeelAnyForce<br>(trained: markerless)</th></tr>
-<tr><td>FEATS val (marker)</td><td>0.74</td>
-<td class="best">0.96 · in-domain</td><td class="dead">0.43</td></tr>
-<tr><td>FoTa cnc_Mini (markerless)</td><td>0.43 (0.65 non-edge)</td>
-<td class="dead">0.07</td><td class="best">0.83</td></tr>
-<tr><td>GlowTact (markerless)</td><td>0.63</td>
-<td class="dead">0.04</td><td class="best">0.90</td></tr>
+<tr><td>FEATS val (marker)</td><td>@@O_FEATS@@</td>
+<td class="best">@@N_FEATS@@ · in-domain</td><td class="dead">@@A_FEATS@@</td></tr>
+<tr><td>FoTa cnc_Mini (markerless)</td><td>@@O_CNC@@ (0.65 non-edge)</td>
+<td class="dead">@@N_CNC@@</td><td class="best">@@A_CNC@@</td></tr>
+<tr><td>GlowTact (markerless)</td><td>@@O_GLOW@@</td>
+<td class="dead">@@N_GLOW@@</td><td class="best">@@A_GLOW@@</td></tr>
 </table>
 <p>The pattern is the finding: <b>each network dominates its own gel domain and
 collapses outside it</b> (FEATS 0.96 → 0.04–0.07; FeelAnyForce 0.90 → 0.43),
@@ -335,7 +344,22 @@ data: FEATS (2411.03315) · FoTa/T3 (2406.13640) · GlowTact
 
 
 def build_pages() -> tuple[Path, Path]:
+    # numbers come from the evaluation artifacts, never typed into HTML
+    m = json.loads((CACHE / "results_metrics.json").read_text())
+    tok = {
+        "@@O_FEATS@@": m["feats"]["Ours (physics)"]["rho"],
+        "@@N_FEATS@@": m["feats"]["FEATS U-net"]["rho"],
+        "@@A_FEATS@@": m["feats"]["FeelAnyForce"]["rho"],
+        "@@O_CNC@@":   m["cnc"]["Ours (physics)"]["rho"],
+        "@@N_CNC@@":   m["cnc"]["FEATS U-net"]["rho"],
+        "@@A_CNC@@":   m["cnc"]["FeelAnyForce"]["rho"],
+        "@@O_GLOW@@":  m["glowtact"]["Ours (physics)"]["rho"],
+        "@@N_GLOW@@":  m["glowtact"]["FEATS U-net"]["rho"],
+        "@@A_GLOW@@":  m["glowtact"]["FeelAnyForce"]["rho"],
+    }
     en = EN.replace("@@CSS@@", CSS)
+    for k, v in tok.items():
+        en = en.replace(k, f"{v:.2f}")
     (SITE / "results.html").write_text(en)
     zh = en
     for old, new in ZH:

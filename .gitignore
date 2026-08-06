@@ -50,3 +50,4 @@ Thumbs.db
 # Large calibration artifacts (regenerable)
 twm/calibration/result/
 *.zip
+.claude/skills/
