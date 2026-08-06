@@ -1,3 +1,25 @@
+# Task Plan 4(活跃): cnc_Mini 方法优化 + FEATS 对比 + 可视化
+
+## Goal 4
+1. ~~initial 命名图像~~ → 查证:无(tar+全 zip CD;DoubleTower=随机对)。
+   但 z_mm = 指令压深(逐帧真值信号!)
+2. 边缘按压过滤 + 回答 max depth vs volume(实证)
+3. 优化方法(目标:ρ 达到可标注水平)
+4. 我们的方法 vs FEATS 模型,同真值对比(两个数据集:cnc_Mini=双双外域;
+   FEATS val=FEATS 本域)
+5. 可视化:20 图像样本(raw|深度|3D 面|力)+ 10 视频样本(React clip 加深度列)
+
+## Phases
+- [ ] P1: 特征缓存(cnc_Mini train+val ~1300 帧:vol/area/maxd/vol^1.5/soft-vol/
+      质心/边距 + FEATS 模型输出 + z_mm)
+- [ ] P2: 变体矩阵(fit train / eval val + 留探头):vol | maxd | area |
+      power-fit | 小线性组合 | 软阈值 | 边缘过滤 | 照明归一
+- [ ] P3: FEATS val 上同样对比(FEATS 本域 head-to-head)
+- [ ] P4: 可视化 20 图 + 10 clip
+- [ ] P5: 站点更新 + 发布 + commit
+
+---
+
 # Task Plan 2: 力恢复双方法实现 + 评估 + HF 可视化站
 
 ## Goal 2(活跃)

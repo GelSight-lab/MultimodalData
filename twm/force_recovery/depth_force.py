@@ -119,12 +119,20 @@ class DepthForceEstimator:
     """
 
     def __init__(self, reference_frames: np.ndarray | list, use_gpu: bool = True,
-                 already_cropped: bool = False, inpaint: bool = False):
+                 already_cropped: bool = False, inpaint: bool = False,
+                 flatfield: bool = False):
         """reference_frames: no-contact RGB frames (>=1).
 
         inpaint: for marker-dot gel, paint the dots out before the depth
         network runs (the SDK's mask-and-interpolate path left dot imprints
         in the reconstruction).
+
+        flatfield: divide each frame by the reference's blurred illumination
+        (per channel), so the depth MLP sees spatially uniform lighting.
+        Motivated by the cnc_Mini ground-truth analysis: the estimator's
+        response gain varied across the pad (force-fit residuals correlated
+        with contact position at |rho| up to 0.6) because the raw frames
+        carry a strong vignette the MLP was never trained under.
         """
         sys.path.insert(0, str(GSROBOTICS))
         from utilities.reconstruction import Reconstruction3D
@@ -142,6 +150,18 @@ class DepthForceEstimator:
 
         refs = [reference_frames] if np.asarray(reference_frames).ndim == 3 \
             else list(reference_frames)
+
+        self._gain = None
+        if flatfield:
+            # gain from the reference illumination, before it becomes part
+            # of _prep so the reference used for it is processed identically
+            base = self._resize(refs[0], already_cropped)
+            if inpaint:
+                base = inpaint_markers(base)
+            blur = cv2.GaussianBlur(base.astype(np.float32), (0, 0), 25)
+            self._gain = np.clip(
+                blur.mean(axis=(0, 1), keepdims=True) /
+                np.maximum(blur, 1.0), 0.3, 3.0)
         raw = np.stack([self._raw_depth(self._prep(f)) for f in refs])
         # Median, not mean: the reference frames are chosen by an intensity
         # heuristic and occasionally include a lightly-touching or
@@ -170,6 +190,9 @@ class DepthForceEstimator:
         frame = self._resize(frame_rgb, self.already_cropped)
         if self.inpaint:
             frame = inpaint_markers(frame)
+        if self._gain is not None:
+            frame = np.clip(frame.astype(np.float32) * self._gain,
+                            0, 255).astype(np.uint8)
         return frame
 
     @staticmethod

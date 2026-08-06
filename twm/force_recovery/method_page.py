@@ -109,6 +109,56 @@ Cuts single-frame spikes from 4–8% to ≈0.</p>
 <tr><td>cross-sensor absolute scale</td><td class="warn">drifts 2–4×</td><td>relative force within an episode is the reliable part</td></tr>
 </table></div>
 
+<h2>Optimizing against ground truth</h2>
+<div class="card">
+<p style="margin-top:0">The cnc_Mini force labels turned the pipeline's weak spots into
+measurable defects, fixed in order (each step verified on held-out data):</p>
+<table>
+<tr><th>step</th><th>evidence that drove it</th><th>ρ (held-out val)</th></tr>
+<tr><td>baseline (volume, per-episode zeroing)</td><td>—</td><td>0.34 pooled</td></tr>
+<tr><td>+ median zero map over scattered presses</td><td>only 4 of 2686 frames are truly contact-free; lowest-force references carried 1.7 N of baked-in contact</td><td>≈ same (zero map wasn't the bottleneck)</td></tr>
+<tr><td>+ <b>flat-field illumination normalization</b></td><td>force-fit residuals correlated with contact position (|ρ| up to 0.6); probe×quadrant conditioning raised ρ 0.45→0.55 — the vignette modulates the depth MLP's gain</td><td>0.44 pooled</td></tr>
+<tr><td>+ <b>edge filtering</b> (contact centroid &gt; 3 mm from border)</td><td>border presses sit where the vignette is steepest and imprints clip the sensor edge</td><td><b>0.65</b> (probe-median 0.64)</td></tr>
+</table>
+<p><b>Volume or max depth?</b> Settled empirically: the volume family wins
+(vol<sup>1.5</sup>-weighted 0.65, plain volume 0.63) over max depth (0.63) and
+clearly over contact area (0.35); a tiny 3-feature linear model matches ρ but
+halves MAE (0.61 N). The ceiling matters too: even the CNC's own commanded
+press depth only reaches ρ 0.78–0.88 <i>within</i> a probe — force at equal
+depth genuinely varies with texture and position.</p>
+</div>
+
+<h2>Three estimators, one ground truth</h2>
+<div class="card">
+<img src="assets/three_way_comparison.png" alt="ours vs FEATS vs FeelAnyForce">
+<table>
+<tr><th>estimator</th><th>training data</th><th>ρ pooled / non-edge</th><th>MAE</th></tr>
+<tr><td>ours (physics + flatfield)</td><td>none — 1 fitted scalar</td><td>0.43 / 0.65</td><td>0.83 N</td></tr>
+<tr><td>FEATS U-net</td><td>FEA labels, marker gel</td><td class="warn">0.07 / 0.13</td><td>3.7 N</td></tr>
+<tr><td>FeelAnyForce (DINOv2)</td><td>200K ATI-labeled, markerless</td><td class="ok"><b>0.83 / 0.92</b></td><td>1.05 N</td></tr>
+</table>
+<p>The honest conclusion for <b>labelling React</b>: FeelAnyForce is the
+strongest single estimator on markerless Mini — and on React itself the two
+surviving methods agree at <b>ρ = 0.91</b> (250 frames, motherboard ep0) with
+FeelAnyForce reading ≈0 N on every frame our pipeline calls contact-free
+(p95 = 0.14 N). Absolute scales differ ~3.9× (ATI- vs FEATS-calibrated);
+FeelAnyForce's is the better-grounded one. Recommended recipe: <b>label with
+FeelAnyForce, cross-check with the physics pipeline</b> (it needs no training
+data, so it cannot share the network's failure modes), and flag rows where
+they disagree.</p>
+</div>
+
+<h2>Gallery</h2>
+<div class="card">
+<p style="margin-top:0">20 image samples (raw | indentation | 3D reconstruction |
+predicted vs ground-truth force) and 10 React episode clips
+(tactile | live depth | force trace): <a href="gallery.html">browse the full
+gallery</a>.</p>
+<img src="assets/gallery/cnc_08.png" alt="sample panel">
+<video controls muted loop playsinline preload="metadata"
+ src="assets/gallery/clip_motherboard_episode_000_left.mp4"></video>
+</div>
+
 <h2>NN vs model-based on the GelSight Mini — who has compared them?</h2>
 <div class="card">
 <p style="margin-top:0"><b>No published head-to-head that we could find.</b>
@@ -207,6 +257,62 @@ Cuts single-frame spikes from 4–8% to ≈0.</p>""",
     ('<td class="warn">drifts 2–4×</td>', '<td class="warn">漂移 2–4×</td>'),
     ("<td>relative force within an episode is the reliable part</td>",
      "<td>集内相对力才是可靠的部分</td>"),
+    ("<h2>Optimizing against ground truth</h2>", "<h2>用真值驱动的优化</h2>"),
+    ("""<p style="margin-top:0">The cnc_Mini force labels turned the pipeline's weak spots into
+measurable defects, fixed in order (each step verified on held-out data):</p>""",
+     """<p style="margin-top:0">cnc_Mini 的力标签把管线的弱点变成了可测量的缺陷,依次修复
+(每一步都在留出集上验证):</p>"""),
+    ("<tr><th>step</th><th>evidence that drove it</th><th>ρ (held-out val)</th></tr>",
+     "<tr><th>步骤</th><th>驱动它的证据</th><th>ρ(留出 val)</th></tr>"),
+    ("<td>baseline (volume, per-episode zeroing)</td><td>—</td><td>0.34 pooled</td>",
+     "<td>基线(体积,逐集零图)</td><td>—</td><td>0.34 混合</td>"),
+    ("<td>+ median zero map over scattered presses</td><td>only 4 of 2686 frames are truly contact-free; lowest-force references carried 1.7 N of baked-in contact</td><td>≈ same (zero map wasn't the bottleneck)</td>",
+     "<td>+ 散布按压的中位数零图</td><td>2686 帧里只有 4 帧真无接触;最低力参考帧带着 1.7 N 的既有接触</td><td>≈ 不变(零图不是瓶颈)</td>"),
+    ("<td>+ <b>flat-field illumination normalization</b></td><td>force-fit residuals correlated with contact position (|ρ| up to 0.6); probe×quadrant conditioning raised ρ 0.45→0.55 — the vignette modulates the depth MLP's gain</td><td>0.44 pooled</td>",
+     "<td>+ <b>照明平场归一</b></td><td>力拟合残差与接触位置相关(|ρ| 达 0.6);按探头×象限条件化 ρ 0.45→0.55——渐晕在调制深度 MLP 的增益</td><td>0.44 混合</td>"),
+    ("<td>+ <b>edge filtering</b> (contact centroid &gt; 3 mm from border)</td><td>border presses sit where the vignette is steepest and imprints clip the sensor edge</td><td><b>0.65</b> (probe-median 0.64)</td>",
+     "<td>+ <b>边缘过滤</b>(接触质心距边 &gt; 3 mm)</td><td>贴边按压处渐晕最陡,印痕还会出传感器边界</td><td><b>0.65</b>(探头中位 0.64)</td>"),
+    ("""<p><b>Volume or max depth?</b> Settled empirically: the volume family wins
+(vol<sup>1.5</sup>-weighted 0.65, plain volume 0.63) over max depth (0.63) and
+clearly over contact area (0.35); a tiny 3-feature linear model matches ρ but
+halves MAE (0.61 N). The ceiling matters too: even the CNC's own commanded
+press depth only reaches ρ 0.78–0.88 <i>within</i> a probe — force at equal
+depth genuinely varies with texture and position.</p>""",
+     """<p><b>体积还是最大深度?</b>实证裁决:体积家族胜出(δ<sup>1.5</sup> 加权 0.65、
+纯体积 0.63)优于最大深度(0.63),明显优于接触面积(0.35);3 特征小线性模型 ρ 持平
+但 MAE 减半(0.61 N)。天花板也要认识:连 CNC 自己的指令压深在<i>探头内</i>也只有
+ρ 0.78–0.88——同样深度下力确实随纹理和位置变化。</p>"""),
+    ("<h2>Three estimators, one ground truth</h2>", "<h2>三个估计器,同一份真值</h2>"),
+    ("<tr><th>estimator</th><th>training data</th><th>ρ pooled / non-edge</th><th>MAE</th></tr>",
+     "<tr><th>估计器</th><th>训练数据</th><th>ρ 混合 / 非边缘</th><th>MAE</th></tr>"),
+    ("<td>ours (physics + flatfield)</td><td>none — 1 fitted scalar</td>",
+     "<td>我们(物理 + 平场)</td><td>零训练——1 个拟合标量</td>"),
+    ("<td>FEATS U-net</td><td>FEA labels, marker gel</td>",
+     "<td>FEATS U-net</td><td>FEA 标签,有点 gel</td>"),
+    ("<td>FeelAnyForce (DINOv2)</td><td>200K ATI-labeled, markerless</td>",
+     "<td>FeelAnyForce(DINOv2)</td><td>20 万 ATI 标注,无点</td>"),
+    ("""<p>The honest conclusion for <b>labelling React</b>: FeelAnyForce is the
+strongest single estimator on markerless Mini — and on React itself the two
+surviving methods agree at <b>ρ = 0.91</b> (250 frames, motherboard ep0) with
+FeelAnyForce reading ≈0 N on every frame our pipeline calls contact-free
+(p95 = 0.14 N). Absolute scales differ ~3.9× (ATI- vs FEATS-calibrated);
+FeelAnyForce's is the better-grounded one. Recommended recipe: <b>label with
+FeelAnyForce, cross-check with the physics pipeline</b> (it needs no training
+data, so it cannot share the network's failure modes), and flag rows where
+they disagree.</p>""",
+     """<p>对<b>给 React 打力标签</b>的诚实结论:FeelAnyForce 是无点 Mini 上最强的单一估计器——
+且在 React 上两个幸存方法一致性 <b>ρ = 0.91</b>(250 帧,motherboard ep0),
+我们判无接触的每一帧 FeelAnyForce 都读 ≈0 N(p95 = 0.14 N)。绝对刻度差 ~3.9×
+(ATI 标定 vs FEATS 标定),FeelAnyForce 的更有依据。推荐配方:<b>用 FeelAnyForce
+打标签,用物理管线交叉核验</b>(它零训练数据,不会共享网络的失效模式),
+两者分歧的行打上标记。</p>"""),
+    ("<h2>Gallery</h2>", "<h2>图库</h2>"),
+    ("""<p style="margin-top:0">20 image samples (raw | indentation | 3D reconstruction |
+predicted vs ground-truth force) and 10 React episode clips
+(tactile | live depth | force trace): <a href="gallery.html">browse the full
+gallery</a>.</p>""",
+     """<p style="margin-top:0">20 个图像样本(原图 | 压入图 | 3D 重建 | 预测 vs 真值力)
+与 10 个 React 片段(触觉 | 实时深度 | 力曲线):<a href="gallery.html">浏览完整图库</a>。</p>"""),
     ("<h2>NN vs model-based on the GelSight Mini — who has compared them?</h2>",
      "<h2>GelSight Mini 上 NN 与 model-based 谁对比过?</h2>"),
     ("""<p style="margin-top:0"><b>No published head-to-head that we could find.</b>
@@ -257,6 +363,39 @@ code: <code>twm/force_recovery/</code></footer>""",
 ]
 
 
+def build_gallery() -> Path:
+    """gallery.html — every sample panel and clip, one scrolling page."""
+    g = SITE / "assets" / "gallery"
+    imgs = sorted(p.name for p in g.glob("*.png"))
+    vids = sorted(p.name for p in g.glob("*.mp4"))
+    items = "\n".join(
+        f'<figure><img loading="lazy" src="assets/gallery/{n}">'
+        f"<figcaption>{n}</figcaption></figure>" for n in imgs)
+    clips = "\n".join(
+        f'<figure><video controls muted loop playsinline preload="none" '
+        f'src="assets/gallery/{n}"></video><figcaption>{n}</figcaption></figure>'
+        for n in vids)
+    page = f"""<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Gallery — React Force Recovery</title>
+<style>@@CSS@@
+figure{{margin:14px 0}} figcaption{{color:var(--dim);font-size:.72rem;
+font-family:'IBM Plex Mono',monospace;margin-top:2px}}</style></head>
+<body><div class="wrap">
+<header><div class="kicker">React force recovery · gallery</div>
+<h1>Samples: raw | depth | 3D | force</h1>
+<a class="pill" href="method.html">↖ method</a>
+<a class="pill" href="index.html">results</a></header>
+<h2>{len(imgs)} image samples (cnc_Mini + FEATS, with ground truth)</h2>
+{items}
+<h2>{len(vids)} video samples (React episodes)</h2>
+{clips}
+</div></body></html>""".replace("@@CSS@@", CSS)
+    out = SITE / "gallery.html"
+    out.write_text(page)
+    return out
+
+
 def build() -> tuple[Path, Path]:
     en = EN.replace("@@CSS@@", CSS)
     (SITE / "method.html").write_text(en)
@@ -271,3 +410,4 @@ def build() -> tuple[Path, Path]:
 if __name__ == "__main__":
     for p in build():
         print(p)
+    print(build_gallery())
