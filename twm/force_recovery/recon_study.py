@@ -61,8 +61,20 @@ def _poisson(gx, gy):
     return fast_poisson(gx, gy)
 
 
-def stages_full(img, ref, lut, cnt):
-    """Every intermediate array, nothing collapsed."""
+def stages_full(img, ref, lut, cnt, inpaint_markers: bool = False):
+    """Every intermediate array, nothing collapsed.
+
+    `inpaint_markers` runs the adopted depth-path marker step
+    (`marker_removal.stages_depth`'s preprocessing) before differencing. It is
+    off by default because this workbench's sources are markerless, where the
+    detector finds nothing and the step is a bit-exact no-op anyway; the flag
+    exists so a marker gel can be walked through the same 14 panels.
+    """
+    if inpaint_markers:
+        from .marker_removal import inpaint_img, marker_mask
+        mk = marker_mask(ref)
+        if mk is not None:
+            img, ref = inpaint_img(img, mk), inpaint_img(ref, mk)
     dI = img - ref
     q = np.clip((dI + DI_RANGE) / (2 * DI_RANGE) * (BINS - 1),
                 0, BINS - 1).astype(np.int32)
@@ -121,14 +133,22 @@ def sphere_check(depth, R_mm):
 
 
 def flat_top_sag(depth, contact_frac=0.35):
-    """Crater artefact: how far the CENTRE sits below the rim of a contact.
+    """Centre/rim height ratio of a contact. Descriptive, NOT a defect score.
 
-    A flat-topped indenter (star/quad/triangle/letter) should reconstruct as a
-    plateau. Its interior carries no colour change — flat gel, zero gradient —
-    so Poisson can only raise it by integrating inward from the rim, and when
-    the rim gradient is under-recovered the middle sags into a crater.
+    RETRACTED criterion: we used to read this against "a flat-topped indenter
+    should reconstruct as a plateau, so 1.0 is correct". That premise is
+    wrong. The gel is compliant and wraps around a flat edge, so the TRUE
+    surface already domes and c/r > 1 is expected for any contact.
 
-    Returns (h_centre / h_rim_max): 1.0 is a clean plateau, < 1 is a crater.
+    Per-pixel ground truth (`mnist_validation`, Tactile MNIST meshes) puts
+    numbers on it: the true depth map of a pressed digit has c/r 1.400
+    (1.334 for the gel surface itself) while we reconstruct 1.539-1.562, and
+    on an enclosed filleted-plateau control whose truth is exactly 1.000 we
+    measure 1.069. The over-doming artefact is therefore +7% to +12%, not the
+    +23-42% the raw ratios below suggest.
+
+    Returns h_centre / h_rim_median; compare it against the GT ratio for the
+    same geometry, never against 1.0.
     """
     import cv2
 
@@ -322,5 +342,149 @@ def build(which="glowtact"):
     print(f"-> {OUT / (which + '.html')}")
 
 
+# ------------------------------------------------------------------ site page
+SITE = OUT_ROOT / "site"
+
+PAGE = """<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>3D reconstruction workbench — every stage, 20 samples</title>
+<style>body{background:#0f1420;color:#e8ecf4;font-family:system-ui,sans-serif;
+margin:0;padding:28px}.wrap{max-width:1900px;margin:0 auto}
+h1{font-size:26px;margin:0 0 6px}h2{color:#ffd9a0;font-size:18px;margin:26px 0 8px}
+p{color:#b9c2d0;line-height:1.55;max-width:1000px}
+img{width:100%;background:#fff;border-radius:5px;margin:5px 0}
+table{border-collapse:collapse;margin:10px 0;font-size:13px}
+th,td{border:1px solid #2c3648;padding:5px 10px;text-align:left}
+th{color:#ffd9a0;font-weight:600}code{background:#1b2334;padding:1px 5px;border-radius:3px}
+.note{color:#8e99ab;font-size:13px}
+.good{color:#7be0a0}.bad{color:#ff9a8a}</style></head><body><div class="wrap">
+<h1>3D reconstruction workbench — every stage, 20 samples</h1>
+<p>Not a results figure: this is the full chain with every tunable quantity
+exposed, so a defect can be attributed to a stage. Columns:
+<b>1</b> raw · <b>2</b> reference · <b>3</b> dI = img−ref (×3) ·
+<b>4</b> max|dI| · <b>5</b> valid mask · <b>6</b> LUT bin observed? ·
+<b>7</b> gx · <b>8</b> gy · <b>9</b> |grad| · <b>10</b> div(g) = Poisson RHS ·
+<b>11</b> depth · <b>12</b> depth halo-removed · <b>13</b> radial profile vs
+analytic cap · <b>14</b> Open3D mesh.
+Reproduce: <code>xvfb-run -a -s "-screen 0 1400x1000x24" python -m
+force_recovery.recon_study glowtact</code>, then
+<code>python -m force_recovery.recon_study page</code>.
+The source here (GlowTact) is markerless, so the adopted marker step
+(<code>marker_removal.stages_depth</code>) is a bit-exact no-op on these
+frames; on a marker gel it inpaints the dots out of the reference and the
+frame before column 3.</p>
+
+<h2>What external ground truth did to this page</h2>
+<p>Everything below used to be scored against our own expectations. It is now
+scored against exact per-pixel ground truth — ray-cast mesh depth on 420
+Tactile MNIST touches (<code>mnist_validation</code>) — and two of the three
+defects we published moved:</p>
+<table><tr><th>claim</th><th>status after per-pixel GT</th></tr>
+<tr><td>Flat-topped indenters over-dome badly (centre/rim 1.23–1.42 where
+1.0 is correct)</td>
+<td class="bad"><b>retracted and re-measured.</b> Compliant gel wraps a flat
+edge, so c/r &gt; 1 is <i>expected</i>: the true depth map of a pressed digit
+has c/r <b>1.400</b> (gel surface 1.334) and we reconstruct 1.539–1.562
+(<b>+10–12%</b>); on an enclosed plateau control whose truth is exactly 1.000
+we measure <b>1.069</b> (<b>+7%</b>). Most of the 1.23–1.42 in the table
+below is real curvature, not artefact.</td></tr>
+<tr><td>Up to 22% of contact pixels land in unobserved LUT bins — a top
+defect</td>
+<td class="bad"><b>demoted to a minor factor.</b> On the GT set 13.8% / 16.9%
+of contact pixels are unobserved, and their correlation with per-touch
+Type-2 error is only <b>0.098 / 0.294</b>. Still worth showing (column 6),
+no longer worth blaming.</td></tr>
+<tr><td>The valid mask is halo-dominated</td>
+<td class="good"><b>confirmed and quantified.</b> Against the true contact
+region the <code>|dI| &gt; 8</code> mask scores IoU <b>0.614</b>, recall
+<b>0.917</b>, over-segmentation <b>0.531</b> — it finds nearly all of the
+contact and then adds half as much again in halo.</td></tr>
+<tr><td>(new) the photometric table is the weak link</td>
+<td class="good"><b>ruled out.</b> LUT gradient direction vs true gel
+gradient is <b>24.4°</b> on the GT renders against <b>26.1°</b> for this
+table on its own real sensor — the same statistic, no worse off-domain.</td>
+</tr></table>
+
+<h2>The real headline: accuracy is a function of press depth</h2>
+<p>Same digit meshes, re-rendered at five penetrations, no per-frame fitting
+of any kind (the photometric table is calibrated once on that sensor's own
+sphere presses, the recipe we already use per sensor):</p>
+<table><tr><th>press depth [mm]</th><th>0.30</th><th>0.60</th><th>1.00</th>
+<th>1.50</th><th>2.25 (what the dataset ships)</th></tr>
+<tr><td>MAE [µm]</td><td class="good"><b>11.2</b></td><td class="good">35.0</td>
+<td>67.8</td><td>127.4</td><td class="bad">281.1</td></tr>
+<tr><td>Type-2 error [µm]</td><td class="good"><b>96.5</b></td><td>186.3</td>
+<td>308.6</td><td>514.6</td><td class="bad">961.8</td></tr>
+<tr><td>peak ours / GT</td><td>1.00</td><td>0.97</td><td>0.77</td><td>0.68</td>
+<td class="bad">0.55</td></tr></table>
+<p>So the honest public claim is a <b>range</b>, not a number: at ≤0.6 mm this
+reconstruction is accurate on non-spherical ground truth with zero fitting; by
+2.25 mm it recovers barely half the peak. No accuracy figure on this site
+should be quoted without the press depth it was measured at.</p>
+
+<h2>Per-sample diagnostics</h2>
+<p class="note">centre/rim is reported <b>descriptively</b> — read it against
+the GT ratio for that geometry (1.33–1.40 for a compliant press), never
+against 1.0.</p>
+@@TABLE@@
+<p class="note">Grad angle and profile RMS are only defined where the indenter
+is a sphere of known radius (the <code>round</code> family): the LUT gradient
+sits @@ANGRANGE@@ from the analytic sphere gradient and the radial profile
+matches the cap to @@RMSRANGE@@, so on this sensor the table and the solver
+are both sound. Every one of these frames is a deep press (@@ZRANGE@@ mm) —
+i.e. the regime the sweep above shows is our worst.</p>
+<footer style="margin-top:30px;color:#6f7a8c;font-size:13px">
+React force recovery · <a href="index.html" style="color:#ffd9a0">overview</a> ·
+<a href="method.html" style="color:#ffd9a0">method</a> ·
+<a href="results.html" style="color:#ffd9a0">results</a></footer>
+@@IMAGES@@
+</div></body></html>"""
+
+
+def build_page(which: str = "glowtact") -> Path:
+    """Emit recon_workbench.html from the diagnostics JSON (no typed numbers)."""
+    import shutil
+
+    diag = json.loads((OUT / f"{which}_diagnostics.json").read_text())
+    dst = SITE / "assets" / "recon"
+    dst.mkdir(parents=True, exist_ok=True)
+    for p in sorted(OUT.glob(f"{which}_*.png")):
+        shutil.copyfile(p, dst / p.name)
+
+    def cell(v, fmt, scale=1.0):
+        return "" if v is None or v != v else format(v * scale, fmt)
+
+    rows = "".join(
+        f"<tr><td>{d['tag']}</td><td>{d['peak_mm']:.2f}</td>"
+        f"<td>{d['unobserved_lut_frac']*100:.0f}%</td>"
+        f"<td>{cell(d['flat_top_ratio'], '.2f')}</td>"
+        f"<td>{cell(d['grad_angle_deg'], '.1f')}</td>"
+        f"<td>{cell(d['profile_rms_um'], '.0f')}</td></tr>" for d in diag)
+    table = ("<table><tr><th>sample</th><th>peak [mm]</th>"
+             "<th>unobserved LUT</th><th>centre/rim<br>"
+             "<span class='note'>GT for a compliant press: 1.33–1.40</span>"
+             "</th><th>grad angle<br><span class='note'>chance 90°</span></th>"
+             f"<th>profile RMS</th></tr>{rows}</table>")
+    ang = [d["grad_angle_deg"] for d in diag if d["grad_angle_deg"] == d["grad_angle_deg"]]
+    rms = [d["profile_rms_um"] for d in diag if d["profile_rms_um"]]
+    zs = [float(t.split("z=")[1].split("mm")[0]) for d in diag
+          if "z=" in (t := d["tag"])]
+    imgs = "".join(f"<img src='assets/recon/{p.name}' loading='lazy'><br>"
+                   for p in sorted(dst.glob(f"{which}_*.png")))
+    page = (PAGE.replace("@@TABLE@@", table)
+                .replace("@@ANGRANGE@@", f"{min(ang):.1f}–{max(ang):.1f}°")
+                .replace("@@RMSRANGE@@", f"{min(rms):.0f}–{max(rms):.0f} µm")
+                .replace("@@ZRANGE@@", f"{min(zs):.1f}–{max(zs):.1f}")
+                .replace("@@IMAGES@@", imgs))
+    out = SITE / "recon_workbench.html"
+    out.write_text(page)
+    print(f"-> {out}  ({len(diag)} samples, {len(list(dst.glob('*.png')))} images)")
+    return out
+
+
 if __name__ == "__main__":
-    build(sys.argv[1] if len(sys.argv) > 1 else "glowtact")
+    a = sys.argv[1] if len(sys.argv) > 1 else "glowtact"
+    if a == "page":
+        build_page(sys.argv[2] if len(sys.argv) > 2 else "glowtact")
+    else:
+        build(a)

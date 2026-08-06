@@ -11,6 +11,15 @@ shading baked into the vertex colours. The halo pedestal is removed first
 (`remove_halo_pedestal`) — without it the diffuse `|dI| > 8` skirt integrates
 into a broad base and every press renders as a rounded mound.
 
+MARKER GELS: the depth and mesh panels go through `marker_removal.stages_depth`
+(dots inpainted on reference AND frame before differencing), which strips the
+dimple lattice from the depth map — 1.523 -> 0.890 lattice power on FEATS,
+lower on 91% of frames. The FORCE numbers in the same panels do NOT: they come
+from the untouched `stages()`, because on identical splits marker removal costs
+0.00-0.06 rho (0.7747 -> 0.7371) and every paired median delta is negative.
+On markerless gels (cnc, GlowTact, React) the detector returns zero dots and
+`stages_depth` is a bit-exact no-op, so nothing there changed.
+
 RUN REQUIREMENT: Open3D 0.15.2 segfaults offscreen without an X display here,
 so every entry point that renders a 3D panel must be invoked as
 
@@ -49,6 +58,7 @@ import numpy as np
 from .debug_gallery import (OUT as DEBUG_OUT, feat_vec, load_cnc, load_feats,
                             stages)
 from .lut_calibration import MM_PER_PIXEL, crop
+from .marker_removal import marker_mask, stages_depth
 from .o3d_view import (crop_to_content, has_display, remove_halo_pedestal,
                        render_depth_mesh)
 from .run_episode import DATA_ROOT, LEGACY_SHIFT, OUT_ROOT, STAGE_ROOT
@@ -199,7 +209,8 @@ def mesh_tile(depth: np.ndarray, w: int = 320, h: int = 240, stride: int = 2,
 # ------------------------------------------------------------------ panels
 def _panel(img: np.ndarray, depth: np.ndarray, f_pred: float,
            f_true: float | None, title: str, out: Path,
-           ref: np.ndarray | None = None, st: dict | None = None) -> None:
+           ref: np.ndarray | None = None, st: dict | None = None,
+           depth_note: str = "") -> None:
     """Every stage the force number is built from, left to right:
 
         raw | reference | dI = img-ref | valid mask | |LUT gradient| |
@@ -209,6 +220,10 @@ def _panel(img: np.ndarray, depth: np.ndarray, f_pred: float,
     what makes a wrong result diagnosable: on a marker gel the mask speckles
     and the gradient shows a ring at every dot, which no amount of looking at
     the raw frame reveals.
+
+    `depth_note` labels the two rightmost geometry panels when they come from
+    the marker-inpainted depth path — they do, on marker gels, while the force
+    bar beside them does not (see the module docstring).
     """
     d = np.clip(depth, 0, None)
     vmax = max(float(d.max()), 0.05)
@@ -231,13 +246,16 @@ def _panel(img: np.ndarray, depth: np.ndarray, f_pred: float,
     if have:
         add(np.clip(ref, 0, 255).astype(np.uint8), "reference (no contact)")
         # x3 gain: dI is only a few gray levels away from contact, and the
-        # site figure has to show that it is NOT zero there either
-        add(np.clip((img - ref) * 3 + 128, 0, 255).astype(np.uint8),
-            "difference image  dI = img − ref  (×3)")
+        # site figure has to show that it is NOT zero there either. Taken
+        # from `st` rather than recomputed, so on a marker gel this and every
+        # panel right of it show the inpainted (dot-free) chain while the raw
+        # panel still shows the dots.
+        add(np.clip(st["dI"] * 3 + 128, 0, 255).astype(np.uint8),
+            f"difference image  dI = img − ref  (×3){depth_note}")
         add(st["valid"], "valid mask  |dI| > 8", cmap="gray")
         add(st["gmag"], "|LUT surface gradient|", cmap="magma")
-    add(d, "LUT depth [mm]", cmap="inferno", colorbar=True)
-    add(mesh_view(d), "3D reconstruction (Open3D mesh)")
+    add(d, f"LUT depth [mm]{depth_note}", cmap="inferno", colorbar=True)
+    add(mesh_view(d), f"3D reconstruction (Open3D mesh){depth_note}")
 
     ax = fig.add_subplot(1, ncol, k)
     bars = [("predicted", f_pred, "#d95f02")]
@@ -303,14 +321,18 @@ def image_samples(n_cnc: int = 14, n_feats: int = 6) -> list[Path]:
     picks = order[np.linspace(0, len(order) - 1, n_cnc).astype(int)]
     for k, i in enumerate(picks):
         img, ref = get(rows[i])
-        st = stages(img, ref)
+        # geometry panels take the depth path; cnc is markerless, so this is
+        # a bit-exact no-op here and the call is kept only so both datasets
+        # go through one code path
+        st = stages_depth(img, ref)
         out = GALLERY / f"cnc_{k:02d}.png"
         _panel(img, st["depth"], float(pred[i]), float(f[i]),
                f"cnc_Mini {rows[i]['group']}  z={rows[i]['z']:.1f} mm",
                out, ref=ref, st=st)
         outs.append(out)
 
-    # --- FEATS val, marker gel (difference imaging cancels the dots)
+    # --- FEATS val, marker gel. Force features come from the UNCHANGED
+    #     stages(); only the displayed geometry is marker-inpainted.
     frames, get = load_feats()
     rows = []
     for fr in frames:
@@ -327,17 +349,24 @@ def image_samples(n_cnc: int = 14, n_feats: int = 6) -> list[Path]:
     cand = np.where(okf)[0]
     order = cand[np.argsort(ff[cand])]
     picks = order[np.linspace(0, len(order) - 1, n_feats).astype(int)]
+    _, ref0 = get(rows[picks[0]])
+    dots = marker_mask(ref0)
+    note = "\nmarkers inpainted (geometry only)" if dots is not None else ""
+    print(f"  feats marker dots on the reference: "
+          f"{'detected' if dots is not None else 'none'}")
     for k, i in enumerate(picks):
         img, ref = get(rows[i])
-        st = stages(img, ref)
+        st = stages_depth(img, ref)
         out = GALLERY / f"feats_{k:02d}.png"
         _panel(img, st["depth"], float(predf[i]), float(ff[i]),
-               f"FEATS {rows[i]['group']}", out, ref=ref, st=st)
+               f"FEATS {rows[i]['group']}", out, ref=ref, st=st,
+               depth_note=note)
         outs.append(out)
 
     (GALLERY / "metrics.json").write_text(json.dumps({
         "cnc_in_view": {"n": int(ok.sum()), "rho": float(rho), "mae_n": mae},
         "feats": {"n": int(okf.sum()), "rho": float(rhof), "mae_n": maef},
+        "feats_geometry": "marker-inpainted depth/mesh; force from stages()",
         "pipeline": "lut_v2"}, indent=2))
     return outs
 
@@ -373,16 +402,25 @@ def _react_context(task: str, date: str, ep: str, side: str):
 
 def _lut_force_rows(frame, ref, calib, rows, is_new,
                     keep_depth: bool = False):
-    """LUT force for the fresh rows in `rows`; forward-fill duplicates."""
+    """LUT force for the fresh rows in `rows`; forward-fill duplicates.
+
+    Force always comes from the untouched `stages()`. The depth kept for the
+    video panels goes through the marker path instead — a bit-exact no-op on
+    React's markerless gel (the detector finds no dots), present so a marker
+    sensor would get clean geometry without changing the force it reports.
+    """
+    dots = marker_mask(ref)
     force = np.zeros(len(is_new))
     depths = {}
     last = 0.0
     for row in rows:
         if is_new[row] or row == rows[0]:
-            st = stages(crop(frame(row)).astype(np.float32), ref)
+            img = crop(frame(row)).astype(np.float32)
+            st = stages(img, ref)
             last = calib(st)
             if keep_depth:
-                depths[row] = st["depth"]
+                depths[row] = (stages_depth(img, ref, mask=dots)["depth"]
+                               if dots is not None else st["depth"])
         force[row] = last
     return force, depths
 
@@ -504,7 +542,7 @@ def react_showcase(task: str = "motherboard", date: str = "2026-05-10",
     axes = np.atleast_2d(axes)
     for r_i, row in enumerate(rows):
         img = crop(frame(row)).astype(np.float32)
-        st = stages(img, ref)
+        st = stages_depth(img, ref)      # markerless React: identical to stages()
         diff = np.abs(img - ref).mean(axis=2)
         for c, (data, cmap, title) in enumerate((
                 (np.clip(img, 0, 255).astype(np.uint8), None,

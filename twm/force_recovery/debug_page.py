@@ -14,8 +14,8 @@ DSETS = [
     ("glowtact", "GlowTact — markerless, the LUT's home sensor (control)"),
     ("cnc", "FoTa cnc_Mini — markerless, foreign sensor, press grid larger "
             "than the field of view"),
-    ("feats", "FEATS — dot/marker type; difference imaging cancels static "
-              "markers"),
+    ("feats", "FEATS — dot/marker gel; these panels are the FORCE path, so the "
+     "dots are still in them (marker inpainting ships for geometry only)"),
 ]
 
 ABLATION = """<table><tr><th>scope (cnc, 3351 frames)</th><th>n</th>
@@ -54,12 +54,54 @@ relied on.</p>
 z-supervised gain field. Dot-type control: FEATS presses are always centered,
 so the raw pipeline already gives &rho;=0.72 there, vs 0.46 raw on GlowTact —
 the gain field and scope, not markers, are the binding factors.</p>
+<h2>The same failure mode, on four datasets</h2>
+<p>The cnc story above is not a cnc story. Exact per-pixel ground truth on
+Tactile MNIST shows the identical effect from the other side: 420/420 touches
+have a contact that runs off the pad, and a control that moves one sphere cap
+from mid-pad to the edge collapses its reconstructed peak <b>1.39 &rarr; 0.30
+mm</b> against a 0.90 mm truth. Sparsh shows it a third time — its clipped
+frames carry the <i>highest</i> median force and still score worse. The cause
+is structural: the Poisson solve's zero boundary cannot represent a surface
+that leaves the frame, so a clipped contact is integrated as if it ended at the
+image edge. <b>Contact visibility, not force range or gel type, is this
+pipeline's biggest external failure mode.</b></p>
+<p>The same ground truth also puts a number on the mask you see in column 4:
+against the true contact region it scores IoU <b>0.614</b> with recall
+<b>0.917</b> and over-segmentation <b>0.531</b> — it finds nearly all of the
+contact, then adds half as much again in halo. That is why a halo pedestal has
+to be subtracted before any 3D view.</p>
 @@GALLERIES@@
 <footer>React force recovery · <a href="index.html">overview</a> ·
 <a href="results.html">results</a> · <a href="method.html">method design</a>
 </footer></div></body></html>"""
 
 ZH = [
+    ("<h2>The same failure mode, on four datasets</h2>",
+     "<h2>同一个失效模式，出现在四个数据集上</h2>"),
+    ("""<p>The cnc story above is not a cnc story. Exact per-pixel ground truth on
+Tactile MNIST shows the identical effect from the other side: 420/420 touches
+have a contact that runs off the pad, and a control that moves one sphere cap
+from mid-pad to the edge collapses its reconstructed peak <b>1.39 &rarr; 0.30
+mm</b> against a 0.90 mm truth. Sparsh shows it a third time — its clipped
+frames carry the <i>highest</i> median force and still score worse. The cause
+is structural: the Poisson solve's zero boundary cannot represent a surface
+that leaves the frame, so a clipped contact is integrated as if it ended at the
+image edge. <b>Contact visibility, not force range or gel type, is this
+pipeline's biggest external failure mode.</b></p>""",
+     "<p>上面这个 cnc 的故事其实不只属于 cnc。Tactile MNIST 上精确的逐像素真值"
+     "从另一侧展示了完全相同的效应：420/420 次触碰的接触都跑出了 pad，而把单个球冠"
+     "从 pad 中心移到边缘的对照，使重建峰值从 <b>1.39 塌到 0.30 mm</b>（真值 0.90 mm）。"
+     "Sparsh 是第三次印证——它被裁切的帧力中位数<i>最高</i>，得分却更差。原因是结构性的："
+     "Poisson 求解的零边界无法表示跑出画面的曲面，所以被裁切的接触会被当成在图像边缘就结束了。"
+     "<b>接触可见性——而不是力程或 gel 类型——才是这条管线最大的外部失效模式。</b></p>"),
+    ("""<p>The same ground truth also puts a number on the mask you see in column 4:
+against the true contact region it scores IoU <b>0.614</b> with recall
+<b>0.917</b> and over-segmentation <b>0.531</b> — it finds nearly all of the
+contact, then adds half as much again in halo. That is why a halo pedestal has
+to be subtracted before any 3D view.</p>""",
+     "<p>同一份真值也给第 4 列那个掩码定了量：相对真实接触区域，它的 IoU 为 <b>0.614</b>，"
+     "召回 <b>0.917</b>，过分割 <b>0.531</b>——它几乎找全了接触，然后又多加了半个接触面积的光晕。"
+     "这正是任何 3D 视图之前都必须先减掉光晕基座的原因。</p>"),
     ('<html lang="en">', '<html lang="zh-CN">'),
     ("<title>Pipeline debug — raw image to force, step by step</title>",
      "<title>管线调试 — 从原始图像到力，逐步展示</title>"),
@@ -110,9 +152,10 @@ ZH = [
     ("FoTa cnc_Mini — markerless, foreign sensor, press grid larger "
      "than the field of view",
      "FoTa cnc_Mini — 无 marker，外来传感器，按压网格大于视野"),
-    ("FEATS — dot/marker type; difference imaging cancels static "
-     "markers",
-     "FEATS — dot/marker 类型；差分成像抵消静态 marker"),
+    ("FEATS — dot/marker gel; these panels are the FORCE path, so the "
+     "dots are still in them (marker inpainting ships for geometry only)",
+     "FEATS — dot/marker gel；这里的面板是力的路径，所以点仍然在图里"
+     "（marker 修补只用于几何）"),
 ]
 
 

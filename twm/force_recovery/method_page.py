@@ -61,6 +61,140 @@ table{display:block;overflow-x:auto;white-space:nowrap;-webkit-overflow-scrollin
 th,td{white-space:normal;min-width:110px}}
 """
 
+SEC_MARKER_EN = r'''<h2>Marker gels: one extra step, and what it is not for</h2>
+<div class="card">
+<p style="margin-top:0">FEATS is our only dotted gel. The dots occlude the gel,
+so the photometric table has no valid colour underneath them and Poisson
+integration bakes a dimple lattice into the depth map — visible as pockmarks
+across the whole reconstructed surface. The fix is the one
+<a href="https://arxiv.org/abs/2106.08851">GelSight Wedge</a>
+(Wang/She/Dong/Adelson, ICRA 2021) gives in its Fig. 10 for marker holes —
+detect the dots, then <i>fill</i> them rather than mask them — moved from
+gradient space into image space: inpaint the dots out of <b>both</b> the
+reference and the frame (cv2 Telea) and difference the inpainted pair.</p>
+<table>
+<tr><th>variant</th><th>dimple power at the 31.9 px pitch</th><th>force &rho;</th></tr>
+<tr><td>baseline, no marker handling</td><td>1.523</td><td class="ok">0.7747</td></tr>
+<tr><td><b>inpaint the image, ref + frame</b> — shipped, depth only</td>
+<td class="ok"><b>0.890</b> (&times;0.65)</td><td>0.7371</td></tr>
+<tr><td>inpaint the gradient field instead</td><td>0.924</td><td>0.7408</td></tr>
+<tr><td>zero the gradient inside the holes</td><td class="warn">1.251</td><td>0.7620</td></tr>
+</table>
+<p>Two things worth reading off that table. <b>Filling beats masking</b>:
+setting g&nbsp;:=&nbsp;0 on the holes barely helps (&times;0.93) because a zero
+patch puts a dipole layer on every hole boundary, at exactly the lattice
+frequency it is supposed to remove. And <b>the geometry column and the force
+column disagree</b> — the variant that halves the dimple power is the one that
+loses the most &rho;. So the step ships for <b>depth and 3D only</b>
+(<code>marker_removal.stages_depth</code>, which wraps rather than edits the
+force path); the force features on FEATS still come from the untouched
+pipeline. Everything else on this site is markerless, where the detector finds
+zero dots and the step is a bit-exact no-op.</p>
+<p class="footnote">Controls, because &ldquo;inpainting helps&rdquo; is an easy
+thing to fool yourself about: inpainting the same <i>area</i> of randomly
+placed fake markers gives &rho; 0.7697 — no gain, so this is not smoothing.
+The detector finds 63/63 dots with 0 rejects on the FEATS reference and stays
+at 63 for every threshold from 3 to 16 grey levels, but exactly 0 blobs on the
+GlowTact and cnc references, so it is marker-specific. It is also not a
+complete fix: the dots shear with the gel (median 1.7 px, &gt;8 px on 8% of
+frames) and a static reference mask leaves the displaced ones in place. Full
+study: <code>python -m force_recovery.marker_study all</code>.</p>
+</div>'''
+
+SEC_MARKER_ZH = r'''<h2>有 marker 的 gel：多一步，以及它不是为了什么</h2>
+<div class="card">
+<p style="margin-top:0">FEATS 是我们唯一一块带点的 gel。点会遮挡 gel，
+所以光度查找表在点下没有有效颜色，Poisson 积分会把一层点阵凹坑烤进深度图——
+在整个重建表面上表现为麻点。修法就是
+<a href="https://arxiv.org/abs/2106.08851">GelSight Wedge</a>
+（Wang/She/Dong/Adelson，ICRA 2021）图 10 针对 marker 孔洞给出的做法——
+检测这些点，然后<i>填充</i>而不是屏蔽——只不过从梯度域搬到了图像域：
+把点从<b>参考帧和当前帧</b>里一起修补掉（cv2 Telea），再对修补后的两幅图做差分。</p>
+<table>
+<tr><th>方案</th><th>31.9 px 点距频率上的凹坑功率</th><th>力 &rho;</th></tr>
+<tr><td>基线，不处理 marker</td><td>1.523</td><td class="ok">0.7747</td></tr>
+<tr><td><b>图像域修补，参考帧 + 当前帧</b>——已上线，仅用于深度</td>
+<td class="ok"><b>0.890</b>（&times;0.65）</td><td>0.7371</td></tr>
+<tr><td>改为修补梯度场</td><td>0.924</td><td>0.7408</td></tr>
+<tr><td>把孔洞内的梯度置零</td><td class="warn">1.251</td><td>0.7620</td></tr>
+</table>
+<p>这张表有两点值得读出来。<b>填充胜过屏蔽</b>：把孔洞里的 g 置零几乎没用（&times;0.93），
+因为零补丁会在每个孔洞边界上放一层偶极子，频率恰好就是它本该去掉的那个点阵频率。
+以及<b>几何列和力列是相反的</b>——把凹坑功率减半的那个方案，恰恰是 &rho; 掉得最多的。
+所以这一步只用于<b>深度与 3D</b>（<code>marker_removal.stages_depth</code>，
+它是包一层而不是改动力的路径）；FEATS 的力特征仍然来自未改动的管线。
+本站其余数据都是无 marker 的，检测器在那里找不到点，这一步是逐比特的空操作。</p>
+<p class="footnote">对照实验，因为&ldquo;修补有用&rdquo;是很容易自欺的结论：
+把同样<i>面积</i>的随机假 marker 修补掉得到 &rho; 0.7697——没有增益，所以这不是平滑效应。
+检测器在 FEATS 参考帧上得到 63/63 个点、0 个误检，阈值从 3 到 16 灰阶都保持 63；
+而在 GlowTact 与 cnc 参考帧上恰好是 0 个，所以它是 marker 专用的。
+它也不是完全的修复：点会随 gel 剪切移动（中位 1.7 px，8% 的帧超过 8 px），
+静态参考掩码会漏掉位移后的点。完整研究：
+<code>python -m force_recovery.marker_study all</code>。</p>
+</div>'''
+
+SEC_GT_EN = r'''<h2>How accurate is the depth, in micrometres?</h2>
+<div class="card">
+<p style="margin-top:0">Every &rho; above scores <b>force</b>. The depth
+underneath used to be checked only against our own analytic sphere cap. It is
+now measured against exact per-pixel ground truth — ray-cast mesh depth on 420
+Tactile MNIST touches, non-spherical geometry a sphere calibration cannot
+self-validate — and the answer is a <b>range set by press depth</b>, not a
+number:</p>
+<table>
+<tr><th>press depth</th><th>0.30 mm</th><th>0.60 mm</th><th>1.00 mm</th>
+<th>1.50 mm</th><th>2.25 mm</th></tr>
+<tr><td>MAE</td><td class="ok"><b>11 µm</b></td><td class="ok">35 µm</td>
+<td>68 µm</td><td>127 µm</td><td class="warn">281 µm</td></tr>
+<tr><td>peak recovered</td><td>1.00</td><td>0.97</td><td>0.77</td><td>0.68</td>
+<td class="warn">0.55</td></tr>
+</table>
+<p>At 0.3 mm, with no per-frame alignment and no fitted indentation scale, the
+Type-2 error is 96.5 µm — below all three of 3D Cal's published figures
+(152.8&thinsp;/&thinsp;171.6&thinsp;/&thinsp;290.0 µm), which are reported
+<i>with</i> both. By 2.25 mm we recover barely half the peak. <b>The working
+range of this reconstruction is shallow contact, and no accuracy number here
+should be quoted without its press depth.</b></p>
+<p>The same run corrected two of our own claims and confirmed a third:
+flat-top over-doming is <b>+7% to +12%</b>, not the +23&ndash;42% we implied
+(compliant gel wraps a flat edge, so the true centre/rim ratio is
+1.33&ndash;1.40, not 1.0); unobserved LUT bins are a <b>minor</b> factor
+(correlation 0.10&ndash;0.29 with error); and the <code>|dI|&gt;8</code> valid
+mask really is halo-dominated (IoU 0.614, recall 0.917, over-segmentation
+0.531). The photometric table is <i>not</i> the weak link — its gradients sit
+24.4&deg; from the true ones off-domain versus 26.1&deg; on its own sensor.
+Full tables, controls and the Taxim caveat on the
+<a href="results.html"><b>results page</b></a>.</p>
+</div>'''
+
+SEC_GT_ZH = r'''<h2>深度到底准到多少微米？</h2>
+<div class="card">
+<p style="margin-top:0">上面所有 &rho; 评的都是<b>力</b>。底层的深度此前只和我们自己的
+解析球冠比较过。现在它已经对着精确的逐像素真值测量——420 次 Tactile MNIST 触碰的
+网格光线投射深度，而且是球面标定无法自证的非球面几何——答案是一个
+<b>由压入深度决定的区间</b>，而不是一个数字：</p>
+<table>
+<tr><th>压入深度</th><th>0.30 mm</th><th>0.60 mm</th><th>1.00 mm</th>
+<th>1.50 mm</th><th>2.25 mm</th></tr>
+<tr><td>MAE</td><td class="ok"><b>11 µm</b></td><td class="ok">35 µm</td>
+<td>68 µm</td><td>127 µm</td><td class="warn">281 µm</td></tr>
+<tr><td>峰值还原比</td><td>1.00</td><td>0.97</td><td>0.77</td><td>0.68</td>
+<td class="warn">0.55</td></tr>
+</table>
+<p>在 0.3 mm，且没有逐帧配准、也没有拟合压入尺度的情况下，Type-2 误差为 96.5 µm——
+低于 3D Cal 公布的全部三个数字（152.8&thinsp;/&thinsp;171.6&thinsp;/&thinsp;290.0 µm），
+而他们的结果是<i>带</i>这两项才得到的。到 2.25 mm 我们只还原了大约一半峰值。
+<b>这套重建的适用区间是浅接触，本页任何精度数字都必须连同其压入深度一起引用。</b></p>
+<p>同一次实验纠正了我们自己的两个说法，并确认了第三个：平头过度穹顶化是
+<b>+7% 到 +12%</b>，而不是我们暗示的 +23&ndash;42%（gel 柔顺、会包裹平边，
+所以真实的中心/边缘比是 1.33&ndash;1.40，而不是 1.0）；未观测的 LUT bin 是
+<b>次要</b>因素（与误差的相关性只有 0.10&ndash;0.29）；而 <code>|dI|&gt;8</code>
+有效掩码确实被光晕主导（IoU 0.614、召回 0.917、过分割 0.531）。
+光度查找表<i>不是</i>薄弱环节——它的梯度在域外与真值相差 24.4&deg;，
+而在它自己的传感器上是 26.1&deg;。完整表格、对照与 Taxim 相关的边界说明见
+<a href="results_zh.html"><b>评测结果页</b></a>。</p>
+</div>'''
+
 EN = """<!DOCTYPE html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -76,6 +210,7 @@ EN = """<!DOCTYPE html>
 A physics pipeline with exactly one fitted number.</p>
 <a class="pill" href="results.html">↖ results matrix</a>
 <a class="pill" href="index.html">overview</a>
+<a class="pill" href="recon_workbench.html">3D workbench</a>
 <a class="pill" href="actions.html">action transform</a>
 <a class="pill" href="method_zh.html">中文</a>
 </header>
@@ -129,15 +264,20 @@ supervised network reaches 2.1 N on the same range). A new sensor needs one
 
 <h2>Validation (LUT-v2 pipeline)</h2>
 <div class="card">
-<p style="margin-top:0">The LUT-v2 pipeline is validated on <b>three force-labeled
-datasets</b> (FEATS, FoTa cnc_Mini, GlowTact) and cross-checked against two
-neural estimators on identical frames — every predicted-vs-ground-truth
+<p style="margin-top:0">The LUT-v2 pipeline is validated on <b>four force-labeled
+datasets</b> (FEATS, FoTa cnc_Mini, GlowTact, Sparsh) and cross-checked against
+two neural estimators on identical frames — every predicted-vs-ground-truth
 scatter, per dataset, lives on the
 <a href="results.html"><b>results page</b></a>. Short version: physics
-0.74-0.99 everywhere (GlowTact 0.98, cnc_Mini in-view 0.94, FEATS 0.77);
-each network 0.90+ in its own gel domain and collapsing
-outside it.</p>
+0.77-0.99 everywhere (GlowTact 0.99, cnc_Mini in-view 0.95, Sparsh in-view
+0.97, FEATS 0.77), each reported beside a within-group label-shuffle control
+that lands between &minus;0.00 and 0.26; each network 0.90+ in its own gel
+domain and collapsing outside it.</p>
 </div>
+
+@@SEC_GT@@
+
+@@SEC_MARKER@@
 
 <h2>Per-dataset calibration</h2>
 <div class="card">
@@ -317,8 +457,8 @@ ZH = [
      '<h2>验证(LUT-v2 管线)</h2>'),
     ('<a class="pill" href="results.html">↖ results matrix</a>\n<a class="pill" href="index.html">overview</a>',
      '<a class="pill" href="results_zh.html">↖ 评测结果</a>\n<a class="pill" href="index.html">总览(英文)</a>'),
-    ('<p style="margin-top:0">The LUT-v2 pipeline is validated on <b>three force-labeled\ndatasets</b> (FEATS, FoTa cnc_Mini, GlowTact) and cross-checked against two\nneural estimators on identical frames — every predicted-vs-ground-truth\nscatter, per dataset, lives on the\n<a href="results.html"><b>results page</b></a>. Short version: physics\n0.74-0.99 everywhere (GlowTact 0.98, cnc_Mini in-view 0.94, FEATS 0.77);\neach network 0.90+ in its own gel domain and collapsing\noutside it.</p>',
-     '<p style="margin-top:0">LUT-v2 管线在<b>三个带力标注的数据集</b>(FEATS、FoTa cnc_Mini、GlowTact)上验证,并与两个神经网络估计器同帧对比——每个数据集的预测 vs 真值散点图都在<a href="results_zh.html"><b>评测结果页</b></a>。一句话版:物理方法在所有域 0.74–0.99(GlowTact 0.98、cnc_Mini 视野内 0.94、FEATS 0.77);每个网络在自己的 gel 域 0.90+,出域即塌。</p>'),
+    ('<p style="margin-top:0">The LUT-v2 pipeline is validated on <b>four force-labeled\ndatasets</b> (FEATS, FoTa cnc_Mini, GlowTact, Sparsh) and cross-checked against\ntwo neural estimators on identical frames — every predicted-vs-ground-truth\nscatter, per dataset, lives on the\n<a href="results.html"><b>results page</b></a>. Short version: physics\n0.77-0.99 everywhere (GlowTact 0.99, cnc_Mini in-view 0.95, Sparsh in-view\n0.97, FEATS 0.77), each reported beside a within-group label-shuffle control\nthat lands between &minus;0.00 and 0.26; each network 0.90+ in its own gel\ndomain and collapsing outside it.</p>',
+     '<p style="margin-top:0">LUT-v2 管线在<b>四个带力标注的数据集</b>(FEATS、FoTa cnc_Mini、GlowTact、Sparsh)上验证,并与两个神经网络估计器同帧对比——每个数据集的预测 vs 真值散点图都在<a href="results_zh.html"><b>评测结果页</b></a>。一句话版:物理方法在所有域 0.77–0.99(GlowTact 0.99、cnc_Mini 视野内 0.95、Sparsh 视野内 0.97、FEATS 0.77),每个数字旁边都给出组内标签打乱对照(落在 &minus;0.00 到 0.26 之间);每个网络在自己的 gel 域 0.90+,出域即塌。</p>'),
     ('<html lang="en">',
      '<html lang="zh-CN">'),
     ('<title>Method in One Page — React Force Recovery</title>',
@@ -437,13 +577,21 @@ gradient &rarr; depth &rarr; Open3D mesh &rarr; predicted vs ground truth.</p>
 def build() -> tuple[Path, Path]:
     clips = sorted(p.name for p in (SITE / "assets" / "gallery").glob("*.mp4"))
     assert clips, "no gallery clips found — run showcase.video_samples first"
-    en = EN.replace("@@CSS@@", CSS).replace("@@CLIP@@", clips[0])
-    (SITE / "method.html").write_text(en)
+    en = (EN.replace("@@CSS@@", CSS).replace("@@CLIP@@", clips[0])
+            .replace("@@SEC_MARKER@@", SEC_MARKER_EN)
+            .replace("@@SEC_GT@@", SEC_GT_EN))
+    # new sections are single-sourced: the ZH pair matches the same constant
+    # by construction, so a long block cannot drift between the languages
+    pairs = ZH + [(SEC_MARKER_EN, SEC_MARKER_ZH), (SEC_GT_EN, SEC_GT_ZH),
+                  ('<a class="pill" href="recon_workbench.html">3D workbench</a>',
+                   '<a class="pill" href="recon_workbench.html">3D 工作台</a>')]
     zh = en
-    for old, new in ZH:
+    for old, new in pairs:
         assert old in zh, f"ZH replacement missed: {old[:60]!r}"
         zh = zh.replace(old, new, 1)
-    (SITE / "method_zh.html").write_text(zh)
+    for name, page in (("method.html", en), ("method_zh.html", zh)):
+        assert "@@" not in page, f"{name}: unreplaced token"
+        (SITE / name).write_text(page)
     return SITE / "method.html", SITE / "method_zh.html"
 
 

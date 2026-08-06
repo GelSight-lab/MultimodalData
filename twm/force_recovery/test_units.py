@@ -63,6 +63,46 @@ def test_median3_respects_duplicates():
     assert np.all(out == 0.0), out
 
 
+def test_marker_mask_is_none_on_markerless_gel():
+    """The depth-path marker step must be a strict no-op without dots.
+
+    `marker_mask` returns None (not an empty mask) so `stages_depth` calls
+    `stages()` on the untouched arrays — GlowTact / cnc / React output stays
+    bit-exact. A smooth synthetic gel stands in for a markerless reference so
+    the test needs no dataset on disk.
+    """
+    from .marker_removal import marker_mask
+
+    yy, xx = np.mgrid[0:120, 0:160]
+    ref = np.stack([120 + 30 * np.sin(xx / 90.0), 110 + 25 * (yy / 120.0),
+                    np.full_like(xx, 130.0)], -1).astype(np.float32)
+    assert marker_mask(ref) is None
+
+
+def test_stages_depth_matches_marker_study_img_telea():
+    """The adopted wrapper must reproduce the studied variant exactly.
+
+    Skipped when the FEATS parquet is not mounted (the assertion is about
+    real dots, so there is no synthetic substitute).
+    """
+    from .debug_gallery import FEATS_PQ
+
+    if not FEATS_PQ.exists():
+        print("  (skipped: FEATS parquet not mounted)")
+        return
+    from .debug_gallery import load_feats
+    from .marker_removal import marker_mask, stages_depth
+    from .marker_study import run_strategy
+
+    frames, get = load_feats()
+    img, ref = get(frames[3])
+    mask = marker_mask(ref)
+    assert mask is not None and mask.mean() > 0.15
+    a = stages_depth(img, ref)["depth"]
+    b = run_strategy(img, ref, mask, "img_telea")["depth"]
+    assert np.array_equal(a, b), float(np.abs(a - b).max())
+
+
 if __name__ == "__main__":
     for name, fn in sorted(globals().items()):
         if name.startswith("test_"):

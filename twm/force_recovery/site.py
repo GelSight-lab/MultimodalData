@@ -91,9 +91,24 @@ def _m2_table(rows: list[dict]) -> str:
     return f"<table>{head}{body}</table>"
 
 
+def _force_row(key: str) -> dict:
+    """One refreshed dataset row out of force_matrix.json.
+
+    The index used to hard-code these four numbers, which is how a landing
+    page ends up a release behind its own results page.
+    """
+    d = json.loads((OUT_ROOT / "feature_cache" / "force_matrix.json"
+                    ).read_text())["datasets"]
+    for k, v in d.items():
+        if k.lower().startswith(key.lower()):
+            return v
+    raise KeyError(key)
+
+
 def build(m1: list[dict], m2: list[dict], assets: dict[str, str],
           ext: dict | None = None) -> Path:
     """assets: name -> relative path of copied figure/video files."""
+    fm = {k: _force_row(k) for k in ("GlowTact", "FoTa", "FEATS", "Sparsh")}
     m1_snr = [r["snr"] for r in m1]
     m1_rho = [r["spearman_vs_intensity"] for r in m1]
     inv_all = max(r["invariance_max_offset_m"] for r in m2)
@@ -119,7 +134,8 @@ tactile-estimated normal force, and DexForce-style force-informed action targets
 <span class="pill">dataset: yxma/React</span>
 <a class="pill" href="method.html" style="text-decoration:none;color:#ffd9a0;border:1px solid rgba(255,255,255,.3)">→ method design</a>
 <a class="pill" href="results.html" style="text-decoration:none;color:#ffd9a0;border:1px solid rgba(255,255,255,.3)">→ results matrix</a>
-<a class="pill" href="actions.html" style="text-decoration:none;color:#ffd9a0;border:1px solid rgba(255,255,255,.3)">→ action processing deep-dive</a></div>
+<a class="pill" href="actions.html" style="text-decoration:none;color:#ffd9a0;border:1px solid rgba(255,255,255,.3)">→ action processing deep-dive</a>
+<a class="pill" href="recon_workbench.html" style="text-decoration:none;color:#ffd9a0;border:1px solid rgba(255,255,255,.3)">→ 3D reconstruction workbench</a></div>
 </div></header>
 <div class="wrap">
 
@@ -154,22 +170,61 @@ the optimization journey, and the step-by-step reconstruction debug are on the
 <img src="{assets['depth_validation_panel']}" alt="raw | diff | depth">
 <p class="footnote">Strongest motherboard presses: raw | difference |
 LUT-reconstructed depth. More examples (20 panels, 10 clips) in the
-<a href="gallery.html">gallery</a>.</p>
+<a href="gallery.html">gallery</a>; every stage of the reconstruction, with
+its knobs, in the <a href="recon_workbench.html">3D workbench</a>. On marker
+gels the depth and 3D products get one extra step — the dots are inpainted out
+of reference and frame before differencing, which removes the dimple lattice
+from the geometry but is deliberately <b>not</b> applied to the force
+features, where it costs 0.04 ρ.</p>
+</div>
+
+<h2>How accurate is the geometry itself?</h2>
+<div class="card method">
+<p style="margin-top:0">Measured against exact per-pixel ground truth for the
+first time — ray-cast mesh depth on 420 Tactile MNIST touches, non-spherical
+geometry a sphere calibration cannot self-validate. The answer is a range set
+by press depth, not a single number:</p>
+<table>
+<tr><th>press depth</th><th>0.30 mm</th><th>0.60 mm</th><th>1.00 mm</th>
+<th>1.50 mm</th><th>2.25 mm</th></tr>
+<tr><td>depth MAE</td><td><b>11 µm</b></td><td>35 µm</td><td>68 µm</td>
+<td>127 µm</td><td>281 µm</td></tr>
+<tr><td>peak recovered</td><td>1.00</td><td>0.97</td><td>0.77</td><td>0.68</td>
+<td>0.55</td></tr>
+</table>
+<p>At 0.3 mm, with no per-frame alignment and no fitted indentation scale, we
+are below every published 3D Cal figure; by 2.25 mm we recover barely half the
+peak. <b>The working range is shallow contact, and no accuracy number should
+be quoted without its press depth.</b> The same run cut our own over-doming
+claim to +7–12%, demoted unobserved LUT bins to a minor factor, and confirmed
+that the valid mask is halo-dominated (IoU 0.614, over-segmentation 0.531) —
+details and the Taxim caveat on the
+<a href="results.html">results page</a>.</p>
 </div>
 
 <h2>Validated against four force-labeled datasets</h2>
 <div class="card method">
 <table>
-<tr><th>dataset (gel)</th><th>ours</th><th>FEATS U-net</th><th>FeelAnyForce</th></tr>
-<tr><td>FEATS val (marker)</td><td>0.77</td><td><b>0.96</b> in-domain</td><td>0.43</td></tr>
-<tr><td>FoTa cnc_Mini (markerless)</td><td>0.94 (in view)</td><td>0.07</td><td><b>0.83</b></td></tr>
-<tr><td>GlowTact (markerless)</td><td><b>0.98</b></td><td>0.04</td><td>0.90</td></tr>
-<tr><td>Sparsh / Meta (markerless, 10 pads)</td><td><b>0.97</b> *</td><td colspan="2">not run — no published predictions</td></tr>
-<tr><td>React (no GT — agreement)</td><td colspan="3">physics vs FeelAnyForce ρ = 0.91; both read ≈0 N off-contact</td></tr>
+<tr><th>dataset (gel)</th><th>ours</th><th>shuffle control</th>
+<th>FEATS U-net</th><th>FeelAnyForce</th></tr>
+<tr><td>FEATS val (marker)</td><td>{fm['FEATS']['rho']:.2f}</td>
+<td>{fm['FEATS']['shuffle_rho']:+.2f}</td><td><b>0.96</b> in-domain</td><td>0.43</td></tr>
+<tr><td>FoTa cnc_Mini (markerless)</td><td>{fm['FoTa']['rho']:.2f} (in view)</td>
+<td>{fm['FoTa']['shuffle_rho']:+.2f}</td><td>0.07</td><td><b>0.83</b></td></tr>
+<tr><td>GlowTact (markerless)</td><td><b>{fm['GlowTact']['rho']:.2f}</b></td>
+<td>{fm['GlowTact']['shuffle_rho']:+.2f}</td><td>0.04</td><td>0.90</td></tr>
+<tr><td>Sparsh / Meta (markerless, 10 pads)</td>
+<td><b>{fm['Sparsh']['rho']:.2f}</b> *</td>
+<td>{fm['Sparsh']['shuffle_rho']:+.2f}</td>
+<td colspan="2">not run — no published predictions</td></tr>
+<tr><td>React (no GT — agreement)</td><td colspan="4">physics vs FeelAnyForce ρ = 0.91; both read ≈0 N off-contact</td></tr>
 </table>
 <p>Each network dominates its own gel domain and collapses
-outside it; the physics pipeline (0.74–0.99) is the only one that works
-everywhere. Predicted-vs-ground-truth scatters, per dataset, on the
+outside it; the physics pipeline ({min(v['rho'] for v in fm.values()):.2f}–0.99)
+is the only one that works everywhere. Every row is a per-group half/half fit
+with isotonic calibration, 5 seeds, reported beside the same protocol with the
+force labels shuffled <i>within</i> each group. Predicted-vs-ground-truth
+scatters, per dataset, on the
 <a href="results.html"><b>results page</b></a>.</p>
 <p class="footnote" style="margin-bottom:0">* Sparsh is a <b>foreign sensor</b>.
 Our GlowTact table reaches 0.878 there; rebuilding the table from Sparsh's own
