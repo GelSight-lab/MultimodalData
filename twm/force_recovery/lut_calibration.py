@@ -158,7 +158,7 @@ def build_lut(ref, fits, geom, inner_frac: float = 0.97) -> dict:
     for f in fits:
         img = crop(np.asarray(Image.open(f["path"]).convert("RGB"))
                    ).astype(np.float32)
-        dI = (img - ref) * f01
+        dI = img - ref
         depth = f["z"] - geom.z0_mm
         if not (0.15 <= depth <= 0.9 * geom.R_mm):
             continue                       # exact-cap regime only

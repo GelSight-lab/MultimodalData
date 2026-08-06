@@ -15,12 +15,30 @@
 - MM_PER_PIXEL(1/7裁剪后 320 宽)= 13.29/320 ≈ 0.0415 mm/px
 
 ## Phases
-- [ ] P1: 圆检测 + a² vs z 回归 → R, z0(合理性:R 2-10mm)
-- [ ] P2: LUT 构建(dI 分箱、球面梯度 GT、平滑补洞)+ Poisson 重建
-- [ ] P3: 深度验证:held-out round 峰深 vs (z−z0),目标 ρ≥0.9
-- [ ] P4: 新深度重算特征(vol/vol2/vol15/area)+ 非线性地基拟合 → GlowTact 力评估
-- [ ] P5: cnc_Mini:LUT 迁移 or z 监督幅值校正
-- [ ] P6: 站点更新 + commit
+- [x] P1: 精确球面拟合 a²=d(2R−d) → R=3.35mm z0=0.81mm R²=0.948
+- [x] P2: LUT 构建 + fast_poisson 重建
+- [x] P3-P4: 迭代到 pooled ρ=0.82/MAE 2.46N;round ρ=0.91/1.86N
+- [ ] P5: cnc_Mini 迁移(未做——React 传感器需一次球压标定,已明确路径)
+- [x] P6: commit(站点更新待做)
+
+## Debug ledger (Goal 5)
+| found | evidence | fix |
+|---|---|---|
+| nnmini 深度幅值坏 | peak vs z ρ=0.39, 幅值25%且饱和 | 换经典 LUT 管线 |
+| **gsrobotics Poisson 求解器幅值 bug** | 解析合成场只回 39%(线积分105%证明LUT对) | 换 Dong fast_poisson(100.7%) |
+| LUT 幻影尖峰 | 深度ρ塌到0而中心正确 | Yuan validmask(\|dI\|>8 才查表) |
+| 陡坡未训练 | inner_frac=0.85 排除外环 | 0.97a + 精确球面梯度 |
+| 位置相关增益/基准 | 位置二次解释80%残差 | round 监督 u(x,y) 场 |
+| 贴边按压污染 | 全量缓存 ρ 反降到 0.45 | 指令位置内部过滤 |
+| quad(平头)拖后腿 | 家族 ρ 0.69 | 形状自条件化 s1=V2A/V², s2=V/(A·D) → 0.81 |
+| **否决**: f01 补偿 | vol ρ 无改善且 LUT 稀疏化 | 回退 |
+| **否决**: 力监督交替场拟合 | 0.735 < round 监督 0.757 | 回退 |
+
+## 最终数字 (held-out, GlowTact 0-20N)
+起点 MLP+Winkler 0.63/4.4N → LUT+求解器修复+场+地基 0.80/2.75N →
++形状自条件 **0.82/2.46N**;家族已知 0.85;**round(球,物理精确处)0.91-0.94/1.5-1.9N**
+天花板参考:rho(F,z)=0.975。目标 0.9/1N:球形家族 ρ 达标;pooled 差 0.08;
+MAE<1N 超出几何法信息量(FeelAnyForce 20万监督帧也只到 2.1N)
 
 ---
 

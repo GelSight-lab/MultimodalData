@@ -98,9 +98,36 @@ A physics pipeline with exactly one fitted number.</p>
 (duplicated rows would let a row-wise filter count bad values three times).
 Cuts single-frame spikes from 4–8% to ≈0.</p>
 
-<h2>Validation</h2>
+<h2>Photometric overhaul — classic per-sensor calibration (v2)</h2>
 <div class="card">
-<p style="margin-top:0">The pipeline is validated on <b>three force-labeled
+<p style="margin-top:0">Ground-truth depth supervision (commanded press depth in
+GlowTact) exposed that the generic depth MLP recovers only ~25% of true
+indentation and saturates (peak-depth ρ = 0.39) — and, deeper, that the
+<b>gsrobotics SDK's Poisson solver returns 39% of the amplitude even on a
+perfect synthetic gradient field</b> (line-integral proved the gradients were
+correct at 105%). Rebuilt on the classic Dong/Yuan calibration: difference
+image → per-sensor RGB lookup table, self-calibrated from GlowTact's
+spherical presses via the exact relation a² = d(2R−d) (R = 3.35 mm, no
+external data) → exact Poisson (Dong's fast_poisson, 100.7% on the same
+benchmark) → sphere-supervised spatial gain field → Drake-style stiffening
+foundation p = k₁δ + k₂δ² with imprint-derived shape conditioning.</p>
+<table>
+<tr><th>stage (held-out, GlowTact 0–20 N)</th><th>ρ</th><th>MAE</th></tr>
+<tr><td>MLP + linear Winkler (v1)</td><td>0.63</td><td>4.4 N</td></tr>
+<tr><td>LUT + solver fix + gain field + nonlinear foundation</td><td>0.80</td><td>2.75 N</td></tr>
+<tr><td>+ imprint shape self-conditioning</td><td><b>0.82</b></td><td><b>2.46 N</b></td></tr>
+<tr><td>spheres only (geometry exact — the method's ceiling)</td><td class="ok"><b>0.91–0.94</b></td><td class="ok">1.5–1.9 N</td></tr>
+</table>
+<p class="footnote">Ceiling context: the CNC's own commanded depth predicts force
+at ρ = 0.975. The remaining pooled gap is object-dependent contact mechanics;
+sub-newton MAE on 0–20 N exceeds what geometry alone carries (the 200K-frame
+supervised network reaches 2.1 N on the same range). A new sensor needs one
+2-minute ball-press pass — a calibration the React rig can adopt.</p>
+</div>
+
+<h2>Validation (v1 pipeline)</h2>
+<div class="card">
+<p style="margin-top:0">The v1 pipeline is validated on <b>three force-labeled
 datasets</b> (FEATS, FoTa cnc_Mini, GlowTact) and cross-checked against two
 neural estimators on identical frames — every predicted-vs-ground-truth
 scatter, per dataset, lives on the
@@ -170,11 +197,13 @@ code: <code>twm/force_recovery/</code></footer>
 </div></body></html>"""
 
 ZH = [
-    ('<h2>Validation</h2>',
+    ('<h2>Photometric overhaul — classic per-sensor calibration (v2)</h2>',
+     '<h2>光度重做——经典逐传感器标定(v2)</h2>'),
+    ('<h2>Validation (v1 pipeline)</h2>',
      '<h2>验证</h2>'),
     ('<a class="pill" href="results.html">↖ results matrix</a>\n<a class="pill" href="index.html">overview</a>',
      '<a class="pill" href="results_zh.html">↖ 评测结果</a>\n<a class="pill" href="index.html">总览(英文)</a>'),
-    ('<p style="margin-top:0">The pipeline is validated on <b>three force-labeled\ndatasets</b> (FEATS, FoTa cnc_Mini, GlowTact) and cross-checked against two\nneural estimators on identical frames — every predicted-vs-ground-truth\nscatter, per dataset, lives on the\n<a href="results.html"><b>results page</b></a>. Short version: physics\n0.43-0.74 everywhere; each network 0.90+ in its own gel domain and collapsing\noutside it.</p>',
+    ('<p style="margin-top:0">The v1 pipeline is validated on <b>three force-labeled\ndatasets</b> (FEATS, FoTa cnc_Mini, GlowTact) and cross-checked against two\nneural estimators on identical frames — every predicted-vs-ground-truth\nscatter, per dataset, lives on the\n<a href="results.html"><b>results page</b></a>. Short version: physics\n0.43-0.74 everywhere; each network 0.90+ in its own gel domain and collapsing\noutside it.</p>',
      '<p style="margin-top:0">管线在<b>三个带力标注的数据集</b>(FEATS、FoTa cnc_Mini、GlowTact)上验证,并与两个神经网络估计器同帧对比——每个数据集的预测 vs 真值散点图都在<a href="results_zh.html"><b>评测结果页</b></a>。一句话版:物理方法在所有域 0.43–0.74;每个网络在自己的 gel 域 0.90+,出域即塌。</p>'),
     ('<html lang="en">',
      '<html lang="zh-CN">'),
