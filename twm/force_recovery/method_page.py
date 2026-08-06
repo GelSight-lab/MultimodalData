@@ -117,6 +117,7 @@ foundation p = k₁δ + k₂δ² with imprint-derived shape conditioning.</p>
 <tr><td>LUT + solver fix + gain field + nonlinear foundation</td><td>0.80</td><td>2.75 N</td></tr>
 <tr><td>+ imprint shape self-conditioning</td><td><b>0.82</b></td><td><b>2.46 N</b></td></tr>
 <tr><td>spheres only (geometry exact — the method's ceiling)</td><td class="ok"><b>0.91–0.94</b></td><td class="ok">1.5–1.9 N</td></tr>
+<tr><td><b>spheres × 0–8 N</b> (React's operating range; 7-seed median, +isotonic)</td><td class="ok"><b>0.95</b> (0.93–0.96)</td><td class="ok"><b>0.78 N</b> (0.73–0.84)</td></tr>
 </table>
 <p class="footnote">Ceiling context: the CNC's own commanded depth predicts force
 at ρ = 0.975. The remaining pooled gap is object-dependent contact mechanics;
