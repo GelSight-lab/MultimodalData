@@ -677,3 +677,19 @@ site 图: sparsh_figure.py -> results_sparsh.png (GlowTact表 vs 自标定表 vs
 边界(站上已写): 跨压头绝对牛顿失败(平头 MAE 0.37-0.40N, 且正确表反而更差)、
 尖头不支持(0.58)、剪切结构性无法覆盖(残差比 1.6x 不随表改善)、
 需接触圆盘可见(36%无盘/11%裁切; 裁切子集力最高却更差=可见性非力程)。
+
+## 3D recon 工作台 (20 样本全中间过程) — twm/force_recovery/recon_study.py
+站点页: recon_workbench.html (14 列/样本 + 逐样本诊断表)
+列: raw|ref|dI|max|dI||valid mask|LUT命中?|gx|gy||grad||div(g)|depth|去基座depth|
+    径向剖面vs解析球冠|Open3D mesh
+新增可量化诊断:
+- unobserved_lut_frac: 接触像素落在**未标定色格**的比例, 随深度上升
+  (star 2%→22%), 这些梯度是最近邻"编造"的 -> 改进点1: 扩展标定深度/物理外推
+- flat_top_ratio (中心/边缘高度): 平顶压头应≈1.0, 实测 star/triangle/quad/B
+  为 1.23-1.42 = **过度穹顶化**; round 的 1.43-1.46 是正确的(球本就是穹顶)
+  -> 改进点2: 平顶内部无色变, Poisson 只能从边缘向内积分
+- valid mask 被光晕主导(列5是圆blob而列3形状清晰) -> 改进点3
+球压对照(round, 已知R): 梯度夹角 5.1-6.8°(随机90°), 剖面残差 35-105µm
+=> 本传感器上"表"和"解算器"都是好的, 缺陷在覆盖率/掩码/平顶几何。
+修正: 图标题曾对所有行硬写"(plateau)", 但 1.4 对球是对的、对平顶是错的,
+已去掉依赖压头的判定词, 只报数字。

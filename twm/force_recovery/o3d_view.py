@@ -28,6 +28,8 @@ import os
 
 import numpy as np
 
+from .lut_calibration import MM_PER_PIXEL
+
 # Oblique paper camera (9DTact-style), shared with ProbingPi.
 VIEW_FRONT = (0.0, 0.55, 0.84)
 VIEW_UP = (0.0, -1.0, 0.0)
@@ -183,3 +185,18 @@ def render_depth_mesh(depth_mm: np.ndarray, mm_per_px: float, **kw
     build_kw = {k: kw.pop(k) for k in
                 ("smooth_px", "z_scale", "stride", "contrast") if k in kw}
     return render_mesh(build_depth_mesh(depth_mm, mm_per_px, **build_kw), **kw)
+
+
+MESH_KW = dict(smooth_px=3, z_scale=1.6, front=(0.0, 0.32, 0.95), zoom=0.66)
+
+
+def mesh_view_rgb(depth_mm: np.ndarray, width: int = 620, height: int = 500,
+                  stride: int = 1) -> np.ndarray:
+    """Depth (already pedestal-corrected) -> cropped Open3D mesh render.
+
+    Kept here rather than in showcase.py so analysis scripts can render a mesh
+    without importing the site-building module.
+    """
+    return crop_to_content(render_depth_mesh(
+        np.clip(depth_mm, 0.0, None).astype(np.float32), MM_PER_PIXEL,
+        width=width, height=height, stride=stride, **MESH_KW))
