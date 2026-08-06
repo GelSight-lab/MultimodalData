@@ -114,19 +114,28 @@ def label_table(probe: str, b: int) -> dict:
     Offset scanned empirically (cmd_offset): forces[k] <-> indexes[k] (the
     trailing 5 indexes are dropped) maximises per-trajectory rho on flat
     (0.898 vs 0.594 at offset 5) and is within noise of the best on sharp.
+
+    `poses` is (N,7) = [x, y, z, rx, ry, rz, _] of the probe in robot mm/deg.
+    Column 2 is the indentation axis (verified: pooled rho(z,|Fz|) = -0.888 and
+    per-trajectory median -0.927 on sphere/batch_1; columns 0/1 are the 2 mm
+    lateral slide of the protocol and correlate -0.16/-0.07). It is carried
+    here because the LUT calibration needs a depth datum, not just a force.
     """
     lab = load_labels(probe, b)
-    idx, F, tid, slip, dropped = [], [], [], [], 0
+    idx, F, tid, slip, P, dropped = [], [], [], [], [], 0
     for t, tr in lab["trajectories"].items():
         i = np.asarray(tr["indexes"]).astype(np.int64)
         f = np.asarray(tr["forces"], dtype=np.float64)
+        p = np.asarray(tr["poses"], dtype=np.float64)
         n = min(len(i), len(f))
         dropped += len(i) - n
         idx.append(i[:n])
         F.append(f[:n])
+        P.append(p[:n])
         tid.append(np.full(n, int(t)))
         slip.append(np.asarray(tr["slip_label"]).astype(np.int64)[:n])
     return {"index": np.concatenate(idx), "F": np.concatenate(F),
+            "P": np.concatenate(P),
             "tid": np.concatenate(tid), "slip": np.concatenate(slip),
             "in_contact": np.asarray(lab["in_contact"]), "dropped": dropped}
 
@@ -172,16 +181,21 @@ def _anchors(ic: np.ndarray) -> np.ndarray:
 
 
 def load_frames(probe: str, b: int, n: int = N_PER_BATCH, seed: int = SEED,
-                local_ref: bool = True, swap_rb: bool = None):
+                local_ref: bool = True, swap_rb: bool = None,
+                select=None):
     """Return (rows, ref_global) for one batch.
 
-    Each row: global index, Fx/Fy/Fz, |Fz|, |F|, shear, tid, slip, image, ref.
+    Each row: global index, Fx/Fy/Fz, |Fz|, |F|, shear, tid, slip, z, image, ref.
     One pass over the image pickles; the rest anchors and the sampled
     labelled frames are pulled from the same load.
+
+    `select` overrides the default |Fz|-stratified sampling: a callable
+    tab -> row indices. Used by the LUT calibration, which needs low-shear
+    frames spread over indentation DEPTH, not over force.
     """
     tab = label_table(probe, b)
     ic = tab["in_contact"]
-    sel = _stratified(tab, n, seed)
+    sel = _stratified(tab, n, seed) if select is None else select(tab)
     want = {int(tab["index"][i]): i for i in sel}
     anch = _anchors(ic)
     if len(anch) < 8:
@@ -231,6 +245,8 @@ def load_frames(probe: str, b: int, n: int = N_PER_BATCH, seed: int = SEED,
                      "fmag": float(np.linalg.norm(F)),
                      "shear": float(np.hypot(F[0], F[1])),
                      "tid": int(tab["tid"][i]), "slip": int(tab["slip"][i]),
+                     "px": float(tab["P"][i, 0]), "py": float(tab["P"][i, 1]),
+                     "pz": float(tab["P"][i, 2]),
                      "img": imgs[g], "ref": ref})
     return rows, ref_g
 
