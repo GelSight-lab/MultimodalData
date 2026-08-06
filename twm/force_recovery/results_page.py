@@ -378,6 +378,76 @@ def build_pages() -> tuple[Path, Path]:
     return SITE / "results.html", SITE / "results_zh.html"
 
 
+
+
+# --- LUT-v2 pipeline loaders (override the MLP-era ones above) -----------
+_DG = OUT_ROOT / "site_assets" / "debug_gallery"
+
+
+def _basis(x, y):
+    return np.column_stack([np.ones_like(x), x, y, x * x, y * y, x * y])
+
+
+def _fit_group_pred(X, f, groups, seed=0):
+    from sklearn.isotonic import IsotonicRegression
+    pred = np.full(len(f), np.nan)
+    for g in set(groups):
+        m = np.where(groups == g)[0]
+        rng = np.random.default_rng(seed)
+        perm = rng.permutation(len(m))
+        fi, ei = m[perm[:len(m) // 2]], m[perm[len(m) // 2:]]
+        if len(fi) < 8:
+            continue
+        wl, *_ = np.linalg.lstsq(X[fi], f[fi], rcond=None)
+        iso = IsotonicRegression(out_of_bounds="clip").fit(X[fi] @ wl, f[fi])
+        pred[ei] = iso.predict(X[ei] @ wl)
+    ok = np.isfinite(pred)
+    return f[ok], pred[ok]
+
+
+def _load_ours_glowtact():
+    rows = json.loads((CACHE / "lut_full.json").read_text())
+    rows = [r for r in rows if r["f"] > 0.15 and np.isfinite(r.get("cx", np.nan))]
+    a = lambda k: np.array([r[k] for r in rows])
+    x, y, z, f = a("x"), a("y"), a("z"), a("f")
+    V, V2, A, D, cx, cy = a("vol"), a("vol2"), a("area"), a("maxd"), a("cx"), a("cy")
+    grp = np.array([r["fam"] for r in rows])
+    m = (grp == "round") & (x > 3.5) & (x < 14.5) & (y > 3.0) & (y < 13.5)
+    PHI = _basis(x[m], y[m])
+    w, *_ = np.linalg.lstsq(np.hstack([PHI * z[m][:, None], -PHI]), D[m], rcond=None)
+    u = 1.0 / np.clip(_basis(x, y) @ w[:6], 0.15, 3.0)
+    X = np.column_stack([V * u, V2 * u ** 2, D * u,
+                         np.sqrt(np.clip(A, 0, None)) * D * u, A])
+    r_eff = np.sqrt(np.clip(A, 0, None) / np.pi)
+    sc = ((cx - r_eff > 24) & (cx + r_eff < 296) & (cy - r_eff > 20)
+          & (cy + r_eff < 220) & (z <= 4.2)
+          & (x > 3.5) & (x < 14.5) & (y > 3.0) & (y < 13.5))
+    return _fit_group_pred(X[sc], f[sc], grp[sc])
+
+
+def _load_ours_cnc():
+    rows = json.loads((_DG / "features_cnc_full.json").read_text())
+    a = lambda k: np.array([r[k] for r in rows])
+    x, y, z, f = a("x"), a("y"), a("z"), a("f")
+    grp = np.array([r["group"] for r in rows])
+    inner = (x > 5) & (x < 13) & (y > 4) & (y < 12)
+    PHI = _basis(x[inner], y[inner])
+    w, *_ = np.linalg.lstsq(np.hstack([PHI * z[inner][:, None], -PHI]),
+                            a("maxd")[inner], rcond=None)
+    u = 1.0 / np.clip(_basis(x, y) @ w[:6], 0.15, 3.0)
+    X = np.column_stack([a("vol") * u, a("vol2") * u ** 2, a("maxd") * u,
+                         a("area"),
+                         np.sqrt(np.clip(a("area"), 0, None)) * a("maxd") * u])
+    return _fit_group_pred(X[inner], f[inner], grp[inner])
+
+
+def _load_ours_feats():
+    rows = json.loads((_DG / "features_feats.json").read_text())
+    a = lambda k: np.array([r[k] for r in rows])
+    X = np.column_stack([a("vol"), a("vol2"), a("maxd"), a("area"), a("h1")])
+    return _fit_group_pred(X, a("f"), np.array([r["group"] for r in rows]))
+
+
 if __name__ == "__main__":
     dataset_figures()
     for p in build_pages():
