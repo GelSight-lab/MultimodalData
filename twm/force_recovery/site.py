@@ -49,6 +49,10 @@ code { background:#f2eee8; padding:1px 5px; border-radius:4px; font-size:.86em; 
 .verdict { font-weight:600; }
 .verdict.pass { color:var(--ok); } .verdict.warn { color:#c9820e; }
 .footnote { color:var(--muted); font-size:.82rem; }
+details { margin:10px 0; }
+details summary { cursor:pointer; color:var(--accent2); font-size:.85rem;
+  font-weight:600; padding:8px 12px; background:#f4f0ea; border-radius:8px; }
+details[open] summary { border-radius:8px 8px 0 0; }
 .twocol { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
 @media (max-width:760px){ .twocol { grid-template-columns:1fr; } }
 """
@@ -192,6 +196,8 @@ reference frames come from the same episode seconds away.</p>
  alt="FEATS validation scatter">
 <img src="{assets.get('fota_validation','assets/fota_validation.png')}"
  alt="FoTa validation strip plot">
+<img src="assets/three_way_comparison.png" alt="three estimators vs F/T ground truth (cnc_Mini)">
+<img src="assets/glowtact_comparison.png" alt="GlowTact F/T ground truth comparison">
 <table>
 <tr><th>metric</th><th>value</th><th>scope</th></tr>
 <tr><td>Spearman ρ (pooled)</td><td>{ext.get('spearman_rho',0):.2f}</td>
@@ -201,6 +207,8 @@ reference frames come from the same episode seconds away.</p>
 <tr><td>ρ within one indenter family</td><td>0.66–0.94</td><td>zelda 0.94, cylinder 0.75, triangle 0.70</td></tr>
 <tr><td>ρ on <b>unseen indenter shapes</b></td><td>0.85</td><td>test_unknown_indenters split, n=100 — shape generalization holds</td></tr>
 <tr><td>ρ vs press depth on <b>FoTa (T3)</b></td><td>0.43 / 0.24</td><td>61 captures, third-party Panda rig, household objects; markerless / marker gel medians, 84% positive. FoTa has no force GT, so pose press-depth is the (attenuated) monotone proxy</td></tr>
+<tr><td>ρ vs <b>F/T ground truth — FoTa cnc_Mini</b></td><td><b>0.43 / 0.65</b></td><td>400 frames, CNC gantry + F/T sensor, markerless Mini (pooled / edge-filtered, after flat-field optimization). FeelAnyForce on identical frames: 0.83 / 0.92; FEATS U-net: 0.07</td></tr>
+<tr><td>ρ vs <b>F/T ground truth — GlowTact</b></td><td><b>0.63</b></td><td>600 of 14,715 cleaned markerless-Mini presses, 0–20 N; per-family up to 0.93. FeelAnyForce: 0.90. Third independent scale estimate (2.61 N/mm³) inside the 2–4× band</td></tr>
 <tr><td>scale stability across splits</td><td>2–4×</td><td>fitted N/mm³ varies 1.9–7.2 between sessions/sensors: within-episode relative force is reliable, cross-sensor absolute scale is not</td></tr>
 <tr><td>ρ on shear-loaded captures</td><td>−0.15</td><td>excluded &amp; documented: shear churns the image without adding indentation volume</td></tr>
 <tr><td>fitted scale</td><td>{ext.get('scale_n_per_mm3',0):.2f} N/mm³</td>
@@ -351,6 +359,10 @@ def collect_and_build() -> Path:
     for key, fname in names.items():
         shutil.copy2(src / fname, SITE / "assets" / fname)
         assets[key] = f"assets/{fname}"
-    assets["m1_table"] = _m1_table(m1)
-    assets["m2_table"] = _m2_table(m2)
+    assets["m1_table"] = (
+        "<details><summary>per-episode table — 72 sensor-sides "
+        "(click to expand)</summary>" + _m1_table(m1) + "</details>")
+    assets["m2_table"] = (
+        "<details><summary>per-episode table — 72 sensor-sides "
+        "(click to expand)</summary>" + _m2_table(m2) + "</details>")
     return build(m1, m2, assets, ext)
