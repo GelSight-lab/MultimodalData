@@ -1,4 +1,30 @@
-# Task Plan 4(活跃): cnc_Mini 方法优化 + FEATS 对比 + 可视化
+# Task Plan 5(活跃): 光度算法重做 + 接触模型升级 → ρ≥0.9, MAE<1N
+
+## Goal 5
+1. 光度重建按 Dong/Yuan 经典管线重做:差分图 dI=(img−ref) → 逐传感器 RGB-LUT → 梯度 → Poisson
+2. Winkler → Drake 式非线性弹性地基 p(δ)=k1δ+k2δ² (+Hertz 形状归一)
+3. 目标:ρ 0.9–0.95+,MAE < 1N
+
+## 已确认的关键事实
+- **诊断**:nnmini 重建峰深 vs 指令压深 ρ=0.39,幅值仅 ~25% 且随深度饱和
+  (0.30→0.19)——光度是根本瓶颈,力 ρ=0.65 全靠面积项
+- GlowTact `round` 家族 = 球形压头标定源:1152 帧、位置铺满、Hertz r=0.97、
+  每家族带 initial.jpg;z 有未知零点 z0 → 用 a²=2R(z−z0) 回归同时解 R 和 z0
+- 参考实现:~/gelsight_heightmap_reconstruction (Dong python) +
+  ~/gelsight_driver/Bnz (Yuan matlab): dI 分箱 ±90/90bins → LUT(gx,gy) → fast_poisson
+- MM_PER_PIXEL(1/7裁剪后 320 宽)= 13.29/320 ≈ 0.0415 mm/px
+
+## Phases
+- [ ] P1: 圆检测 + a² vs z 回归 → R, z0(合理性:R 2-10mm)
+- [ ] P2: LUT 构建(dI 分箱、球面梯度 GT、平滑补洞)+ Poisson 重建
+- [ ] P3: 深度验证:held-out round 峰深 vs (z−z0),目标 ρ≥0.9
+- [ ] P4: 新深度重算特征(vol/vol2/vol15/area)+ 非线性地基拟合 → GlowTact 力评估
+- [ ] P5: cnc_Mini:LUT 迁移 or z 监督幅值校正
+- [ ] P6: 站点更新 + commit
+
+---
+
+# Task Plan 4(已完成): cnc_Mini 方法优化 + FEATS 对比 + 可视化
 
 ## Goal 4
 1. ~~initial 命名图像~~ → 查证:无(tar+全 zip CD;DoubleTower=随机对)。
