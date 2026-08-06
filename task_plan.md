@@ -347,3 +347,7 @@ dot 类型 (FEATS val, 全marker): 差分抵消静态marker, 原始管线 rho 0.
 Ours: glowtact 0.634→0.987/0.52N, cnc 0.435→0.935/0.26N (严格视野内),
 feats 0.736 不变(按压恒居中,无视野/增益问题)。同作用域 FEATS U-net 在
 cnc=0.319 (原 0.074)。旧值存 results_metrics.json history 字段。已发布。
+注意: results_page.__main__ 的 dataset_figures() 会用旧管线重算并覆盖
+results_metrics.json(本次曾清掉手动更新)——更新数字后只跑 build_pages()。
+矩阵页现值: Ours glowtact 0.99 / cnc 0.94(视野内) / feats 0.74;
+"每网络统治本域"结论文本同步 0.74–0.99。

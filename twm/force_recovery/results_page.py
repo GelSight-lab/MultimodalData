@@ -202,7 +202,7 @@ each row, and differences between panels are differences between methods.</p>
 <th>FeelAnyForce<br>(trained: markerless)</th></tr>
 <tr><td>FEATS val (marker)</td><td>@@O_FEATS@@</td>
 <td class="best">@@N_FEATS@@ · in-domain</td><td class="dead">@@A_FEATS@@</td></tr>
-<tr><td>FoTa cnc_Mini (markerless)</td><td>@@O_CNC@@ (0.65 non-edge)</td>
+<tr><td>FoTa cnc_Mini (markerless)</td><td>@@O_CNC@@ (in view)</td>
 <td class="dead">@@N_CNC@@</td><td class="best">@@A_CNC@@</td></tr>
 <tr><td>GlowTact (markerless)</td><td>@@O_GLOW@@</td>
 <td class="dead">@@N_GLOW@@</td><td class="best">@@A_GLOW@@</td></tr>
@@ -210,7 +210,7 @@ each row, and differences between panels are differences between methods.</p>
 <p>The pattern is the finding: <b>each network dominates its own gel domain and
 collapses outside it</b> (FEATS 0.96 → 0.04–0.07; FeelAnyForce 0.90 → 0.43),
 while <b>the physics pipeline is the only estimator that works everywhere</b>
-(0.43–0.74) — it never sees training data, so it has no domain to leave.</p>
+(0.74–0.99) — it never sees training data, so it has no domain to leave.</p>
 </div>
 
 <h2>FEATS dataset — marker-dot gel</h2>
@@ -223,8 +223,9 @@ ways.</p></div>
 <h2>FoTa cnc_Mini — markerless gel</h2>
 <div class="card"><img src="assets/results_cnc.png" alt="cnc_Mini panels">
 <p class="footnote">Hard conditions: only 4 contact-free frames, 62% of presses
-near the pad border. Our edge-filtered ρ is 0.65; FeelAnyForce reaches 0.92
-non-edge.</p></div>
+near the pad border — the press grid is larger than the field of view (see
+<a href="debug_pipeline.html">pipeline debug</a>). Strictly in view our ρ is
+0.94 (MAE 0.26 N); FeelAnyForce reaches 0.92 non-edge.</p></div>
 
 <h2>GlowTact — markerless gel, cleaned</h2>
 <div class="card"><img src="assets/results_glowtact.png" alt="GlowTact panels">
@@ -287,16 +288,17 @@ each row, and differences between panels are differences between methods.</p>"""
      "<th>FeelAnyForce<br>(训练域:无点)</th></tr>"),
     ('<td>FEATS val (marker)</td>', '<td>FEATS val(有点)</td>'),
     ('<td class="best">0.96 · in-domain</td>', '<td class="best">0.96 · 本域</td>'),
-    ("<td>FoTa cnc_Mini (markerless)</td><td>0.43 (0.65 non-edge)</td>",
-     "<td>FoTa cnc_Mini(无点)</td><td>0.43(非边缘 0.65)</td>"),
+    ("<td>FoTa cnc_Mini (markerless)</td>",
+     "<td>FoTa cnc_Mini(无点)</td>"),
+    ("(in view)</td>", "(视野内)</td>"),
     ("<td>GlowTact (markerless)</td>", "<td>GlowTact(无点)</td>"),
     ("""<p>The pattern is the finding: <b>each network dominates its own gel domain and
 collapses outside it</b> (FEATS 0.96 → 0.04–0.07; FeelAnyForce 0.90 → 0.43),
 while <b>the physics pipeline is the only estimator that works everywhere</b>
-(0.43–0.74) — it never sees training data, so it has no domain to leave.</p>""",
+(0.74–0.99) — it never sees training data, so it has no domain to leave.</p>""",
      """<p>规律本身就是发现:<b>每个网络只统治自己的 gel 域,出域即塌</b>
 (FEATS 0.96 → 0.04–0.07;FeelAnyForce 0.90 → 0.43);
-而<b>物理管线是唯一在所有域都工作的估计器</b>(0.43–0.74)——
+而<b>物理管线是唯一在所有域都工作的估计器</b>(0.74–0.99)——
 它没见过训练数据,所以也没有可以离开的域。</p>"""),
     ("<h2>FEATS dataset — marker-dot gel</h2>", "<h2>FEATS 数据集——有点 gel</h2>"),
     ("""<p class="footnote">In-domain, the FEATS U-net is excellent (ρ=0.96) — the
@@ -307,9 +309,10 @@ ways.</p>""",
 不是模型弱。FeelAnyForce(无点训练)在有点 gel 上退化到 0.43:这把刀两边都割。</p>"""),
     ("<h2>FoTa cnc_Mini — markerless gel</h2>", "<h2>FoTa cnc_Mini——无点 gel</h2>"),
     ("""<p class="footnote">Hard conditions: only 4 contact-free frames, 62% of presses
-near the pad border. Our edge-filtered ρ is 0.65; FeelAnyForce reaches 0.92
-non-edge.</p>""",
-     """<p class="footnote">条件苛刻:只有 4 帧无接触,62% 的按压贴边。我们边缘过滤后 ρ=0.65;
+near the pad border — the press grid is larger than the field of view (see
+<a href="debug_pipeline.html">pipeline debug</a>). Strictly in view our ρ is
+0.94 (MAE 0.26 N); FeelAnyForce reaches 0.92 non-edge.</p>""",
+     """<p class="footnote">条件苛刻:只有 4 帧无接触,62% 的按压贴边。我们严格视野内 ρ=0.94(MAE 0.26 N,见管线调试页);
 FeelAnyForce 非边缘达 0.92。</p>"""),
     ("<h2>GlowTact — markerless gel, cleaned</h2>", "<h2>GlowTact——无点 gel,清洗过</h2>"),
     ("""<p class="footnote">Friendliest ground truth (centred presses, 10 free frames,
