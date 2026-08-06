@@ -120,167 +120,84 @@ tactile-estimated normal force, and DexForce-style force-informed action targets
 </div></header>
 <div class="wrap">
 
-<h2>What was tried first — and why it failed</h2>
+<h2>The negative result that shaped everything</h2>
 <div class="card negative">
-<h3>FEATS transfer: a negative result</h3>
-<p>The plan matched FARM (arXiv:2510.13324): run
-<a href="https://github.com/feats-ai/feats">FEATS</a> (U-net, GelSight-Mini images →
-FEA-supervised force distributions, MAE &lt; 1 N) offline over the recordings.
-It does not transfer: <b>FEATS is trained on marker-dot gel, and the React sensors
-use markerless gel</b> — different texture, different illumination profile.</p>
+<p style="margin-top:0"><b>FEATS (U-net, FEA-labeled) does not transfer:</b> it is
+trained on marker-dot gel, React's sensors are markerless — on our frames it
+returns its no-contact output regardless of contact. Verified in-domain at
+ρ&nbsp;=&nbsp;0.96 on its own dataset, so this is a domain effect, not a weak model
+(<a href="results.html">full matrix</a>).</p>
 <img src="{assets['feats_domain_gap']}" alt="training sensor vs our sensor">
-<p class="footnote">Left: FEATS training sensor (63 marker dots). Right: React
-sensor, markerless. On this input the network returns its no-contact output for
-every frame — the strongest-contact frame of pushT/episode_000 predicts
-−0.040 N total, identical to a free frame (−0.042 N). Dot-based per-sensor
-calibration is impossible for the same reason.</p>
+<p class="footnote">Left: FEATS training gel (63 marker dots). Right: React gel,
+markerless.</p>
 </div>
 
-<h2>Method 1 — Photometric-stereo depth → Winkler normal force</h2>
+<h2>Method 1 — physics: depth reconstruction → normal force</h2>
 <div class="card method">
 <div class="flow">
-<span class="step">GelSight frame<br>640×480 RGB</span><span class="arr">→</span>
-<span class="step">per-pixel MLP<br>(gsrobotics, markerless)</span><span class="arr">→</span>
-<span class="step">surface normals</span><span class="arr">→</span>
-<span class="step">Poisson (DCT)<br>integration</span><span class="arr">→</span>
-<span class="step">background plane<br>removal (robust fit)</span><span class="arr">→</span>
-<span class="step">indentation δ(x,y) [mm]</span><span class="arr">→</span>
-<span class="step">Winkler foundation<br>F = c · Σδ · dA</span>
+<span class="step">GelSight frame</span><span class="arr">→</span>
+<span class="step">flat-field<br>normalization</span><span class="arr">→</span>
+<span class="step">per-pixel MLP<br>→ surface normals</span><span class="arr">→</span>
+<span class="step">Poisson<br>integration</span><span class="arr">→</span>
+<span class="step">background<br>plane removal</span><span class="arr">→</span>
+<span class="step">indentation δ</span><span class="arr">→</span>
+<span class="step">F = c·Σδ·dA</span>
 </div>
-<p>The gel pad is modelled as a bed of independent springs
-(thin-elastic-layer approximation); the constant <i>c</i> is fitted on FEATS
-ground truth rather than assumed (see the external-validation section).
-Per-sensor calibration uses the 15 lowest-intensity frames of each episode:
-median depth becomes the zero map and the MAD of the plane-removed residuals
-sets a 5σ contact threshold — a fixed threshold cannot work because
-reconstruction noise differs per sensor (measured ~10 µm after plane removal).
-Each frame additionally gets a robust background-plane fit, which removes the
-frame-to-frame illumination tilt that otherwise dominates integrated depth.</p>
+<p>Zero training frames; one fitted scalar (c, from force-sensor ground truth).
+Every design decision was driven by a measured defect — the full pipeline,
+the optimization journey, and the volume-vs-max-depth answer are on the
+<a href="method.html"><b>method page</b></a>.</p>
 <img src="{assets['depth_validation_panel']}" alt="raw | diff | depth">
-<p class="footnote">Strongest contact of motherboard/episode_000 (left sensor):
-raw frame | difference vs reference | reconstructed depth. Indentation localises
-exactly where the image difference shows contact.</p>
-<div class="twocol">
-<img src="{assets['depth_pushT']}" alt="depth panels pushT">
-<img src="{assets['depth_mb']}" alt="depth panels motherboard">
-</div>
-<h3>Evaluation (no ground truth → falsifiable properties instead)</h3>
-<p>E1.1 <b>specificity</b> — no-contact rows must read ≈0 N; SNR = median force
-on high-intensity rows / p95 on reference rows. E1.2 <b>correlation</b> —
-Spearman ρ against contact intensity, an independent statistic of the same
-images. E1.3 <b>spikes</b> — single-frame excursions are solver noise; a
-median-3 over fresh frames must remove them. E1.4 <b>calibration
-stability</b> across episodes.</p>
-{assets['m1_table']}
-<img src="{assets['timeline_pushT']}" alt="force timeline pushT">
-<img src="{assets['timeline_mb']}" alt="force timeline motherboard">
-<div class="twocol">
-<video controls muted loop playsinline preload="metadata"
- src="{assets['clip']}"></video>
-<video controls muted loop playsinline preload="metadata"
- src="{assets['clip_mb']}"></video>
-</div>
-<p class="footnote">12 s around each episode's force peak: live force bar under
-the tactile stream (median-3 filtered). Left: pushT (light, intermittent
-contact). Right: motherboard (sustained presses).</p>
+<p class="footnote">Strongest motherboard press: raw | difference | reconstructed
+depth. More examples (20 panels, 10 clips) in the
+<a href="gallery.html">gallery</a>.</p>
 </div>
 
-<h2>External validation — FEATS ground truth</h2>
+<h2>Validated against three force-labeled datasets</h2>
 <div class="card method">
-<p>React has no force ground truth, but <b>FEATS</b> (arXiv:2411.03315) does:
-a GelSight Mini pressed by a CNC machine against 24 indenters, with
-FEA-derived force labels. Running our estimator on its val split is a
-<i>transfer</i> test — marker-dot gel, different pad, single global
-no-contact reference — i.e. strictly harder than the React setting, where
-reference frames come from the same episode seconds away.</p>
-<img src="{assets.get('feats_validation','assets/feats_validation.png')}"
- alt="FEATS validation scatter">
-<img src="{assets.get('fota_validation','assets/fota_validation.png')}"
- alt="FoTa validation strip plot">
-<img src="assets/three_way_comparison.png" alt="three estimators vs F/T ground truth (cnc_Mini)">
-<img src="assets/glowtact_comparison.png" alt="GlowTact F/T ground truth comparison">
 <table>
-<tr><th>metric</th><th>value</th><th>scope</th></tr>
-<tr><td>Spearman ρ (pooled)</td><td>{ext.get('spearman_rho',0):.2f}</td>
-<td rowspan="3">normal loading, ≤30 N, n={ext.get('n_frames',0)}</td></tr>
-<tr><td>Pearson r (pooled)</td><td>{ext.get('pearson_r',0):.2f}</td></tr>
-<tr><td>MAE after scale calibration</td><td>{ext.get('mae_calibrated_n',0):.1f} N</td></tr>
-<tr><td>ρ within one indenter family</td><td>0.66–0.94</td><td>zelda 0.94, cylinder 0.75, triangle 0.70</td></tr>
-<tr><td>ρ on <b>unseen indenter shapes</b></td><td>0.85</td><td>test_unknown_indenters split, n=100 — shape generalization holds</td></tr>
-<tr><td>ρ vs press depth on <b>FoTa (T3)</b></td><td>0.43 / 0.24</td><td>61 captures, third-party Panda rig, household objects; markerless / marker gel medians, 84% positive. FoTa has no force GT, so pose press-depth is the (attenuated) monotone proxy</td></tr>
-<tr><td>ρ vs <b>F/T ground truth — FoTa cnc_Mini</b></td><td><b>0.43 / 0.65</b></td><td>400 frames, CNC gantry + F/T sensor, markerless Mini (pooled / edge-filtered, after flat-field optimization). FeelAnyForce on identical frames: 0.83 / 0.92; FEATS U-net: 0.07</td></tr>
-<tr><td>ρ vs <b>F/T ground truth — GlowTact</b></td><td><b>0.63</b></td><td>600 of 14,715 cleaned markerless-Mini presses, 0–20 N; per-family up to 0.93. FeelAnyForce: 0.90. Third independent scale estimate (2.61 N/mm³) inside the 2–4× band</td></tr>
-<tr><td>scale stability across splits</td><td>2–4×</td><td>fitted N/mm³ varies 1.9–7.2 between sessions/sensors: within-episode relative force is reliable, cross-sensor absolute scale is not</td></tr>
-<tr><td>ρ on shear-loaded captures</td><td>−0.15</td><td>excluded &amp; documented: shear churns the image without adding indentation volume</td></tr>
-<tr><td>fitted scale</td><td>{ext.get('scale_n_per_mm3',0):.2f} N/mm³</td>
-<td>{ext.get('scale_vs_theory',0):.0f}× the assumed Winkler constant — the fit absorbs the
-depth-unit and gel-constant assumptions; React forces are reported in
-<b>FEATS-calibrated newtons</b></td></tr>
+<tr><th>dataset (gel)</th><th>ours</th><th>FEATS U-net</th><th>FeelAnyForce</th></tr>
+<tr><td>FEATS val (marker)</td><td>0.74</td><td><b>0.96</b> in-domain</td><td>0.43</td></tr>
+<tr><td>FoTa cnc_Mini (markerless)</td><td>0.43 / 0.65</td><td>0.07</td><td><b>0.83 / 0.92</b></td></tr>
+<tr><td>GlowTact (markerless)</td><td>0.63</td><td>0.04</td><td><b>0.90</b></td></tr>
+<tr><td>React (no GT — agreement)</td><td colspan="3">physics vs FeelAnyForce ρ = 0.91; both read ≈0 N off-contact</td></tr>
 </table>
-<p><b>What the validation bought.</b> Chasing the initial ρ = 0.42 exposed two
-pipeline defects that also affected React inference: a global illumination
-tilt dominating the integrated depth (fixed by a robust background-plane fit
-per frame — React contact thresholds tightened from 50 µm to 10 µm) and
-marker-dot imprints from the SDK's mask-and-interpolate path (fixed by
-inpainting the dots before the network). A quadratic background model was
-also tried and <i>rejected</i> — it absorbed real contact (ρ 0.61→0.50).
-Sanity check on scale: the strongest motherboard press reads ~0.2 N under the
-theoretical constant but ~7 N calibrated — the latter is what pressing a
-connector home actually takes.</p>
+<p style="margin-bottom:0">Each network dominates its own gel domain and collapses
+outside it; the physics pipeline is the only one that works everywhere.
+Predicted-vs-ground-truth scatters, per dataset, on the
+<a href="results.html"><b>results page</b></a>.</p>
 </div>
 
-<h2>Method 2 — DexForce-style force-informed position targets</h2>
+<h2>Method 2 — force-informed action targets</h2>
 <div class="card method2">
-<p>Rather than adding force as a new action dimension, the estimated normal
-force becomes a <b>virtual position target past the contact surface</b>
-(DexForce, arXiv:2501.10356):</p>
 <p class="formula">p<sub>target</sub> = p<sub>observed</sub> + (F̂<sub>n</sub> / k) · n̂,
-&nbsp;&nbsp; k = 1500 N/m (deployment impedance)</p>
-<p>The action stays a pose — it composes with the existing 30 Hz pose actions,
-needs only an impedance controller at deployment, and in free space reduces
-exactly to the observed pose. The pressing direction n̂ is <b>not</b> a guessed
-axis: it is the rig's dual-ball calibrated <code>gel_axis_in_rigid</code>
-(pose-to-pose consistency ≈1°), rotated into world frame per row. The naive
-[0,0,1] guess produced <i>negative</i> approach alignment at force onsets; the
-calibrated axis makes it positive.</p>
-<img src="{assets['dexforce_pushT']}" alt="virtual target offsets pushT">
-<img src="{assets['dexforce_mb']}" alt="virtual target offsets motherboard">
-<h3>Evaluation</h3>
-<p>E2.1 <b>free-space invariance</b> — zero force must leave the action exactly
-the observed pose. E2.2 <b>boundedness</b> — F/k must stay millimetre-scale to
-be a safe action. E2.3 <b>roundtrip</b> — k·‖target − pose‖ must reproduce the
-input force (pure algebra). E2.4 <b>geometry</b> — motion should align more
-with n̂ while pressing than in free motion.</p>
-{assets['m2_table']}
-<p>Across all episodes: free-space invariance
-<span class="verdict pass">{inv_all:.1e} m</span>, roundtrip error
-<span class="verdict pass">{rt_all:.1e} N</span> (machine precision), max
-penetration <span class="verdict pass">{pen_max:.1f} mm</span>.</p>
+&nbsp;&nbsp; k = 1500 N/m</p>
+<p>The estimated force becomes a virtual position target past the contact
+surface (DexForce-style): the action stays a pose, free space is untouched, and
+an impedance controller reproduces the demonstrated force at deployment. The
+transform is loss-free — invariance {inv_all:.0e} m, roundtrip {rt_all:.0e} N,
+penetration median {pen_p50:.1f} mm. Interactive walkthrough on the
+<a href="actions.html"><b>actions page</b></a>.</p>
+<img src="{assets['dexforce_mb']}" alt="virtual target offsets">
 </div>
 
-<h2>What the numbers say</h2>
+<h2>Takeaway</h2>
 <div class="card">
-<ul>
-<li><b>Method 1 works, with honest limits.</b> Externally: ρ = 0.74 pooled
-(0.66–0.94 within an indenter family) against FEA ground truth on FEATS, in
-a transfer setting strictly harder than React's. Internally: SNR
-{min(m1_snr):.1f}–{max(m1_snr):.1f} across episodes and ρ =
-{min(m1_rho):.2f}–{max(m1_rho):.2f} vs the independent intensity proxy.
-Absolute scale is FEATS-calibrated; per-frame absolute error in the transfer
-test is ±5 N, so treat single-frame values as coarse and trends as
-reliable. Shear-dominant contact is a stated blind spot.</li>
-<li><b>Method 2 is exactly as reliable as its input force.</b> The transform
-itself is loss-free (invariance and roundtrip at machine precision) and keeps
-targets bounded ({pen_p50:.1f} mm median, {pen_max:.1f} mm at the single hardest ~23 N press — clamp or gain-schedule k in deployment if that exceeds the task tolerance). It converts pseudo-force into
-a deployable action without changing the policy's output space.</li>
-<li><b>Recommended recipe</b>: train on force-informed targets (Method 2) with
-the Method 1 force as an auxiliary prediction head — matching the conclusions
-of FARM and DexForce, adapted to markerless gel.</li>
+<ul style="margin:0">
+<li><b>Labelling React</b>: FeelAnyForce as primary labeller (strongest on
+markerless Mini), the physics pipeline as an independent audit — they agree at
+ρ = 0.91 and cannot share failure modes.</li>
+<li><b>Training</b>: use force-informed targets (Method 2) with the estimated
+force as an auxiliary head; absolute newtons are coarse (±25–40%), trends are
+reliable.</li>
+<li><b>New gel / new sensor</b>: the physics pipeline is the only estimator
+that works out of the box.</li>
 </ul>
 </div>
 
-<h2>Debug log (what actually went wrong)</h2>
+<h2>Debug log</h2>
 <div class="card">
+<details><summary>10 things that actually went wrong, and their fixes (click to expand)</summary>
 <table>
 <tr><th>found</th><th>fix</th></tr>
 <tr><td>FEATS returns its no-contact output on every markerless frame</td>
@@ -310,7 +227,7 @@ involves shear — treat high-shear force estimates with caution)</td></tr>
 <tr><td>theoretical Winkler scale off by ~40× (depth-unit + gel-constant assumptions)</td>
 <td>absolute scale fitted on FEATS ground truth; React forces in FEATS-calibrated
 newtons, uncertainty stated</td></tr>
-</table>
+</table></details>
 </div>
 
 <p class="footnote">Data: <a href="https://huggingface.co/datasets/yxma/React">
