@@ -230,9 +230,11 @@ near the pad border — the press grid is larger than the field of view (see
 <h2>GlowTact — markerless gel, cleaned</h2>
 <div class="card"><img src="assets/results_glowtact.png" alt="GlowTact panels">
 <p class="footnote">Friendliest ground truth (centred presses, 10 free frames,
-0–20 N). Per-family our ρ reaches 0.93; the pooled gap to FeelAnyForce is
-mostly object-dependent volume→force gain, which a single physical scale
-cannot capture but 200K supervised frames can.</p></div>
+0–20 N). Per-indenter, calibrated within each family under the physical scope
+(contact fully in view, gel not bottomed out), ρ is 0.975–0.992 across all six
+indenters with MAE ≤ 0.73 N. Caveat: that calibration is refit per family, so
+it measures rank agreement within a group, not a transferable absolute-newton
+scale — see <a href="method.html">per-dataset calibration</a>.</p></div>
 
 <h2>React — no ground truth, so: do independent methods agree?</h2>
 <div class="card"><img src="assets/results_react.png" alt="React agreement">
@@ -316,12 +318,15 @@ near the pad border — the press grid is larger than the field of view (see
 FeelAnyForce 非边缘达 0.92。</p>"""),
     ("<h2>GlowTact — markerless gel, cleaned</h2>", "<h2>GlowTact——无点 gel,清洗过</h2>"),
     ("""<p class="footnote">Friendliest ground truth (centred presses, 10 free frames,
-0–20 N). Per-family our ρ reaches 0.93; the pooled gap to FeelAnyForce is
-mostly object-dependent volume→force gain, which a single physical scale
-cannot capture but 200K supervised frames can.</p>""",
-     """<p class="footnote">最友好的真值(按压居中、10 帧自由参考、0–20 N)。我们家族内 ρ 达 0.93;
-与 FeelAnyForce 的混合差距主要来自物体相关的体积→力增益——单一物理刻度学不到,
-20 万帧监督学得到。</p>"""),
+0–20 N). Per-indenter, calibrated within each family under the physical scope
+(contact fully in view, gel not bottomed out), ρ is 0.975–0.992 across all six
+indenters with MAE ≤ 0.73 N. Caveat: that calibration is refit per family, so
+it measures rank agreement within a group, not a transferable absolute-newton
+scale — see <a href="method.html">per-dataset calibration</a>.</p>""",
+     """<p class="footnote">最友好的真值(按压居中、10 帧自由参考、0–20 N)。逐 indenter 在
+物理作用域内(接触完全在视野、凝胶未触底)家族内标定后,六种 indenter 的 ρ 为
+0.975–0.992,MAE ≤ 0.73 N。注意:该标定逐家族重拟合,衡量的是组内秩一致性,
+并非可迁移的绝对牛顿刻度——见<a href="method_zh.html">逐数据集标定</a>。</p>"""),
     ("<h2>React — no ground truth, so: do independent methods agree?</h2>",
      "<h2>React——没有真值,那就问:独立方法是否一致?</h2>"),
     ("""<p class="footnote">On the dataset we actually care about, the two surviving

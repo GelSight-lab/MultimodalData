@@ -49,7 +49,8 @@ import numpy as np
 from .debug_gallery import (OUT as DEBUG_OUT, feat_vec, load_cnc, load_feats,
                             stages)
 from .lut_calibration import MM_PER_PIXEL, crop
-from .o3d_view import has_display, remove_halo_pedestal, render_depth_mesh
+from .o3d_view import (crop_to_content, has_display, remove_halo_pedestal,
+                       render_depth_mesh)
 from .run_episode import DATA_ROOT, LEGACY_SHIFT, OUT_ROOT, STAGE_ROOT
 
 ASSETS = OUT_ROOT / "site_assets"
@@ -163,8 +164,12 @@ def mesh_view(depth: np.ndarray, width: int = 700, height: int = 560,
     broad base under the imprint and the shape reads as a mound.
     """
     dp = remove_halo_pedestal(np.clip(depth, 0.0, None).astype(np.float32))
-    return render_depth_mesh(dp, MM_PER_PIXEL, stride=stride, bg=bg,
-                             width=width, height=height, **MESH_KW)
+    rgb = render_depth_mesh(dp, MM_PER_PIXEL, stride=stride, bg=bg,
+                            width=width, height=height, **MESH_KW)
+    # Open3D fits the camera to the scene bounding sphere, so a flat wide pad
+    # renders with a large empty margin and the mesh ends up filling only
+    # ~15% of its figure panel. Trim to the rendered content.
+    return crop_to_content(rgb)
 
 
 def mesh_tile(depth: np.ndarray, w: int = 320, h: int = 240, stride: int = 2,
@@ -175,10 +180,20 @@ def mesh_tile(depth: np.ndarray, w: int = 320, h: int = 240, stride: int = 2,
     about the imprint — it enlarges the geometry without touching the verified
     view direction. Only the empty margin around the gel plane is lost.
     """
+    import cv2
+
     rgb = mesh_view(depth, width=int(w * oversample),
                     height=int(h * oversample), stride=stride, bg=bg)
-    y0, x0 = (rgb.shape[0] - h) // 2, (rgb.shape[1] - w) // 2
-    return rgb[y0:y0 + h, x0:x0 + w]
+    # mesh_view already trims to content, so the tile is produced by fitting
+    # that crop into the tile (letterboxed on the background colour) rather
+    # than by a fixed centre crop, which would now cut the geometry itself.
+    sc = min(w / rgb.shape[1], h / rgb.shape[0])
+    rs = cv2.resize(rgb, (max(int(rgb.shape[1] * sc), 1),
+                          max(int(rgb.shape[0] * sc), 1)))
+    tile = np.full((h, w, 3), int(round(bg * 255)), np.uint8)
+    y0, x0 = (h - rs.shape[0]) // 2, (w - rs.shape[1]) // 2
+    tile[y0:y0 + rs.shape[0], x0:x0 + rs.shape[1]] = rs
+    return tile
 
 
 # ------------------------------------------------------------------ panels

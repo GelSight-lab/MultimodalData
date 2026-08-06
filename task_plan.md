@@ -473,3 +473,15 @@ method 页新增 "Per-dataset calibration / 逐数据集标定" (EN+ZH, ZH 断�
 牛顿模型(唯一试过的多物体混合拟合 rho 0.47)。并写入实测噪声: 深度域高频占峰值
 0.3%, 梯度域 22.2% (LUT 分箱量化, 9.8% 接触像素落在未观测 bin), Poisson 积分
 把 LUT 噪声低通掉。已发布: https://huggingface.co/spaces/yxma/react-force-recovery
+
+## 全站图件 Open3D 化 + eval 结果一致性收尾
+| found | evidence | fix | verified |
+|---|---|---|---|
+| Open3D 渲染在图块内只占约15% | 相机按场景包围球取景, 平板留大片空白 | o3d_view.crop_to_content (按非背景包围盒裁剪, 不动相机以免逐帧透视跳变) | 重生成后占比约60%, cnc_00 压痕环清晰 |
+| mesh_tile 固定中心裁剪与上游内容裁剪冲突 | 会切掉几何本身 | 改为等比缩放+背景色 letterbox | 片段 3D 列纹理(蜂窝+V边)清晰 |
+| GlowTact 脚注数字过时且结论已反转 | 文案"家族内 ρ 达 0.93; 与 FeelAnyForce 的差距" vs 实际 0.98 > 0.90 | 改为逐 indenter 0.975-0.992 / MAE≤0.73N, 并显式声明该标定逐家族重拟合=组内秩一致性, 非可迁移绝对牛顿 | EN+ZH 各命中1处, 旧文案0处 |
+审计: grep plot_surface|projection=3d|Axes3D|plot_trisurf 全仓为空 ->
+站点唯一 3D 来源是 showcase.py, 已全部走 o3d_view。
+feats_domain_gap.png (两张原始传感器照片, 无重建) 与 actions 页叠加片段
+(原始流+力条, 无 3D 面板) 经查确认无需重生成。
+指标未变(仅面板变): cnc in-view 0.920/0.29N, feats 0.757/5.37N。

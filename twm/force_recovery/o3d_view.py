@@ -152,6 +152,31 @@ def render_mesh(mesh, width: int = 900, height: int = 700, bg: float = 1.0,
     return (np.clip(buf, 0, 1) * 255).astype(np.uint8)
 
 
+def crop_to_content(rgb: np.ndarray, bg_tol: float = 0.02, pad: int = 8
+                    ) -> np.ndarray:
+    """Trim the uniform background border an Open3D render leaves around the
+    mesh.
+
+    Open3D fits the camera to the scene bounding SPHERE, so a flat wide pad
+    renders with a large empty margin — embedded in a figure panel the mesh
+    ends up occupying a fraction of the tile. Cropping to the non-background
+    bounding box makes the surface fill its panel without changing the camera
+    (which would also change the perspective between frames of a clip).
+    """
+    lum = rgb.mean(axis=2) / 255.0
+    bg = float(np.median(np.concatenate(
+        [lum[0], lum[-1], lum[:, 0], lum[:, -1]])))
+    mask = np.abs(lum - bg) > bg_tol
+    if not mask.any():
+        return rgb
+    ys, xs = np.nonzero(mask)
+    y0 = max(int(ys.min()) - pad, 0)
+    y1 = min(int(ys.max()) + pad + 1, rgb.shape[0])
+    x0 = max(int(xs.min()) - pad, 0)
+    x1 = min(int(xs.max()) + pad + 1, rgb.shape[1])
+    return rgb[y0:y1, x0:x1]
+
+
 def render_depth_mesh(depth_mm: np.ndarray, mm_per_px: float, **kw
                       ) -> np.ndarray:
     """depth map -> rendered RGB image, one call."""
