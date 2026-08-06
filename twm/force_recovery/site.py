@@ -157,19 +157,26 @@ LUT-reconstructed depth. More examples (20 panels, 10 clips) in the
 <a href="gallery.html">gallery</a>.</p>
 </div>
 
-<h2>Validated against three force-labeled datasets</h2>
+<h2>Validated against four force-labeled datasets</h2>
 <div class="card method">
 <table>
 <tr><th>dataset (gel)</th><th>ours</th><th>FEATS U-net</th><th>FeelAnyForce</th></tr>
 <tr><td>FEATS val (marker)</td><td>0.77</td><td><b>0.96</b> in-domain</td><td>0.43</td></tr>
 <tr><td>FoTa cnc_Mini (markerless)</td><td>0.94 (in view)</td><td>0.07</td><td><b>0.83</b></td></tr>
 <tr><td>GlowTact (markerless)</td><td><b>0.98</b></td><td>0.04</td><td>0.90</td></tr>
+<tr><td>Sparsh / Meta (markerless, 10 pads)</td><td>0.56 *</td><td colspan="2">not run — no published predictions</td></tr>
 <tr><td>React (no GT — agreement)</td><td colspan="3">physics vs FeelAnyForce ρ = 0.91; both read ≈0 N off-contact</td></tr>
 </table>
-<p style="margin-bottom:0">Each network dominates its own gel domain and collapses
+<p>Each network dominates its own gel domain and collapses
 outside it; the physics pipeline (0.74–0.99) is the only one that works
 everywhere. Predicted-vs-ground-truth scatters, per dataset, on the
 <a href="results.html"><b>results page</b></a>.</p>
+<p class="footnote" style="margin-bottom:0">* Sparsh is a <b>foreign sensor</b>
+whose illumination geometry differs: our LUT does not reconstruct valid depth
+there (a sphere press comes out bilobed), so 0.56 is a transfer limit driven by
+d<i>I</i> magnitude, not a reconstruction. It does show one calibration
+carrying across 10 gel pads. Details on the
+<a href="results.html">results page</a>.</p>
 </div>
 
 <h2>Method 2 — force-informed action targets</h2>
