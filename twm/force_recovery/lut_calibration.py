@@ -153,7 +153,6 @@ def build_lut(ref, fits, geom, inner_frac: float = 0.97) -> dict:
     ssum = np.zeros((BINS, BINS, BINS, 2), np.float64)
     cnt = np.zeros((BINS, BINS, BINS), np.int64)
     yy, xx = np.mgrid[0:H, 0:W].astype(np.float32)
-    f01 = f01_compensation(ref)
 
     for f in fits:
         img = crop(np.asarray(Image.open(f["path"]).convert("RGB"))
