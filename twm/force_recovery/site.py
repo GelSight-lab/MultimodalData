@@ -114,7 +114,8 @@ tactile-estimated normal force, and DexForce-style force-informed action targets
 <div class="pills"><span class="pill">GelSight Mini (markerless gel)</span>
 <span class="pill">no F/T sensor</span><span class="pill">no force ground truth</span>
 <span class="pill">dataset: yxma/React</span>
-<a class="pill" href="method.html" style="text-decoration:none;color:#ffd9a0;border:1px solid rgba(255,255,255,.3)">→ method in one page</a>
+<a class="pill" href="method.html" style="text-decoration:none;color:#ffd9a0;border:1px solid rgba(255,255,255,.3)">→ method design</a>
+<a class="pill" href="results.html" style="text-decoration:none;color:#ffd9a0;border:1px solid rgba(255,255,255,.3)">→ results matrix</a>
 <a class="pill" href="actions.html" style="text-decoration:none;color:#ffd9a0;border:1px solid rgba(255,255,255,.3)">→ action processing deep-dive</a></div>
 </div></header>
 <div class="wrap">
