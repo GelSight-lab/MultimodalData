@@ -260,13 +260,20 @@ def build(which="glowtact"):
             if st["valid"].any() else float("nan")
         sag = flat_top_sag(st["depth_flat"])
 
-        fig = plt.figure(figsize=(30, 4.1))
-        n = 14
+        # Two rows of 7, not one row of 14. Measured: at the page's 1900 px
+        # container a 14-wide strip gives each panel 136 px and renders its
+        # title at ~6.5 px effective — unreadable. 2x7 doubles both.
+        NC, NR = 7, 2
+        # figsize follows the CELL aspect, it is not guessed: the panels are
+        # 320x240 (4:3), so 7 cols x 2 rows wants 7*4 : 2*3 = 4.67:1, plus
+        # ~28% height for titles and colourbars. A 1.79:1 figure (the first
+        # attempt) letterboxed every image and left half the canvas empty.
+        fig = plt.figure(figsize=(17.0, 17.0 / 4.67 * 1.28))
 
         def add(i, data, ttl, cmap=None, cb=False):
-            a = fig.add_subplot(1, n, i)
+            a = fig.add_subplot(NR, NC, i)
             im = a.imshow(data, cmap=cmap)
-            a.set_title(ttl, fontsize=7.5)
+            a.set_title(ttl, fontsize=10.5)
             a.axis("off")
             if cb:
                 fig.colorbar(im, ax=a, fraction=0.046)
@@ -276,32 +283,32 @@ def build(which="glowtact"):
         add(2, np.clip(s["ref"], 0, 255).astype(np.uint8), "2 reference")
         add(3, np.clip(st["dI"] * 3 + 128, 0, 255).astype(np.uint8),
             "3  dI = img − ref  (×3)")
-        add(4, st["absdI"], "4  max|dI| per pixel", "viridis", True)
+        add(4, st["absdI"], "4  max|dI|", "viridis", True)
         add(5, st["valid"], f"5  valid mask  |dI|>{VALID_THR:g}", "gray")
-        add(6, st["observed"], "6  LUT bin observed?\n(dark = made-up value)",
+        add(6, st["observed"], "6  LUT bin seen?\n(dark = invented)",
             "gray")
         v = np.abs(np.concatenate([st["gx"].ravel(), st["gy"].ravel()])).max()
         add(7, st["gx"], "7  gx (LUT)", "coolwarm", True)
         add(8, st["gy"], "8  gy (LUT)", "coolwarm", True)
         add(9, np.hypot(st["gx"], st["gy"]), "9  |grad|", "magma", True)
-        add(10, st["div"], "10  div(g) = Poisson RHS", "coolwarm", True)
-        add(11, st["depth"], "11  depth, fast_poisson [mm]", "inferno", True)
-        add(12, st["depth_flat"], "12  depth, halo pedestal removed",
+        add(10, st["div"], "10  div(g)", "coolwarm", True)
+        add(11, st["depth"], "11  depth [mm]", "inferno", True)
+        add(12, st["depth_flat"], "12  depth, halo removed",
             "inferno", True)
-        a = fig.add_subplot(1, n, 13)
+        a = fig.add_subplot(NR, NC, 13)
         if prof:
             a.plot(prof["r"], prof["h"], "-o", ms=2.5, label="reconstructed")
             a.plot(prof["r"], prof["cap"], "k--", lw=1, label="analytic cap")
-            a.set_xlabel("r [mm]", fontsize=7)
-            a.set_ylabel("h [mm]", fontsize=7)
+            a.set_xlabel("r [mm]", fontsize=8.5)   # no ylabel: it lands on
+            # panel 12's colourbar; the units are already in the title
             a.legend(fontsize=6)
-            a.set_title(f"13  radial profile\nRMS {prof['rms']*1000:.0f} µm",
-                        fontsize=7.5)
+            a.set_title(f"13  radial profile  h [mm]\nRMS "
+                        f"{prof['rms']*1000:.0f} µm", fontsize=10.5)
         else:
             a.text(.5, .5, "13  no sphere\n(profile check n/a)", ha="center",
-                   va="center", fontsize=8)
+                   va="center", fontsize=11)
             a.axis("off")
-        a.tick_params(labelsize=6)
+        a.tick_params(labelsize=8.5)
         add(14, mesh_view_rgb(st["depth_flat"]), "14  Open3D mesh")
 
         peak = float(st["depth_flat"].max())
@@ -314,10 +321,11 @@ def build(which="glowtact"):
             + (f"centre/rim {sag:.2f} · " if sag == sag else "")
             + (f"grad-angle {ang:.1f}° (chance 90°) · profile RMS "
                f"{prof['rms']*1000:.0f} µm" if prof else "no sphere check"),
-            fontsize=11, fontweight="bold")
-        fig.tight_layout()
+            fontsize=13, fontweight="bold")
+        fig.subplots_adjust(left=.012, right=.988, top=.86, bottom=.03,
+                            wspace=.30, hspace=.26)
         fp = OUT / f"{which}_{k:02d}.png"
-        fig.savefig(fp, dpi=78, bbox_inches="tight")
+        fig.savefig(fp, dpi=110, bbox_inches="tight")
         plt.close(fig)
         diag.append(dict(sample=k, tag=s["tag"], peak_mm=peak,
                          area_mm2=area, unobserved_lut_frac=unobs,

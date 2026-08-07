@@ -249,7 +249,11 @@ def cmd_gallery():
             fr = rows[i]
             img, ref = get(fr)
             st = stages(img, ref)
-            fig, ax = plt.subplots(1, 7, figsize=(23, 3.2))
+            # 2 rows of 4: a 7-wide strip in the 880 px page column gives
+            # each panel 126 px and a ~3.4 px effective title.
+            fig, axg = plt.subplots(2, 4, figsize=(15.5, 15.5 / (4 * 4 /
+                                                   (2 * 3)) * 1.30))
+            ax = axg.ravel()
             panels = [
                 (img / 255, f"raw  [{fr['group']}]", None),
                 (ref / 255, "reference", None),
@@ -260,17 +264,18 @@ def cmd_gallery():
             ]
             for a, (im, ti, cm) in zip(ax, panels):
                 a.imshow(im, cmap=cm)
-                a.set_title(ti, fontsize=9)
+                a.set_title(ti, fontsize=11)
                 a.axis("off")
             zs = "" if not np.isfinite(fr.get("z", np.nan)) else f"z={fr['z']:.2f}mm\n"
             ax[6].text(0.02, 0.95, (
                 f"{zs}F_gt={fr['f']:.2f}N\nF_pred={pred[i]:.2f}N\n\n"
                 f"maxd={fr['maxd']:.2f}mm\nvol={fr['vol']:.1f}mm3\n"
                 f"area={fr['area']:.0f}mm2\nLUT cov={st['lut_coverage']*100:.0f}%"),
-                va="top", fontsize=10, family="monospace",
+                va="top", fontsize=12, family="monospace",
                 transform=ax[6].transAxes)
             ax[6].axis("off")
-            fig.suptitle(f"{name} sample {k+1}/{N_GALLERY}", fontsize=11)
+            ax[7].axis("off")            # 8th cell of the 2x4 grid is spare
+            fig.suptitle(f"{name} sample {k+1}/{N_GALLERY}", fontsize=13)
             fig.tight_layout()
             fp = gdir / f"sample_{k:02d}.png"
             fig.savefig(fp, dpi=90, bbox_inches="tight")

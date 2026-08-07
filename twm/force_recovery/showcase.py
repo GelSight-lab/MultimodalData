@@ -228,15 +228,20 @@ def _panel(img: np.ndarray, depth: np.ndarray, f_pred: float,
     d = np.clip(depth, 0, None)
     vmax = max(float(d.max()), 0.05)
     have = ref is not None and st is not None
-    ncol = 8 if have else 4
-    fig = plt.figure(figsize=(2.55 * ncol, 3.1))
+    n = 8 if have else 4
+    # Two rows when there are 8 stages. Measured: one 8-wide strip inside the
+    # 880 px page column gives each panel 110 px and its title ~3 px effective
+    # size. 2x4 doubles the panel and quadruples the readable title.
+    ncol, nrow = (4, 2) if have else (4, 1)
+    fig = plt.figure(figsize=(3.5 * ncol, 3.5 * ncol / (ncol * 4 / (nrow * 3))
+                              * 1.30))
     k = 1
 
     def add(data, title_, cmap=None, colorbar=False):
         nonlocal k
-        a = fig.add_subplot(1, ncol, k)
+        a = fig.add_subplot(nrow, ncol, k)
         im = a.imshow(data, cmap=cmap)
-        a.set_title(title_, fontsize=8)
+        a.set_title(title_, fontsize=10)
         a.axis("off")
         if colorbar:
             fig.colorbar(im, ax=a, fraction=0.046)
@@ -257,15 +262,15 @@ def _panel(img: np.ndarray, depth: np.ndarray, f_pred: float,
     add(d, f"LUT depth [mm]{depth_note}", cmap="inferno", colorbar=True)
     add(mesh_view(d), f"3D reconstruction (Open3D mesh){depth_note}")
 
-    ax = fig.add_subplot(1, ncol, k)
+    ax = fig.add_subplot(nrow, ncol, k)
     bars = [("predicted", f_pred, "#d95f02")]
     if f_true is not None:
         bars.append(("ground truth", f_true, "#1b9e77"))
     ax.bar([b[0] for b in bars], [b[1] for b in bars],
            color=[b[2] for b in bars], width=0.55)
-    ax.set_ylabel("normal force [N]", fontsize=8)
-    ax.set_title(title, fontsize=8)
-    ax.tick_params(labelsize=8)
+    ax.set_ylabel("normal force [N]", fontsize=9.5)
+    ax.set_title(title, fontsize=10)
+    ax.tick_params(labelsize=9)
     fig.tight_layout()
     fig.savefig(out, dpi=110)
     plt.close(fig)
