@@ -196,6 +196,36 @@ global one: on FeelAnyForce the pooled ρ survived <i>global</i> shuffling at
 0.442 vs 0.455, which is how we caught that its frame join had never been
 demonstrated. Reading the table: cnc and GlowTact sit ~0.9 above their
 controls; FEATS sits 0.78 above a control that is flat at 0.00.</p>
+
+<h3 style="margin-bottom:6px">Datasets we evaluated but did not include</h3>
+<p class="footnote" style="margin-top:0">Four GelSight-Mini force datasets are
+rows above. Two more were worked on and left out, and it is worth saying why
+rather than leaving a reader to wonder.</p>
+<table><tr><th>dataset</th><th>why it is not a row</th></tr>
+<tr><td><b>FeelAnyForce</b> (2410.02048)<br>
+<span class="footnote">appears above as a <i>method</i> — its trained network is
+one of our three baselines — but not as a dataset</span></td>
+<td>The 48,197 images we hold locally carry <b>no force labels at all</b>
+(every force column null). The labels are downloadable separately, but joining
+them to the frames requires inferring a per-capture frame index, and that join
+<b>was never demonstrated</b>: pooled &rho; was 0.455 while shuffling the labels
+<i>within</i> each capture still gave 0.442, i.e. the correlation was entirely
+between-capture structure and would survive a completely wrong frame mapping.
+Including it would have meant publishing a number we could not defend. Fixing
+it needs the original timestamped images (&asymp;157 GB) or an official frame
+map.</td></tr>
+<tr><td><b>Tactile MNIST</b> (real split)</td>
+<td>Used for reconstruction ground truth, not for force — it has no force
+labels. The <i>simulated</i> split is what gives us the per-pixel depth
+validation above.</td></tr></table>
+<p class="footnote">Also checked and rejected for having no force ground truth
+in newtons, or the wrong sensor: Touch&nbsp;and&nbsp;Go, TVL, TacQuad, GelSLAM,
+3DCal, DAR_OTS (GelSight model unstated; its marker-gel force labels are also a
+reordered copy of the markerless run), GenForce (marker images only, no RGB),
+AllSight (round finger, not a flat Mini gel), DIGIT and Wedge datasets.
+<b>TacVerse</b> is the one verified GelSight-Mini candidate still open — Mini
+with and without markers, 2&nbsp;mm sphere, 0.1&nbsp;mm steps — and it is
+access-gated.</p>
 </div>'''
 
 SEC_FORCE_ZH = r'''<h2>每个数字都配上足以否定它的对照</h2>
@@ -212,6 +242,27 @@ SEC_FORCE_ZH = r'''<h2>每个数字都配上足以否定它的对照</h2>
 <p class="footnote">这里正确的对照是组内打乱，而不是全局打乱：在 FeelAnyForce 上，
 混合后的 ρ 在<i>全局</i>打乱下仍有 0.442（对比 0.455），我们正是这样发现它的帧对齐从未被验证。
 读表方式：cnc 与 GlowTact 高出各自对照约 0.9；FEATS 高出 0.78，而它的对照平在 0.00。</p>
+
+<h3 style="margin-bottom:6px">评测过但未纳入的数据集</h3>
+<p class="footnote" style="margin-top:0">上表是四个 GelSight Mini 力数据集。另有两个做过工作但未纳入，
+与其让读者猜，不如说清楚为什么。</p>
+<table><tr><th>数据集</th><th>为什么它不是表中一行</th></tr>
+<tr><td><b>FeelAnyForce</b>（2410.02048）<br>
+<span class="footnote">它在上文是作为<i>方法</i>出现的——其训练好的网络是我们三个基线之一——
+而不是作为数据集</span></td>
+<td>我们本地持有的 48,197 张图像<b>完全没有力标签</b>（所有力字段为空）。标签可以单独下载，
+但要与帧对应就必须推断每个 capture 内的帧索引，而这个对齐<b>从未被验证</b>：
+混合 &rho; 为 0.455，而在每个 capture <i>内部</i>打乱标签后仍有 0.442——
+也就是说相关性完全来自 capture 之间的结构，即使帧映射完全错误也会保留。
+纳入它就等于发布一个我们无法辩护的数字。要修正需要带时间戳的原始图像（约 157 GB）
+或官方的帧映射表。</td></tr>
+<tr><td><b>Tactile MNIST</b>（真实划分）</td>
+<td>用于重建真值而非力——它没有力标签。上文的逐像素深度验证用的是它的<i>仿真</i>划分。</td></tr></table>
+<p class="footnote">另外经核查因缺少牛顿单位力真值、或传感器不符而排除：Touch and Go、TVL、
+TacQuad、GelSLAM、3DCal、DAR_OTS（GelSight 型号未声明，且其 marker gel 的力标签是
+markerless 组的重排副本）、GenForce（仅 marker 图像，无 RGB）、AllSight（圆柱指，非平面 Mini gel）、
+DIGIT 与 Wedge 系数据集。<b>TacVerse</b> 是唯一确认符合的 GelSight Mini 候选——
+有/无 marker、2 mm 球、0.1 mm 步进——但需申请访问权限。</p>
 </div>'''
 
 SEC_MARKER_EN = r'''<h3>Removing the marker dots: a geometry win, not a force win</h3>
