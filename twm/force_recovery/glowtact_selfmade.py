@@ -31,15 +31,29 @@ table is saved beside it as `glowtact_selfmade_lut.npz` and all comparison
 artefacts go to `lut_compare/`. Switching the pipeline over is a separate,
 explicit decision.
 
-Run:
-  python -m force_recovery.glowtact_selfmade ref        # reference dispersion
-  python -m force_recovery.glowtact_selfmade calibrate  # sphere fit + LUT
-  python -m force_recovery.glowtact_selfmade geom       # dome / grad-angle
-  python -m force_recovery.glowtact_selfmade feats      # feature tables
-  python -m force_recovery.glowtact_selfmade force      # force eval
-  python -m force_recovery.glowtact_selfmade react      # out-of-gamut on React
+What it found (so the next reader does not repeat it): the self-made pad is
+NOT a photometric sensor. Its contact difference image is rank 1 -- the
+contact is a uniform dark disc, all three channels dropping together -- while
+the commercial GelSight Mini and React are both rank 3. A table from a scalar
+to a 2-D slope is degenerate by construction, and the self-calibrated table
+duly fails on its own pad (gradient angle 72 deg against a chance of 90).
+The rest-gel hue is real but it describes the gel's appearance, not the
+sensor's principle. `modality` is the command that settles this.
+
+Run (`check` and `defaults` first -- they are the regression tests):
+  python -m force_recovery.glowtact_selfmade check       # == debug_gallery.stages
+  python -m force_recovery.glowtact_selfmade defaults    # published fit unmoved
+  python -m force_recovery.glowtact_selfmade ref         # reference dispersion
+  python -m force_recovery.glowtact_selfmade modality    # which sensor family?
+  python -m force_recovery.glowtact_selfmade calibrate   # sphere fit + LUT
+  python -m force_recovery.glowtact_selfmade degeneracy  # colour -> slope?
+  python -m force_recovery.glowtact_selfmade geom        # dome / grad angle
+  python -m force_recovery.glowtact_selfmade feats       # feature tables
+  python -m force_recovery.glowtact_selfmade force       # force eval
+  python -m force_recovery.glowtact_selfmade host react  # out-of-gamut rates
+  python -m force_recovery.glowtact_selfmade calib_audit # shipped React model
   xvfb-run -a -s "-screen 0 1400x1000x24" \
-      python -m force_recovery.glowtact_selfmade panel  # React depth panels
+      python -m force_recovery.glowtact_selfmade panel   # React depth panels
 """
 from __future__ import annotations
 
