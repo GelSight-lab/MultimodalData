@@ -394,9 +394,17 @@ def _react_context(task: str, date: str, ep: str, side: str):
     def frame(row: int) -> np.ndarray:
         return frames[min(trim + int(row) + LEGACY_SHIFT, nmax)]
 
+    # Median over 12 of the logged contact-free rows, not 6: measured
+    # split-half disagreement between two disjoint reference sets drops from
+    # p95 = 3.0 to 2.0 grey levels going 6 -> 12, and the reference is what
+    # every dI in the clip is measured against. (It is NOT the source of the
+    # sharp-contact artefacts - at 6 frames already 0.0% of pixels pass the
+    # |dI| > 8 valid test from reference disagreement alone; those artefacts
+    # come from steep sharp-edge colours falling outside the sphere-calibrated
+    # LUT range, 14% unobserved bins on episode_007 right vs 7-8% elsewhere.)
     ref = np.median(np.stack([
         crop(frame(int(r))).astype(np.float32)
-        for r in z["reference_rows"][:6]]), 0)
+        for r in z["reference_rows"][:12]]), 0)
     return z, is_new, inten, pose, frame, ref, h5
 
 
