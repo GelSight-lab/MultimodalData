@@ -85,6 +85,29 @@ def remove_halo_pedestal(depth_mm: np.ndarray, contact_frac: float = 0.25
     return np.maximum(depth_mm - base, 0.0)
 
 
+def crop_to_contact(depth_mm: np.ndarray, frac: float = 0.12,
+                    margin_px: int = 26) -> np.ndarray:
+    """Trim the depth map to the contact plus a margin of flat gel.
+
+    Without this the mesh shows a 13.3 mm plate carrying a 2 mm imprint, so the
+    surface reads as a speck on an empty slab. Published GelSight figures frame
+    the contact, keeping enough flat gel around it to read as a plane. Returns
+    the input unchanged when there is no measurable contact.
+    """
+    d = np.clip(depth_mm, 0.0, None)
+    pk = float(d.max())
+    if pk <= 1e-6:
+        return depth_mm
+    ys, xs = np.nonzero(d > frac * pk)
+    if len(ys) < 30:
+        return depth_mm
+    y0 = max(int(ys.min()) - margin_px, 0)
+    y1 = min(int(ys.max()) + margin_px + 1, d.shape[0])
+    x0 = max(int(xs.min()) - margin_px, 0)
+    x1 = min(int(xs.max()) + margin_px + 1, d.shape[1])
+    return depth_mm[y0:y1, x0:x1]
+
+
 def build_depth_mesh(depth_mm: np.ndarray, mm_per_px: float,
                      smooth_px: int = 5, z_scale: float = 1.0,
                      stride: int = 1, contrast: float = 0.30):
@@ -197,6 +220,8 @@ def mesh_view_rgb(depth_mm: np.ndarray, width: int = 620, height: int = 500,
     Kept here rather than in showcase.py so analysis scripts can render a mesh
     without importing the site-building module.
     """
+    # crop_to_contact first, for the same reason showcase does it: a 2 mm
+    # imprint on a 13.3 mm plate reads as a speck otherwise.
     return crop_to_content(render_depth_mesh(
-        np.clip(depth_mm, 0.0, None).astype(np.float32), MM_PER_PIXEL,
-        width=width, height=height, stride=stride, **MESH_KW))
+        crop_to_contact(np.clip(depth_mm, 0.0, None).astype(np.float32)),
+        MM_PER_PIXEL, width=width, height=height, stride=stride, **MESH_KW))

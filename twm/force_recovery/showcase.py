@@ -59,8 +59,8 @@ from .debug_gallery import (OUT as DEBUG_OUT, feat_vec, load_cnc, load_feats,
                             stages)
 from .lut_calibration import MM_PER_PIXEL, crop
 from .marker_removal import marker_mask, stages_depth
-from .o3d_view import (crop_to_content, has_display, remove_halo_pedestal,
-                       render_depth_mesh)
+from .o3d_view import (crop_to_contact, crop_to_content, has_display,
+                       remove_halo_pedestal, render_depth_mesh)
 from .run_episode import DATA_ROOT, LEGACY_SHIFT, OUT_ROOT, STAGE_ROOT
 
 ASSETS = OUT_ROOT / "site_assets"
@@ -174,6 +174,9 @@ def mesh_view(depth: np.ndarray, width: int = 700, height: int = 560,
     broad base under the imprint and the shape reads as a mound.
     """
     dp = remove_halo_pedestal(np.clip(depth, 0.0, None).astype(np.float32))
+    # Frame the contact, not the whole pad: a 2 mm imprint on a 13.3 mm plate
+    # renders as a speck otherwise.
+    dp = crop_to_contact(dp)
     rgb = render_depth_mesh(dp, MM_PER_PIXEL, stride=stride, bg=bg,
                             width=width, height=height, **MESH_KW)
     # Open3D fits the camera to the scene bounding sphere, so a flat wide pad
@@ -550,8 +553,12 @@ def react_showcase(task: str = "motherboard", date: str = "2026-05-10",
             rows.append(int(r)); taken.append(int(r))
         if len(rows) == 3:
             break
-    fig, axes = plt.subplots(len(rows), 3,
-                             figsize=(8.4, 2.15 * len(rows)))
+    # Four columns, not three: the third is a heat map, which reads depth as
+    # colour. The Open3D mesh is the view that makes the *geometry* legible —
+    # the same renderer the gallery and workbench use, so a surface looks the
+    # same wherever it appears on the site.
+    fig, axes = plt.subplots(len(rows), 4,
+                             figsize=(11.2, 2.15 * len(rows)))
     axes = np.atleast_2d(axes)
     for r_i, row in enumerate(rows):
         img = crop(frame(row)).astype(np.float32)
@@ -562,7 +569,9 @@ def react_showcase(task: str = "motherboard", date: str = "2026-05-10",
                  f"row {row}  F={force[row]:.2f} N"),
                 (diff, "gray", "|frame - reference|"),
                 (st["depth"], "inferno",
-                 f"LUT depth (max {st['depth'].max():.2f} mm)"))):
+                 f"LUT depth (max {st['depth'].max():.2f} mm)"),
+                (mesh_view(st["depth"]), None,
+                 "3D reconstruction (Open3D mesh)"))):
             ax = axes[r_i, c]
             ax.imshow(data, cmap=cmap)
             ax.set_title(title, fontsize=8)
