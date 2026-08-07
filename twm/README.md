@@ -285,3 +285,33 @@ with h5py.File("episode_000.h5", "r") as f:
     nearest = np.argmin(np.abs(ot_ts - cam_t))
     pose_at_frame_i = ot_poses[nearest]  # [x, y, z, qx, qy, qz, qw]
 ```
+
+---
+
+## Force recovery
+
+The recordings hold pose and GelSight images but **no applied force**. The
+[`force_recovery/`](force_recovery/) package estimates normal force from the
+tactile images alone, adds it to the dataset as an observation, and derives a
+force-informed position target from it.
+
+- **Live results:** https://huggingface.co/spaces/yxma/react-force-recovery
+- **Package README:** [`force_recovery/README.md`](force_recovery/README.md) —
+  method, the five validation datasets, and the measured limits
+- **Module map:** [`force_recovery/ARCHITECTURE.md`](force_recovery/ARCHITECTURE.md)
+- **Public API:** `force_recovery/pipeline.py`
+
+```python
+from force_recovery.pipeline import reconstruct, virtual_target, STIFFNESS_N_PER_MM
+
+st     = reconstruct(img, ref)                 # dI → RGB LUT → Poisson → depth
+target = virtual_target(pose, force_n, n_hat)  # pose + (F/k)·n̂ , k = 1 N/mm
+```
+
+Validated on five public force-labelled GelSight datasets with zero training
+frames from this rig (ρ 0.946–0.986 on the four markerless sets, each beside a
+within-group shuffle control). Two limits to read before using the numbers:
+accuracy is depth-dependent (11 µm at a 0.3 mm press, 281 µm at 2.25 mm), and
+the calibration is per-group, so ρ is a rank correlation rather than a
+transferable absolute-newton scale. Details and negative results in the
+package README.
