@@ -49,15 +49,16 @@ from twm.viz import (
 )
 
 
-H5_ROOT  = Path("/media/yxma/Disk1/twm/data/motherboard")
-OUT_ROOT = Path("/media/yxma/Disk1/twm/figures/episode_previews/motherboard")
+TASK = "motherboard"          # overridden by --task in main()
+H5_ROOT  = Path("/media/yxma/Disk1/twm/data") / TASK
+OUT_ROOT = Path("/media/yxma/Disk1/twm/figures/episode_previews") / TASK
 CALIB_DIR = Path("/home/yxma/MultimodalData/twm/calibration/result")
 
 PANEL_W, PANEL_H = 1280, 480
 SOURCE_FPS       = 30.0       # recording frame rate
 CLIP_S_DEFAULT   = 30.0       # seconds of usable data to sample (real time)
 SPEED_DEFAULT    = 2.0        # playback speed (output_fps = SOURCE_FPS * speed)
-EPISODES_ROOT    = Path("/media/yxma/Disk1/twm/processed/episodes/motherboard")
+EPISODES_ROOT    = Path("/media/yxma/Disk1/twm/processed/episodes") / TASK
 
 
 def _apply_world_offset(ot_lookup, dx, dy, dz):
@@ -191,9 +192,9 @@ def build_one_preview(h5_path: Path, out_mp4: Path,
                 frame_count=f_idx_int,
                 elapsed=float(cam_ts[f_idx_int] - cam_ts[0]),
                 fps=30.0,
-                task_name="motherboard",
+                task_name=task_name,
                 status_override=(
-                    f"[motherboard] {h5_path.parent.name}/{h5_path.stem}  "
+                    f"[{task_name}] {h5_path.parent.name}/{h5_path.stem}  "
                     f"H5 frame {f_idx_int}/{T_h5}  "
                     f"({float(cam_ts[f_idx_int] - cam_ts[0]):.1f}s)"
                 ),
@@ -247,6 +248,8 @@ def build_one_preview(h5_path: Path, out_mp4: Path,
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+    ap.add_argument("--task", default="motherboard",
+                    help="task folder under data/ and episode_previews/")
     ap.add_argument("--date", required=True,
                     help="Date subfolder under H5_ROOT, e.g. 2026-05-19")
     ap.add_argument("--clip_s", type=float, default=CLIP_S_DEFAULT,
@@ -264,6 +267,12 @@ def main():
                     help="Optional list of episode_NNN stems to process. "
                          "Defaults to all episode_*.h5 under <date>/.")
     args = ap.parse_args()
+
+    global TASK, H5_ROOT, OUT_ROOT, EPISODES_ROOT
+    TASK = args.task
+    H5_ROOT = Path("/media/yxma/Disk1/twm/data") / TASK
+    OUT_ROOT = Path("/media/yxma/Disk1/twm/figures/episode_previews") / TASK
+    EPISODES_ROOT = Path("/media/yxma/Disk1/twm/processed/episodes") / TASK
 
     h5_dir = H5_ROOT / args.date
     if not h5_dir.is_dir():
