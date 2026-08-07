@@ -944,3 +944,17 @@ Stage2(RealTactileMNIST真实帧)未做: 需逐轮拟合(x,y,yaw)+全局z, 失�
 - 另附因无牛顿力真值/传感器不符而排除的清单(TouchAndGo/TVL/TacQuad/GelSLAM/
   3DCal/DAR_OTS/GenForce/AllSight/DIGIT/Wedge), 以及仍开放的 TacVerse。
 原则: 被排除的数据集也应在结果页可见, 否则读者无法判断覆盖面。
+
+## FeelAnyForce 定向抽取: 绕过对齐问题(用户要求纳入)
+思路转变: 不再尝试"推断 capture 内帧索引"(该对齐已被组内打乱对照否证),
+而是**从原始分卷 zip 按文件名直接抽图** —— 文件名就是 CSV 引用的时间戳。
+侦察结果(全部已验证, 勿重推):
+- 分卷 zip: disk0-2 = dataset.z01/z02/z03, disk3 = dataset.zip(最后一卷, 17.45GB)
+- Zip64 EOCD: 305818 条目; 中央目录在 dataset.zip 偏移 17,411,261,400, 大小 38,401,830
+- 中央目录已解析并缓存: force_recovery/faf_cd.json ({n,d,o,c,u,m})
+- 101,883 个 dataset/<capture>/tactile/<timestamp>.png, 压缩中位 109,633 B, 42 captures
+- **CSV 路径与压缩包条目 110,109/110,109 = 100.0% 精确匹配**(前缀 'dataset/')
+- |Fz| 0.00-30.81 N; 每 capture 行数 min 727 / 中位 1018 / max 13495
+=> 不需要 157GB: 分层抽 4000-6000 张约 440-660MB 即可。
+验收标准(与之前失败的对齐相同的检验): **capture 内打乱对照**必须被大幅拉开
+(旧的推断式对齐是 0.455 vs 0.442, 逐 capture rho 仅 ~0.09)。
