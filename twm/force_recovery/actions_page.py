@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from .dexforce import STIFFNESS_N_PER_M
 from .run_episode import OUT_ROOT
 
 SITE = OUT_ROOT / "site"
@@ -136,7 +137,7 @@ episode data, and what the transformation is worth.</p>
 <div class="fstep" style="border-color:var(--target)">action target<small>virtual, past the surface</small></div>
 </div>
 <div class="formula">p<sub><b>target</b></sub> = p<sub>observed</sub> + ( F̂<sub>n</sub> / k ) · n̂
-&nbsp;&nbsp;&nbsp;k = 1500 N/m</div>
+&nbsp;&nbsp;&nbsp;k = @@K_NM@@ N/m</div>
 <p>The action stays a pose. In free space F̂<sub>n</sub>&nbsp;=&nbsp;0 and the target
 <i>is</i> the observed pose — nothing changes. In contact, the target moves past
 the surface along the gel normal by exactly the displacement an impedance
@@ -291,6 +292,7 @@ setI(Math.round(N*0.5));
             .replace("__PMAX__", f"{pen_max:.1f}")
             .replace("__NS__", str(n_sides)))
     out = SITE / "actions.html"
+    page = page.replace("@@K_NM@@", f"{STIFFNESS_N_PER_M:.0f}")
     out.write_text(page)
     return out
 
@@ -438,6 +440,7 @@ def build_zh() -> Path:
         assert old in zh, f"ZH replacement missed: {old[:60]!r}"
         zh = zh.replace(old, new, 1)
     out = SITE / "actions_zh.html"
+    zh = zh.replace("@@K_NM@@", f"{STIFFNESS_N_PER_M:.0f}")
     out.write_text(zh)
     return out
 

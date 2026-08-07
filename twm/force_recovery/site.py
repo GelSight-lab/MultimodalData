@@ -5,6 +5,7 @@ import html
 import json
 from pathlib import Path
 
+from .dexforce import STIFFNESS_N_PER_M
 from .run_episode import OUT_ROOT
 
 SITE = OUT_ROOT / "site"
@@ -237,7 +238,7 @@ Details on the <a href="results.html">results page</a>.</p>
 <h2>Method 2 — force-informed action targets</h2>
 <div class="card method2">
 <p class="formula">p<sub>target</sub> = p<sub>observed</sub> + (F̂<sub>n</sub> / k) · n̂,
-&nbsp;&nbsp; k = 1500 N/m</p>
+&nbsp;&nbsp; k = @@K_NM@@ N/m</p>
 <p>The estimated force becomes a virtual position target past the contact
 surface (DexForce-style): the action stays a pose, free space is untouched, and
 an impedance controller reproduces the demonstrated force at deployment. The
@@ -303,6 +304,7 @@ FEATS (2411.03315), ACP (2410.09309), gsrobotics SDK.</p>
 </div></body></html>"""
     SITE.mkdir(parents=True, exist_ok=True)
     out = SITE / "index.html"
+    page = page.replace("@@K_NM@@", f"{STIFFNESS_N_PER_M:.0f}")
     out.write_text(page)
     return out
 

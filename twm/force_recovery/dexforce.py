@@ -29,12 +29,20 @@ from pathlib import Path
 
 import numpy as np
 
-# Impedance controller stiffness the targets are computed for. With the
-# FEATS-calibrated force scale, in-contact forces run ~0.3-8 N; at a
-# mid-range Cartesian stiffness of 1500 N/m (Franka-class arms span
-# ~150-3000 N/m) the penetration F/k stays in the 0.2-6 mm range — small
-# enough to be a safe action, large enough to be learnable.
-STIFFNESS_N_PER_M = 1500.0
+# Impedance controller stiffness the targets are computed for. THE single
+# definition of this quantity in the codebase — `pipeline.STIFFNESS_N_PER_MM`
+# is derived from it, not declared again, because a stiffness that disagrees
+# between the exported dataset column and the site figure is a silent lie
+# about what the action means.
+#
+# 1000 N/m = 1 N/mm is the project's declared starting point. Franka-class
+# arms span ~150-3000 N/m, so this sits low-mid range: with LUT-calibrated
+# in-contact forces of ~0.3-8 N the penetration F/k lands in 0.3-8 mm. Note
+# the top of that band exceeds the 4.25 mm gel thickness, i.e. at high force
+# this k commands a target further past the surface than the gel could ever
+# be compressed — an argument for raising k, to be settled by the measured
+# penetration distribution rather than by taste.
+STIFFNESS_N_PER_M = 1000.0
 
 # The pressing direction in the rigid-body frame is NOT a coordinate axis:
 # the rig's dual-ball calibration measures it as ``gel_axis_in_rigid``

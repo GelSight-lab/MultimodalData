@@ -1166,3 +1166,19 @@ figsize 必须跟随单元格纵横比而非拍脑袋。修正为 17.0 x (17.0/4
 - `force_recovery/ARCHITECTURE.md` —— 模块地图: 核心/数据集适配/研究/站点构建/attic,
   每个 attic 模块附"为什么死了"的证据(如 fusion 的 8 种符号约定最好相关 0.049)。
 自检: 零力 -> 目标位姿与观测位姿逐元素相等(标量与批量均通过)。
+
+## 刚度改为 1 N/mm + 单一真值源 (goal: 1N/mm 刚度)
+发现将要产生的不一致: `dexforce.STIFFNESS_N_PER_M = 1500`(1.5 N/mm) vs 我新写的
+`pipeline.STIFFNESS_N_PER_MM = 1.0` —— **同一物理量两个真值源**。
+修法(single-source-visual-consistency):
+- `dexforce.STIFFNESS_N_PER_M = 1000.0` 成为唯一定义;
+  `pipeline.STIFFNESS_N_PER_MM` 由它**推导**(/1000), 不再各自声明
+- 页面模板里硬编码的 "k = 1500 N/m"(actions_page.py, site.py 各一处)
+  改为 `@@K_NM@@` 占位符, 构建时从同一常量注入 -> 文字不可能与数据脱节
+- **图也重生成**(showcase react): 只改文字不改图 = 页面显示与数据不符
+验证: 站上 1000 N/m 三处、1500 零处、占位符零残留; 布局门 0 违规。
+**1 N/mm 是否合理(实测)**: React episode_000 left 接触帧
+力 p50 0.46 / p95 1.66 / max 2.30 N -> 穿透 p50 0.46 / p95 1.66 / max 2.30 mm,
+**超过凝胶厚度 4.25mm 的占比 0.0%** => 该刚度在 React 力程内物理合理。
+(注: dexforce docstring 已记下, 若力升到 8N 则 8mm 穿透会超出凝胶厚度,
+ 届时需上调 k; 判据是实测穿透分布而非口味。)

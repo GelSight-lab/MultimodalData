@@ -44,13 +44,15 @@ from .marker_removal import stages_depth as reconstruct_marker_gel  # noqa: F401
 # ---------------------------------------------------------------------------
 # Stiffness for the force -> position-target conversion.
 #
-# 1.0 N/mm is the project's declared starting point. It is an ASSUMPTION about
-# the environment, not a measured property of it, which is why it is a named
-# constant exported here and written into the dataset sidecar rather than
-# buried at a call site: anyone reading a target pose must be able to see
-# which stiffness produced it.
+# DERIVED, not declared: `dexforce.STIFFNESS_N_PER_M` is the single source of
+# truth. It is an ASSUMPTION about the environment, not a measured property of
+# it, which is why it is exported as a named constant and written into the
+# dataset sidecar rather than left at a call site — anyone reading a target
+# pose must be able to see which stiffness produced it.
 # ---------------------------------------------------------------------------
-STIFFNESS_N_PER_MM = 1.0
+from .dexforce import STIFFNESS_N_PER_M
+
+STIFFNESS_N_PER_MM = STIFFNESS_N_PER_M / 1000.0
 
 FEATURES = ("vol", "vol2", "maxd", "area", "h1")
 
