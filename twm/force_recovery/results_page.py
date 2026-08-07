@@ -180,6 +180,7 @@ card says so), ATI nano17 ground truth, loads to 3 N, three indenters. We had
 never run the baselines on it. Doing so on the <b>identical frames</b> &mdash;
 same pads, same in-view mask, our physics column reproducing
 &rho;=0.9682 to the digit &mdash; gives an uncomfortable answer.</p>
+<img src="assets/results_sparsh_baselines.png" alt="Sparsh three-way">
 <table><tr><th>reading</th><th>ours (physics)</th><th>FeelAnyForce</th>
 <th>FEATS U-net</th><th>random control</th></tr>
 <tr><td><b>no fitting, newtons read directly</b></td>
@@ -217,6 +218,7 @@ SEC_SPARSH_ZH = r'''<h2>Sparsh：唯一一个训练网络胜过我们的数据�
 ATI nano17 真值，载荷至 3 N，三种压头。我们此前从未在它上面跑过基线。
 在<b>完全相同的帧</b>上补跑——同样的 pad、同样的视野内掩码，我们的物理列复算得
 &rho;=0.9682 与既有工件逐位一致——得到一个不舒服的答案。</p>
+<img src="assets/results_sparsh_baselines.png" alt="Sparsh 三方对比">
 <table><tr><th>口径</th><th>我们（物理）</th><th>FeelAnyForce</th>
 <th>FEATS U-net</th><th>随机对照</th></tr>
 <tr><td><b>无拟合，直接读牛顿</b></td>
@@ -355,6 +357,7 @@ index, we range-extracted the <b>original timestamped images</b> from the
 publisher's split zip (5,202 members, 609 MB of an 82 GB archive, 5202/5202
 CRC-32 verified). The image filename <i>is</i> the timestamp the label CSV
 references, so the join is filename-exact rather than inferred.</p>
+<img src="assets/results_faf.png" alt="FeelAnyForce dataset">
 <table><tr><th>subset</th><th>n</th><th>&rho;</th>
 <th>within-capture shuffle</th><th>MAE</th><th>per-capture &rho; median</th></tr>
 <tr><td><b>14 captures with a contact-free reference</b></td><td>1400</td>
@@ -427,6 +430,7 @@ SEC_FORCE_ZH = r'''<h2>每个数字都配上足以否定它的对照</h2>
 从发布方的分卷 zip 中<b>定向抽取带时间戳的原始图像</b>（5,202 个成员，从 82 GB 的压缩包中
 只下载 609 MB，5202/5202 通过 CRC-32 校验）。图像文件名<i>就是</i>标签 CSV 引用的时间戳，
 所以对齐是"文件名字面相等"而非推断。</p>
+<img src="assets/results_faf.png" alt="FeelAnyForce 数据集">
 <table><tr><th>子集</th><th>n</th><th>&rho;</th>
 <th>capture 内打乱对照</th><th>MAE</th><th>逐 capture &rho; 中位</th></tr>
 <tr><td><b>14 个有无接触参考帧的 capture</b></td><td>1400</td>

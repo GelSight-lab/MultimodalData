@@ -1388,3 +1388,23 @@ Sparsh 的 320x240 **已是 gsdevice 裁过**, 再套 1/7 裁剪 FeelAnyForce 0.
 ### 独立问题(不在本任务范围)
 pushT/2026-06-18/episode_004.h5 **文件损坏**(79GB, h5py 无法打开:
 bad object header version number), 该 episode 本就没有力数据。
+
+## 补上两张缺失的 predicted-vs-GT 散点图(用户指出)
+缺口: 数字上了站但图没跟上 —— results_sparsh.png 画的是**我们自己两版 LUT**
+的对比(GlowTact表 vs 自标定表), 没有任何基线; FeelAnyForce 作为数据集有行有节
+但无散点图。
+新增 twm/force_recovery/baseline_figures.py (+ 一次性导出器):
+- **results_sparsh_baselines.png**: 三方同帧对比 ours 0.968 / FeelAnyForce 0.967
+  (零标注) / FEATS 0.130。FEATS 那条**贴着 0.05N 的水平带**是"卡住"的直接可视化,
+  比任何文字都清楚。
+- **results_faf.png**: tierA(14 个有无接触参考帧的 capture, n=1400) vs
+  tierB(28 个无, n=1120), 让"参考帧决定一切"看得见。
+导出口径与 force_eval_all 完全一致(同帧子集、同逐组半半分+isotonic),
+复算 rho 与站上数字逐位吻合 => 图上一个点就是表里一个点。
+### 过程中修掉的两个自己的 bug
+1. tierA 名单键名猜错(`tierA_captures` 不存在) -> 实为
+   `tierA_zero_ref.per_group_rho` 的键。
+2. **加了 med_* 分支却没删旧的前置检查** `feat = "vol" if "vol" in rr[0]`,
+   导致 28 个 tierB capture 被**静默 continue 掉**(tierB 显示 0 点)。
+   tierB 没有干净参考帧, 其特征列名是 med_*, 旧检查按 vol 判存在性 => 全丢。
+   教训: 加分支时要连带审查它上游的守卫条件。
