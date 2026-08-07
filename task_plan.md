@@ -1182,3 +1182,50 @@ figsize 必须跟随单元格纵横比而非拍脑袋。修正为 17.0 x (17.0/4
 **超过凝胶厚度 4.25mm 的占比 0.0%** => 该刚度在 React 力程内物理合理。
 (注: dexforce docstring 已记下, 若力升到 8N 则 8mm 穿透会超出凝胶厚度,
  届时需上调 k; 判据是实测穿透分布而非口味。)
+
+---
+
+# Ledger: 力列写入 React 数据集 + DexForce 力动作 (k = 1 N/mm)
+
+代码: `twm/force_recovery/export_force_columns.py`
+入口: `python -m twm.force_recovery.export_force_columns export|verify|digest`
+输出: `/media/yxma/Disk1/twm/release_force/<task>/meta/<date>/<episode>.parquet`
+(**平行目录, 原 `release/` 只读**; 每次全量重建, 两次运行 sha256 一致)
+
+## 新列 (每侧 3 列, 共 6 列; 19 -> 25 列)
+| 列 | 类型 | 单位 | 定义 |
+|---|---|---|---|
+| `force_{side}_normal_n` | float32 | N | 逐行法向力, >= 0, 无接触帧恰为 0.0 |
+| `force_{side}_penetration_mm` | float32 | mm | `force / k`, k 为**假设**刚度 |
+| `force_{side}_target_pose` | list\<double\>[7] | m + quat(xyzw) | 观测位姿沿按压方向前推 penetration; 四元数原样复制 |
+
+k 写在三处(不只在代码里): 每列的 parquet field metadata (`twm.stiffness_n_per_mm`)、
+schema metadata `twm.force_export`、同目录 sidecar `<episode>.force.json`
+(外加 run 级 `force_export_manifest.json` / `force_export_verify.json`)。
+k 本身**不在本模块声明**, 而是 import 自 `pipeline.STIFFNESS_N_PER_MM`
+(← `dexforce.STIFFNESS_N_PER_M = 1000 N/m`), 保证数据列与站点图不会各说各话。
+
+## found / evidence / fix / verified
+| found | evidence | fix | verified |
+|---|---|---|---|
+| 任务前提说"87 个 sensor-side"实为 **72** | `force_recovery/**/*.npz` 共 87 个, 其中 15 个是 `feature_cache`(2) / `lut_calibration`(2) / `mnist_validation`(11), 不是 episode 产物。72 = (32 motherboard + 4 pushT) x 2 侧 | 导出以 release 的 36 个 meta parquet 为准, 缺任一侧的 npz 直接 `MissingForceFile` 报错 | 72/72 全部找到, 0 缺失 |
+| 行数对齐可能失配 | npz 逐行数组 vs parquet 行数 | 不等即抛 `RowCountMismatch` 退出, **不截断不补齐** | 对齐通过率 **72/72 = 100%**; 人为把 parquet 切到 500 行, 守卫按预期抛错 |
+| **k = 1 N/mm 的穿透量尾部不物理** | 力 p50/p95/p99/max = 0.0012 / 5.686 / 9.685 / **23.835 N** → 穿透量同数值 (mm)。**7.85% 的行 > 4.25 mm 凝胶厚度**, 72 个 sensor-side 里 **27 个**的 p95 就已越界 | 不静默接受: 按 k 扫描并给出建议区间(见下), 值仍按用户指定的 1.0 导出 | k=1.5 → p95 3.79/max 15.89 mm (3.86% 越界); k=3.0 → 1.90/7.95 (0.31%); **k=5.61 → 1.02/4.26 mm (0% 越界)**; k=15.4 → 0.37/1.55 mm |
+| 1 N/mm 与凝胶实测刚度差一个量级 | 用估计器自己的压入深度作分母: `F / max_depth_mm` (F>0.5 N, n=147071 帧) = p5/p25/p50/p75/p95 **5.3 / 9.9 / 15.4 / 22.9 / 34.7 N/mm** | 记录在 verify 报告与本 ledger | 若把 penetration 读作"真实凝胶压缩", k 应为 ~15 N/mm; 读作阻抗控制器增益则 3-5.6 N/mm 是安全上限。**建议区间 3-6 N/mm(控制器语义) / 10-20 N/mm(物理语义); 1 N/mm 仅在"只用低力段"时成立** |
+| 按压方向不能写死 | 标定得到的 `gel_axis_in_rigid` 左 `[-0.174,-0.932,-0.316]` / 右 `[0.350,-0.925,0.149]` —— 主轴是刚体 -Y, 天真的"工具 z 轴"会偏 **71-108 度** | 逐行 `n_hat = R(q_row) @ gel_axis_in_rigid`(标定 pose-to-pose 一致性 <= 1.07 度), 随传感器旋转 | 纯运动学独立验证(不用标定): 力上升期 `v·n_hat > 0` 的 sensor-side 占 **94.3%**, 释放期 `v·n_hat < 0` 占 **70.0%**, 上升 > 释放占 **92.9%**, `corr(dF, v·n)` 中位 **0.270** 且 **95.7%** 为正 (70/72 侧样本足够) |
+| 无接触帧可能变成 NaN 或非恒等 | 45.73% 的行力恰为 0(每侧 p5/p50/p95 = 3.8/43.0/67.9%) | `force == 0` 的行 target_pose 用**拷贝**而非加 0 浮点运算 | **219518** 无接触行, `max|target - observed| = 0.0e+00` 逐元素相等 → PASS; 四元数全体最大偏差 0.0e+00 |
+| `is_new == False` 重复帧语义不明 | `run_episode` 已把估计前向填充到重复行 | 本导出保留并**断言**该契约(不符即报错) | **344783/344783 = 100.00%** 重复行的力与前一行严格相等。已写入文档的副作用: 力是 ~8 Hz 信号挂在 30 Hz 位姿流上, 重复行 = 新位姿 + 旧力 |
+| 目标位姿与力可能不自洽 | DexForce 往返: `k·‖target − observed‖` 应等于 F | verify 里逐行核对 | 最大误差 **5.77e-14 N** |
+| 原数据可能被就地破坏 / 重跑不幂等 | — | 写 `release_force/` 平行树, 每次从两个只读输入全量重建 | 连续两次 export 的全体 parquet sha256 完全一致 (`8fcb8f03...`); `release/` 的 mtime 未变 |
+
+## 数字速查
+36 episodes / 72 sensor-sides / 240040 行 / 480080 个力样本 / 60 MB。
+每侧力 p50 中位 0.0040 N (0-5.262), p95 中位 3.198 N (0.607-13.010),
+max 中位 6.833 N (1.657-23.835)。帧率 29.9 Hz, is_new 占比 ~0.28。
+
+## 与上一条 ledger("1 N/mm 物理合理, 0.0% 超厚")的冲突 —— 以全量为准
+上一节的判据只取了 **1 个** sensor-side (React episode_000 left, 且只算接触帧),
+那段的力上限 2.30 N, 自然 0% 越界。全量 **72 个 sensor-side / 480080 行**下:
+力 max **23.835 N**, 穿透 **7.85% 的行超过 4.25 mm**, **27/72 侧的 p95 就已越界**。
+教训: "单 episode 判据"会把 k 的合理性说反; 站点上那句 0.0% 只对该 episode 成立,
+需改成全量数字或明确标注取样范围。(本次未改站点文件——用户正在并行整理。)
