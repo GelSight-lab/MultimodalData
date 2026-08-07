@@ -1283,3 +1283,52 @@ README 同步更正。数据仍按声明的 1 N/mm 导出(单一真值源, 改 k
 橙色(r>140 且 r-b>60)像素占比 -> 05-10 1.04% / 05-11 1.18% / 05-19 1.86%,
 三者均远高于 0 => 叠加确实存在。
 教训: "批量跑完"不等于"覆盖完整", 必须清点输入与输出的对应关系。
+
+## Sparsh 上补跑两个基线 (FeelAnyForce / FEATS) —— 补齐结果矩阵最后一行
+
+站点矩阵的 Sparsh 行里另外两列一直写着 "not run — no published predictions"。
+本轮把它跑出来了。**结论先说: FeelAnyForce 在 Sparsh 上赢了我们的物理管线**
+(视野内 rho 0.985 vs 0.968, MAE 0.030 vs 0.042 N; 而且它**零标注**就有
+rho 0.967 / MAE 0.060 N, 我们的 0.042 N 是逐 pad 重新校准换来的)。FEATS 塌成常数。
+
+新增: `twm/force_recovery/sparsh_baselines.py` (取帧/导出/FEATS/评测)、
+`twm/force_recovery/anyforce_sparsh.py` (在 `anyforce` 环境里跑 FeelAnyForce)。
+产物: `feature_cache/{anyforce,feats}_on_sparsh.json` (各 7500 行)、
+`feature_cache/sparsh_baselines{,_allframes}.json`。
+
+### found / evidence / fix / verified
+
+| found | evidence | fix | verified |
+|---|---|---|---|
+| 基线必须跑在**同一批帧**上才可比 | 视野内掩码筛掉 56% 的帧, 且被裁切的接触盘力中位数最高 —— 用不同子集比较等于换数据集 | 帧号不重新采样, 直接从 `feature_cache_sparshlut/sparsh_*.json` 的 `index` 逐条读回, 再套同一个 `eval_circles.json` 掩码 | 物理列复算 = rho 0.9682 / MAE 0.0422 / shuffle 0.264 / n_eval 1667, 与 `force_matrix.json` 逐位一致 |
+| FeelAnyForce 的**预处理选择**能把结论从 -0.2 翻到 +0.985 | sphere_b1 四变体: `full_bg` +0.985 / `crop_bg` +0.976 / `crop_raw` -0.208 / `full_raw` -0.224; 两个 raw 变体输出恒定在 18.4-19.5 N | 采 `full_bg`(不再补裁 1/7 边框, 只做 `clip(im-bg+127)`); 两个 bg 变体全量都跑并存进 json | Sparsh 的 320x240 帧**已经是 gsdevice 裁过的输出**, 再裁一次会丢 1/7 pad; 背景相减是死线, 少了就退化为常数 |
+| FEATS 在无 marker gel 上不是"弱", 是**输出常数** | 预测 IQR 0.002 N vs 真值 IQR 0.341 N (**1%**); 93% 的帧落在自身中位数 ±20% 内; MAE 0.341 N **差于**最优常数预测 0.181 N; 逐 pad 原始 rho 全为负 (-0.05..-0.21) | 三种输入链全跑 (`pre_full`/`pre_crop`/`asis_full`), 取最有利的 `pre_crop` 作主值 | 与它在 GlowTact 上的塌陷同型 (那里 pred 均值 0.156 N, rho 0.041); 域内 FEATS val 则是 0.17-31.6 N 跟着真值走 (rho 0.960) —— 是域效应不是弱模型 |
+| 逐 pad isotonic 会给**近常数输出免费加分** | 同协议下纯噪声列 pooled rho = **0.265**; FEATS 校准后 0.384 —— 只高出 0.12。逐 pad 校准还能把 FEATS 的 -0.099 翻成 +0.261(isotonic 可自选符号 + 大量并列秩) | 主报告值改用**无拟合** rho; 校准值一律与随机对照并列 | 随机列逐 pad 校准后 rho = -0.06..+0.04 (真的是 0), 说明 FEATS 的 +0.2 来自"稳定的负相关被翻了个号", 不是信号 |
+| 我们的管线**依赖视野内过滤**, 基线不依赖 | 全部 7500 帧(含出画面): 我们 0.683, FeelAnyForce 0.897 (raw 0.870); sharp 尤其明显 (我们 0.567 / 它 0.872) | 如实报两套口径 | 这是 Poisson 零边界的老问题, 第五次在外部数据上复现 |
+| 需要多少本传感器标注? | 冻结校准(只在 sphere_b1 拟合, 其余 pad 原样套用): 我们 rho 0.860 / MAE 0.117 N (用了 467 个标注), FeelAnyForce **0 个标注** rho 0.963 / MAE 0.064 N | 把"标注预算"作为一列一起报 | 逐 pad 重校准掩盖了这个差距: 那一栏我们 0.968 看着接近, 冻结后差 0.10 |
+| 首轮取帧 15 min/batch, 机器进 swap | 每 batch 物化 750 个 float64 局部参考 ×2 (crop+full) = 2.8 GB, 加上 float32 帧字典 → RES 5.1 GB, 系统 swap 17 GB | 帧一律留 uint8, 局部参考改为 `local_ref()` 按需算 (uint8 栈取 median 与 float32 栈取 median 数值相同) | 与旧代码逐位一致 (`max|old-new| = 0`, crop_bg/full_bg 各 60 帧), 单 batch decode 1.5 s |
+
+### 三方对比 (Sparsh, 视野内 3328 帧 / 9 块 pad; 协议同站上其他数据集)
+
+| 口径 | Ours (physics) | FeelAnyForce | FEATS U-net | 随机对照 |
+|---|---|---|---|---|
+| 逐 pad 半半分 + isotonic, 5 seeds | **0.968** (MAE 0.042 N) | **0.985** (MAE 0.030 N) | 0.384 (MAE 0.161 N) | 0.265 |
+| 无拟合(直接读模型输出的牛顿) | 不适用(输出是 mm³) | **0.967** (MAE 0.060 N) | 0.086 (MAE 0.341 N) | — |
+| 组内打乱对照(逐 pad) | -0.07..+0.07 | -0.03..+0.07 | -0.03..+0.04 | -0.10..+0.02 |
+
+逐压头(校准后 rho / MAE | 无拟合 rho): sphere 0.973/0.036 · **0.984**/0.028|+0.986 · 0.157/0.165|-0.081;
+flat 0.957/0.044 · **0.979**/0.032|+0.981 · 0.089/0.147|-0.134;
+sharp 0.619/0.116 · **0.878**/0.077|+0.900 · 0.197/0.141|-0.016。
+**sharp 是我们最弱的一栏(0.619), 也正是 FeelAnyForce 领先最多的一栏(+0.26)。**
+sharp_batch_1 视野内帧为 0 (679/750 根本测不到接触盘), 全数据集口径下才进得来。
+
+### 站点这一行建议怎么写
+
+把 "not run" 换成三个真数字, 并且**不要只写校准后那一栏** —— 只写 0.985 vs 0.968
+会显得两者接近, 而真实差距在"要多少标注": 建议主表写无拟合口径
+(FeelAnyForce 0.97 / FEATS 0.09), 脚注给逐 pad 校准后的 0.985 / 0.384 与随机对照 0.265。
+一句话版本: **"在 Sparsh 上 FeelAnyForce 零标注就打平并略胜我们逐 pad 标定后的结果, 这是矩阵里
+唯一一个预训练网络赢过物理管线的格子 —— 因为 Sparsh 正落在它的域内(无 marker GelSight Mini,
+0-3 N); FEATS 则在同一批帧上塌成 0.073 N 的常数。"** 另外把 "each network collapses outside
+its own domain" 的说法收紧: FEATS 成立, FeelAnyForce 不成立 —— 它在三个无 marker 数据集上
+分别是 0.83 / 0.90 / 0.97, 只在 marker gel 上掉到 0.43。
