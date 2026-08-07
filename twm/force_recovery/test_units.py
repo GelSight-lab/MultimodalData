@@ -103,6 +103,27 @@ def test_stages_depth_matches_marker_study_img_telea():
     assert np.array_equal(a, b), float(np.abs(a - b).max())
 
 
+def test_force_dot_area_is_linear_in_force():
+    """The dot's AREA must track force; a radius-proportional dot would
+    exaggerate large forces quadratically to the eye."""
+    import numpy as np
+    from twm.force_overlay import radius_px, F_FULL_N, R_MIN_PX, R_MAX_PX
+    span = (R_MAX_PX - R_MIN_PX) ** 2
+    for f in np.linspace(0.05, F_FULL_N, 25):
+        area = (radius_px(f) - R_MIN_PX) ** 2 / span
+        assert abs(area - f / F_FULL_N) < 1e-9, f
+    assert radius_px(10 * F_FULL_N) <= R_MAX_PX      # saturates, stays in tile
+
+
+def test_force_row_mapping_uses_parquet_trim():
+    """Off-by-15 here would put the dot half a second from its own frame."""
+    from twm.force_overlay import row_for_h5_frame
+    assert row_for_h5_frame(16, 1, 100) == 0
+    assert row_for_h5_frame(15, 1, 100) is None      # before the first row
+    assert row_for_h5_frame(115, 1, 100) == 99
+    assert row_for_h5_frame(116, 1, 100) is None     # past the last row
+
+
 if __name__ == "__main__":
     for name, fn in sorted(globals().items()):
         if name.startswith("test_"):

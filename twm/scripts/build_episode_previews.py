@@ -105,6 +105,25 @@ def _load_proj_calibs():
         return [], None, None
 
 
+from twm.force_overlay import (draw_force_dot, draw_legend,
+                               load_forces, row_for_h5_frame)
+
+FORCE_ROOT = Path("/media/yxma/Disk1/twm/force_recovery")
+
+
+def _parquet_trim_and_rows(task, date, ep):
+    """Force rows are indexed by the RELEASE parquet, not by the .pt trim the
+    preview uses elsewhere — see force_overlay for why mixing them shifts the
+    dot ~15 frames."""
+    import pyarrow.parquet as pq
+    f = Path("/media/yxma/Disk1/twm/release")/task/"meta"/date/f"{ep}.parquet"
+    if not f.exists():
+        return None, 0
+    t = pq.read_table(str(f), columns=["source_h5_frame"])
+    import numpy as _np
+    return int(_np.asarray(t["source_h5_frame"].to_numpy())[0]), t.num_rows
+
+
 def _get_trim_offset(h5_path: Path) -> int:
     """Read trim_offset from the matching processed/episodes/.pt's _contact_meta.
     Falls back to 0 if the .pt isn't built yet."""
@@ -145,6 +164,12 @@ def build_one_preview(h5_path: Path, out_mp4: Path,
         gs_ref_L = f["gelsight/left/frames"][ref_idx]
         gs_ref_R = f["gelsight/right/frames"][ref_idx]
 
+        task_name = h5_path.parent.parent.name
+        date_name = h5_path.parent.name
+        forces = load_forces(task_name, date_name, h5_path.stem, FORCE_ROOT)
+        trim_pq, n_rows = _parquet_trim_and_rows(task_name, date_name,
+                                                 h5_path.stem)
+
         panels = []
         for f_idx_int in sample_idx:
             f_idx_int = int(f_idx_int)
@@ -183,6 +208,14 @@ def build_one_preview(h5_path: Path, out_mp4: Path,
                     )
                 except Exception:
                     pass
+
+            if forces and trim_pq is not None:
+                row = row_for_h5_frame(f_idx_int, trim_pq, n_rows)
+                if row is not None:
+                    for side, arr in forces.items():
+                        if row < len(arr):
+                            draw_force_dot(panel, side, float(arr[row]))
+                    draw_legend(panel, 4 * 240 + 24, 240 + 110)
 
             panels.append(panel)
 
