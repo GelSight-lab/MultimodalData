@@ -173,6 +173,75 @@ def _load_json_pred_cnc_feats():
 CSS = (Path(__file__).parent / "method_page.py").read_text().split('CSS = """')[1].split('"""')[0]
 
 
+SEC_SPARSH_EN = r'''<h2>Sparsh: the one dataset where a trained network beats us</h2>
+<div class="card">
+<p style="margin-top:0">Sparsh is GelSight Mini without markers (the dataset
+card says so), ATI nano17 ground truth, loads to 3 N, three indenters. We had
+never run the baselines on it. Doing so on the <b>identical frames</b> &mdash;
+same pads, same in-view mask, our physics column reproducing
+&rho;=0.9682 to the digit &mdash; gives an uncomfortable answer.</p>
+<table><tr><th>reading</th><th>ours (physics)</th><th>FeelAnyForce</th>
+<th>FEATS U-net</th><th>random control</th></tr>
+<tr><td><b>no fitting, newtons read directly</b></td>
+<td>n/a &mdash; our output is mm&sup3;</td>
+<td class="best"><b>0.967</b> (MAE 0.060 N)</td>
+<td class="dead">0.086</td><td>&mdash;</td></tr>
+<tr><td>per-pad half/half + isotonic</td><td>0.968 (0.042 N)</td>
+<td class="best"><b>0.985</b> (0.030 N)</td>
+<td class="dead">0.384</td><td>0.265</td></tr></table>
+<p class="footnote">The headline is the <i>unfitted</i> row: both baselines are
+pretrained models that emit newtons and Sparsh's labels are newtons, so
+&ldquo;reads force directly&rdquo; and &ldquo;correlates once re-calibrated per
+pad&rdquo; are different claims. <b>FeelAnyForce wins outright</b>: 0.967 with
+<b>zero labels</b> against our 0.860 when we freeze the calibration to one pad
+(467 labels). Per-pad re-calibration hides that gap. It also needs no in-view
+filter &mdash; over all 7500 frames including clipped contacts it holds 0.897
+where we fall to 0.683. On the sharp indenter, our weakest case, it is 0.878
+against our 0.619.</p>
+<p class="footnote"><b>FEATS's 0.384 is not signal.</b> A pure-noise column
+scores 0.265 under the same protocol, and isotonic can flip its per-pad
+&minus;0.099 to +0.261 by choosing a sign. Its predictions have an
+interquartile range of <b>0.002 N against the truth's 0.341 N</b> &mdash; 93%
+of frames sit within 20% of its own median, and its MAE (0.341 N) is
+<i>worse</i> than predicting a constant (0.181 N). It is stuck, not wrong.</p>
+<p class="footnote">Two preprocessing facts that flip the result, recorded so
+nobody re-derives them: Sparsh's 320&times;240 frames are <b>already</b>
+gsdevice-cropped, so applying our 1/7 border crop again costs FeelAnyForce
+0.985&rarr;0.976; and background subtraction is load-bearing &mdash; without
+it the model pins at 18.4&ndash;19.5 N and &rho; goes <b>negative</b>.</p>
+</div>'''
+
+SEC_SPARSH_ZH = r'''<h2>Sparsh：唯一一个训练网络胜过我们的数据集</h2>
+<div class="card">
+<p style="margin-top:0">Sparsh 用的是无 marker 的 GelSight Mini（数据集卡原文如此），
+ATI nano17 真值，载荷至 3 N，三种压头。我们此前从未在它上面跑过基线。
+在<b>完全相同的帧</b>上补跑——同样的 pad、同样的视野内掩码，我们的物理列复算得
+&rho;=0.9682 与既有工件逐位一致——得到一个不舒服的答案。</p>
+<table><tr><th>口径</th><th>我们（物理）</th><th>FeelAnyForce</th>
+<th>FEATS U-net</th><th>随机对照</th></tr>
+<tr><td><b>无拟合，直接读牛顿</b></td>
+<td>不适用——我们的输出是 mm&sup3;</td>
+<td class="best"><b>0.967</b>（MAE 0.060 N）</td>
+<td class="dead">0.086</td><td>&mdash;</td></tr>
+<tr><td>逐 pad 半半分 + isotonic</td><td>0.968（0.042 N）</td>
+<td class="best"><b>0.985</b>（0.030 N）</td>
+<td class="dead">0.384</td><td>0.265</td></tr></table>
+<p class="footnote">头条应取<i>无拟合</i>那一行：两个基线都是直接输出牛顿的预训练模型，
+而 Sparsh 的标签也是牛顿，所以&ldquo;能直接读出力&rdquo;与&ldquo;逐 pad 重新校准后才相关&rdquo;
+是两个不同的主张。<b>FeelAnyForce 完胜</b>：<b>零标注</b>下 0.967，而我们把校准冻结到
+单块 pad（467 个标注）时只有 0.860。逐 pad 重校准掩盖了这个差距。它也不需要视野内过滤——
+在全部 7500 帧（含出画面的接触）上它保持 0.897，而我们掉到 0.683。
+在我们最弱的 sharp 压头上，它 0.878 对我们 0.619。</p>
+<p class="footnote"><b>FEATS 的 0.384 不是信号。</b>同协议下纯噪声列得 0.265，
+而 isotonic 可以通过选符号把它逐 pad 的 &minus;0.099 翻成 +0.261。它的预测四分位距是
+<b>0.002 N，而真值是 0.341 N</b>——93% 的帧落在它自己中位数的 ±20% 内，
+其 MAE（0.341 N）<i>差于</i>直接预测一个常数（0.181 N）。它是卡住了，不是算错了。</p>
+<p class="footnote">两个会翻转结论的预处理事实，记录在此以免重复推导：Sparsh 的
+320&times;240 帧<b>已经</b>是 gsdevice 裁过的，再套一次我们的 1/7 边框裁剪会让
+FeelAnyForce 从 0.985 掉到 0.976；背景相减是死线——不减背景时模型钉在
+18.4&ndash;19.5 N，&rho; 变<b>负</b>。</p>
+</div>'''
+
 SEC_EXPORT_EN = r'''<h2>Force as an observation, and a force-informed action</h2>
 <div class="card">
 <p style="margin-top:0">The estimated normal force is written back into the
@@ -631,12 +700,17 @@ each row, and differences between panels are differences between methods.</p>
 <td class="dead">@@N_GLOW@@</td><td class="best">@@A_GLOW@@</td></tr>
 <tr><td>Sparsh / Meta (markerless, 10 gel pads)</td>
 <td>@@O_SPARSH@@ (in view, self-calibrated table)</td>
-<td colspan="2">not run &mdash; no published predictions</td></tr>
+<td class="dead">0.09</td><td class="best">0.97</td></tr>
 </table>
-<p>The pattern is the finding: <b>each network dominates its own gel domain and
-collapses outside it</b> (FEATS 0.96 → 0.04–0.07; FeelAnyForce 0.90 → 0.43),
-while <b>the physics pipeline is the only estimator that works everywhere</b>
-(@@RANGE@@) — it never sees training data, so it has no domain to leave.</p>
+<p>The pattern is narrower than we first wrote it. <b>FEATS collapses outside
+its own gel domain</b> (0.96 → 0.04–0.07), and the physics pipeline does work on
+every dataset here (@@RANGE@@) without ever seeing training data. But
+<b>FeelAnyForce does not collapse</b>: it holds 0.83 / 0.90 / 0.97 across the
+three markerless sets and only drops to 0.43 on the marker gel — and on Sparsh
+it <b>beats us outright</b>, 0.967 with zero labels against our 0.860 when our
+calibration is frozen to one pad. The honest claim is that the physics pipeline
+is the only estimator that needs <i>no</i> training data, not that it is the
+only one that transfers.</p>
 </div>
 
 @@SEC_FORCE@@
@@ -702,6 +776,7 @@ paired within each trajectory), sharp/batch_2 is stored BGR while the other
 nine are RGB, and flat/batch_2 ships only 3 of 4 image files.</p></div>
 
 @@SEC_GT@@
+@@SEC_SPARSH@@
 @@SEC_EXPORT@@
 
 <h2>React — no ground truth, so: do independent methods agree?</h2>
@@ -770,14 +845,22 @@ each row, and differences between panels are differences between methods.</p>"""
      "<td>FoTa cnc_Mini(无点)</td>"),
     ("(in view)</td>", "(视野内)</td>"),
     ("<td>GlowTact (markerless)</td>", "<td>GlowTact(无点)</td>"),
-    ("""<p>The pattern is the finding: <b>each network dominates its own gel domain and
-collapses outside it</b> (FEATS 0.96 → 0.04–0.07; FeelAnyForce 0.90 → 0.43),
-while <b>the physics pipeline is the only estimator that works everywhere</b>
-(@@RANGE@@) — it never sees training data, so it has no domain to leave.</p>""",
-     """<p>规律本身就是发现:<b>每个网络只统治自己的 gel 域,出域即塌</b>
-(FEATS 0.96 → 0.04–0.07;FeelAnyForce 0.90 → 0.43);
-而<b>物理管线是唯一在所有域都工作的估计器</b>(@@RANGE@@)——
-它没见过训练数据,所以也没有可以离开的域。</p>"""),
+    ("""<p>The pattern is narrower than we first wrote it. <b>FEATS collapses outside
+its own gel domain</b> (0.96 → 0.04–0.07), and the physics pipeline does work on
+every dataset here (@@RANGE@@) without ever seeing training data. But
+<b>FeelAnyForce does not collapse</b>: it holds 0.83 / 0.90 / 0.97 across the
+three markerless sets and only drops to 0.43 on the marker gel — and on Sparsh
+it <b>beats us outright</b>, 0.967 with zero labels against our 0.860 when our
+calibration is frozen to one pad. The honest claim is that the physics pipeline
+is the only estimator that needs <i>no</i> training data, not that it is the
+only one that transfers.</p>""",
+     """<p>这个规律比我们最初写的要窄。<b>FEATS 确实出域即塌</b>
+（0.96 → 0.04–0.07），物理管线也确实在此处每个数据集上都能工作
+（@@RANGE@@）且从未见过训练数据。但 <b>FeelAnyForce 并没有崩塌</b>：
+它在三个无 marker 数据集上保持 0.83 / 0.90 / 0.97，只在 marker gel 上降到 0.43；
+而在 Sparsh 上它<b>直接胜过我们</b>——零标注 0.967，而我们把标定冻结到单块 pad
+时为 0.860。诚实的表述是：物理管线是唯一<i>不需要</i>训练数据的估计器，
+而不是唯一能跨域的。</p>"""),
     ("<h2>FEATS dataset — marker-dot gel</h2>", "<h2>FEATS 数据集——有点 gel</h2>"),
     ("""<p class="footnote">In-domain, the FEATS U-net is excellent (ρ=0.96) — the
 negative results elsewhere are domain effects, not a weak model. FeelAnyForce,
@@ -889,7 +972,8 @@ def build_pages() -> tuple[Path, Path]:
             .replace("@@SEC_MARKER@@", SEC_MARKER_EN)
             .replace("@@SEC_SCOPE@@", SEC_SCOPE_EN)
             .replace("@@SEC_GT@@", SEC_GT_EN)
-            .replace("@@SEC_EXPORT@@", SEC_EXPORT_EN))
+            .replace("@@SEC_EXPORT@@", SEC_EXPORT_EN)
+            .replace("@@SEC_SPARSH@@", SEC_SPARSH_EN))
     # The new sections are single-sourced: EN goes in by token above and the
     # ZH pair below matches the same constant by construction, so a long
     # block cannot silently drift between the two languages.
@@ -898,11 +982,12 @@ def build_pages() -> tuple[Path, Path]:
                      (SEC_SCOPE_EN, SEC_SCOPE_ZH),
                      (SEC_GT_EN, SEC_GT_ZH),
                      (SEC_EXPORT_EN, SEC_EXPORT_ZH),
+                     (SEC_SPARSH_EN, SEC_SPARSH_ZH),
                      ('<a class="pill" href="recon_workbench.html">3D workbench</a>',
                       '<a class="pill" href="recon_workbench.html">3D 工作台</a>'),
                      ('<tr><td>Sparsh / Meta (markerless, 10 gel pads)</td>\n'
                       '<td>@@O_SPARSH@@ (in view, self-calibrated table)</td>\n'
-                      '<td colspan="2">not run &mdash; no published predictions</td></tr>',
+                      '<td class="dead">0.09</td><td class="best">0.97</td></tr>',
                       '<tr><td>Sparsh / Meta(无点,10 块 gel pad)</td>\n'
                       '<td>@@O_SPARSH@@(视野内,自标定查找表)</td>\n'
                       '<td colspan="2">未运行 &mdash; 没有公开的预测结果</td></tr>')]
