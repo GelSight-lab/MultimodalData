@@ -103,11 +103,21 @@ levels off-dot, so the valid mask covers nearly the whole frame.
 | `force_{side}_penetration_mm` | `F / k` |
 | `force_{side}_target_pose` | observed pose pushed `F/k` along the contact normal |
 
-`k = 1.0 N/mm` is exported as `STIFFNESS_N_PER_MM` **and written into a
-sidecar next to the data** — it is an assumption about the environment, not a
-measured property, so a reader of a target pose must be able to see which
-stiffness produced it. Free space is exactly identity: `F = 0 → target ==
-observed`, asserted in `test_units.py`.
+`k = 1.0 N/mm` has a **single definition** (`dexforce.STIFFNESS_N_PER_M`;
+`pipeline.STIFFNESS_N_PER_MM` derives from it) and is written into the parquet
+field metadata plus a sidecar beside the data — it is an assumption about the
+environment, not a measured property, so a reader of a target pose must be
+able to see which stiffness produced it. Free space is exactly identity:
+`F = 0 → target == observed` element-wise (219,518 rows verified), asserted in
+`test_units.py`; the round trip `k·‖target−observed‖ = F` closes to 5.8e-14 N.
+
+**1 N/mm is too soft for the full dataset.** Over all 480,080 samples the
+penetration `F/k` has p95 = 5.69 mm and 7.85% of rows exceed the 4.25 mm gel
+thickness. Reading penetration as a virtual impedance offset, 3–6 N/mm keeps
+the target inside the gel; reading it as real gel compression, the estimator's
+own `F / max_depth` gives a median of 15.4 N/mm. 1 N/mm holds only below ~4 N.
+The data ships at the declared 1 N/mm; changing it is one constant and a
+re-run.
 
 ## Running it
 

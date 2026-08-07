@@ -173,6 +173,87 @@ def _load_json_pred_cnc_feats():
 CSS = (Path(__file__).parent / "method_page.py").read_text().split('CSS = """')[1].split('"""')[0]
 
 
+SEC_EXPORT_EN = r'''<h2>Force as an observation, and a force-informed action</h2>
+<div class="card">
+<p style="margin-top:0">The estimated normal force is written back into the
+dataset together with the action it implies: 36 episodes, 72 sensor-sides,
+240,040 rows, 480,080 force samples. Row-count alignment verified 72/72, and a
+deliberately truncated file raises instead of silently truncating.</p>
+<table><tr><th>new column</th><th>meaning</th></tr>
+<tr><td><code>force_{side}_normal_n</code></td><td>estimated normal force [N]</td></tr>
+<tr><td><code>force_{side}_penetration_mm</code></td><td><i>F / k</i></td></tr>
+<tr><td><code>force_{side}_target_pose</code></td><td>observed pose pushed
+<i>F/k</i> along the contact normal (position + quaternion carried through)</td></tr></table>
+<p class="footnote">The pressing direction is <b>not</b> a coordinate axis: it
+comes from the rig's dual-ball calibration (pose-to-pose consistency
+&le;1.07&deg;), and guessing &ldquo;the tool z axis&rdquo; would be
+71&ndash;108&deg; wrong. Verified independently of that calibration using
+kinematics alone: during force rise <i>v&middot;n&#770;&gt;0</i> on
+<b>94.3%</b> of sensor-sides, and corr(&Delta;F, <i>v&middot;n&#770;</i>) is
+positive on <b>95.7%</b>. Free space is exact identity &mdash; 219,518
+no-contact rows have <code>max|target &minus; observed| = 0</code>
+element-wise, and the round trip
+<i>k&middot;&#8214;target&minus;observed&#8214; = F</i> closes to 5.8e-14 N.
+Re-running the export reproduces byte-identical files.</p>
+<h3 style="margin-bottom:6px">1 N/mm is the declared starting point &mdash; and
+the full data says it is too soft</h3>
+<p class="footnote" style="margin-top:0">Stiffness is an <b>assumption about
+the environment</b>, not a measured property, so it is exported into the
+parquet field metadata and a sidecar beside the data rather than living only
+in code. Across all 480,080 samples it does not hold:</p>
+<table><tr><th>k [N/mm]</th><th>p95 penetration</th><th>max</th>
+<th>past the 4.25 mm gel</th></tr>
+<tr><td><b>1.0 (as shipped)</b></td><td><b>5.69 mm</b></td><td>23.8 mm</td>
+<td><b>7.85%</b></td></tr>
+<tr><td>1.5</td><td>3.79 mm</td><td>15.9 mm</td><td>3.86%</td></tr>
+<tr><td>3.0</td><td>1.90 mm</td><td>7.9 mm</td><td>0.31%</td></tr>
+<tr><td>5.6</td><td>1.02 mm</td><td>4.26 mm</td><td>0.00%</td></tr></table>
+<p class="footnote">Read as a virtual impedance offset, <b>3&ndash;6 N/mm</b>
+keeps the commanded target inside the gel; read as real gel compression, the
+estimator's own <i>F / max depth</i> gives a median of <b>15.4 N/mm</b>
+(p5&ndash;p95 5.3&ndash;34.7). 1 N/mm is defensible only below about 4 N. An
+earlier version of this page inferred &ldquo;0% past the gel&rdquo; from a
+single sensor-side whose forces peaked at 2.3 N; the full-dataset number
+retired that claim.</p>
+</div>'''
+
+SEC_EXPORT_ZH = r'''<h2>力作为 observation，以及由它导出的 action</h2>
+<div class="card">
+<p style="margin-top:0">估计出的法向力被写回数据集，连同它蕴含的动作：36 个 episode、
+72 个 sensor-side、240,040 行、480,080 个力样本。行数对齐 72/72 全部通过，
+人为截断的文件会报错退出而不是静默截断。</p>
+<table><tr><th>新增列</th><th>含义</th></tr>
+<tr><td><code>force_{side}_normal_n</code></td><td>估计法向力 [N]</td></tr>
+<tr><td><code>force_{side}_penetration_mm</code></td><td><i>F / k</i></td></tr>
+<tr><td><code>force_{side}_target_pose</code></td><td>观测位姿沿接触法向推进
+<i>F/k</i>（位置 + 四元数一并带出）</td></tr></table>
+<p class="footnote">按压方向<b>不是</b>某个坐标轴：它来自装置的双球标定
+（位姿间一致性 &le;1.07&deg;），若天真地猜&ldquo;工具 z 轴&rdquo;会偏
+71&ndash;108&deg;。并且用<b>纯运动学</b>独立验证过（不依赖该标定）：力上升期
+<i>v&middot;n&#770;&gt;0</i> 的 sensor-side 占 <b>94.3%</b>，
+corr(&Delta;F, <i>v&middot;n&#770;</i>) 为正的占 <b>95.7%</b>。
+自由空间是严格恒等——219,518 个无接触行的
+<code>max|target &minus; observed| = 0</code> 逐元素成立，往返
+<i>k&middot;&#8214;target&minus;observed&#8214; = F</i> 闭合到 5.8e-14 N。
+重跑导出可得逐字节相同的文件。</p>
+<h3 style="margin-bottom:6px">1 N/mm 是声明的起点——而全量数据说它偏软</h3>
+<p class="footnote" style="margin-top:0">刚度是<b>关于环境的假设</b>而非实测属性，
+所以它被写进 parquet 字段元数据和数据旁的 sidecar，而不是只存在代码里。
+在全部 480,080 个样本上实测，它不成立：</p>
+<table><tr><th>k [N/mm]</th><th>p95 穿透</th><th>最大</th>
+<th>超过 4.25 mm 凝胶</th></tr>
+<tr><td><b>1.0（当前导出）</b></td><td><b>5.69 mm</b></td><td>23.8 mm</td>
+<td><b>7.85%</b></td></tr>
+<tr><td>1.5</td><td>3.79 mm</td><td>15.9 mm</td><td>3.86%</td></tr>
+<tr><td>3.0</td><td>1.90 mm</td><td>7.9 mm</td><td>0.31%</td></tr>
+<tr><td>5.6</td><td>1.02 mm</td><td>4.26 mm</td><td>0.00%</td></tr></table>
+<p class="footnote">若把穿透读作虚拟阻抗偏移，<b>3&ndash;6 N/mm</b> 能让指令目标
+留在凝胶内；若读作真实凝胶压缩，估计器自己的 <i>F / 最大压深</i> 给出中位
+<b>15.4 N/mm</b>（p5&ndash;p95 为 5.3&ndash;34.7）。1 N/mm 只在约 4 N 以下站得住。
+本页早前版本曾据<b>单个</b> sensor-side（力上限仅 2.3 N）推断&ldquo;0% 超出凝胶&rdquo;，
+全量数字已使该说法作废。</p>
+</div>'''
+
 SEC_FORCE_EN = r'''<h2>Every number beside the control that could have killed it</h2>
 <div class="card">
 <p style="margin-top:0">Re-run end to end after marker inpainting was added to
@@ -621,6 +702,7 @@ paired within each trajectory), sharp/batch_2 is stored BGR while the other
 nine are RGB, and flat/batch_2 ships only 3 of 4 image files.</p></div>
 
 @@SEC_GT@@
+@@SEC_EXPORT@@
 
 <h2>React — no ground truth, so: do independent methods agree?</h2>
 <div class="card"><img src="assets/results_react.png" alt="React agreement">
@@ -806,7 +888,8 @@ def build_pages() -> tuple[Path, Path]:
             .replace("@@SEC_FORCE@@", SEC_FORCE_EN)
             .replace("@@SEC_MARKER@@", SEC_MARKER_EN)
             .replace("@@SEC_SCOPE@@", SEC_SCOPE_EN)
-            .replace("@@SEC_GT@@", SEC_GT_EN))
+            .replace("@@SEC_GT@@", SEC_GT_EN)
+            .replace("@@SEC_EXPORT@@", SEC_EXPORT_EN))
     # The new sections are single-sourced: EN goes in by token above and the
     # ZH pair below matches the same constant by construction, so a long
     # block cannot silently drift between the two languages.
@@ -814,6 +897,7 @@ def build_pages() -> tuple[Path, Path]:
                      (SEC_MARKER_EN, SEC_MARKER_ZH),
                      (SEC_SCOPE_EN, SEC_SCOPE_ZH),
                      (SEC_GT_EN, SEC_GT_ZH),
+                     (SEC_EXPORT_EN, SEC_EXPORT_ZH),
                      ('<a class="pill" href="recon_workbench.html">3D workbench</a>',
                       '<a class="pill" href="recon_workbench.html">3D 工作台</a>'),
                      ('<tr><td>Sparsh / Meta (markerless, 10 gel pads)</td>\n'
