@@ -103,8 +103,19 @@ class SphereGeometry:
     fit_r2: float
 
 
-def fit_sphere_geometry(ref, rows, margin: float = 18.0) -> tuple[SphereGeometry, list[dict]]:
-    """Regress a_mm^2 = 2 R (z - z0) over interior, clean-circle presses."""
+def fit_sphere_geometry(ref, rows, margin: float = 18.0,
+                        z0_bounds: tuple[float, float] = (-2.0, 2.0)
+                        ) -> tuple[SphereGeometry, list[dict]]:
+    """Regress a_mm^2 = 2 R (z - z0) over interior, clean-circle presses.
+
+    `z0_bounds` brackets the depth datum. The default +/-2 mm is right for
+    the commercial GelSight subset, whose commanded z already starts near
+    contact (fit: z0 = 0.81 mm). It is NOT a property of the method: on
+    GlowTact's self-made pad the same protocol logs z from a datum ~3.3 mm
+    lower, and leaving the bound at 2 pins the solver on the boundary and
+    returns R^2 = 0 with an empty LUT. Callers on a new sensor must widen it
+    and check that the solution is interior to the bracket.
+    """
     from PIL import Image
 
     fits = []
@@ -131,12 +142,17 @@ def fit_sphere_geometry(ref, rows, margin: float = 18.0) -> tuple[SphereGeometry
         d = np.clip(zz - z0, 1e-3, R)
         return d * (2 * R - d)
 
-    sol = least_squares(lambda pr: a2 - model(pr, z), x0=[3.0, 0.0],
-                        bounds=([0.5, -2], [15, 2]))
+    # start z0 at the middle of its bracket (0.0 for the shipped +/-2 default,
+    # so this is bit-identical there). It matters: `model` clips d at R, so a
+    # start where every press is already past the equator has zero gradient in
+    # z0 and least_squares returns the starting point unchanged.
+    lo, hi = z0_bounds
+    sol = least_squares(lambda pr: a2 - model(pr, z), x0=[3.0, 0.5 * (lo + hi)],
+                        bounds=([0.5, lo], [15, hi]))
     resid = a2 - model(sol.x, z)
     keep = np.abs(resid) < 3 * np.std(resid)
     sol = least_squares(lambda pr: a2[keep] - model(pr, z[keep]), x0=sol.x,
-                        bounds=([0.5, -2], [15, 2]))
+                        bounds=([0.5, lo], [15, hi]))
     pred = model(sol.x, z[keep])
     r2 = 1 - np.sum((a2[keep] - pred) ** 2) / np.sum(
         (a2[keep] - a2[keep].mean()) ** 2)
