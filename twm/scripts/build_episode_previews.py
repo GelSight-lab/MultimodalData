@@ -106,6 +106,7 @@ def _load_proj_calibs():
         return [], None, None
 
 
+from twm.tactile_align import describe as gel_describe, gel_lag_frames
 from twm.force_overlay import (draw_force_dot, draw_legend,
                                load_forces, row_for_h5_frame)
 
@@ -161,9 +162,12 @@ def build_one_preview(h5_path: Path, out_mp4: Path,
         _apply_world_offset(ot_lookup, dx, dy, dz)
 
         # Use the first sampled frame's gelsight as the static diff reference
+        gel_lag = gel_lag_frames(f)
+        n_gel = len(f["gelsight/left/frames"])
+        gel_at = lambda i: min(int(i) + gel_lag, n_gel - 1)  # noqa: E731
         ref_idx = int(sample_idx[0])
-        gs_ref_L = f["gelsight/left/frames"][ref_idx]
-        gs_ref_R = f["gelsight/right/frames"][ref_idx]
+        gs_ref_L = f["gelsight/left/frames"][gel_at(ref_idx)]
+        gs_ref_R = f["gelsight/right/frames"][gel_at(ref_idx)]
 
         task_name = h5_path.parent.parent.name
         date_name = h5_path.parent.name
@@ -178,8 +182,8 @@ def build_one_preview(h5_path: Path, out_mp4: Path,
                 f[f"realsense/cam{cam_idx}/color"][f_idx_int]
                 for cam_idx in range(3)
             ]
-            gs_L = f["gelsight/left/frames"][f_idx_int]
-            gs_R = f["gelsight/right/frames"][f_idx_int]
+            gs_L = f["gelsight/left/frames"][gel_at(f_idx_int)]
+            gs_R = f["gelsight/right/frames"][gel_at(f_idx_int)]
 
             opt_poses = optitrack_at(ot_lookup, float(cam_ts[f_idx_int]))
 
@@ -195,7 +199,8 @@ def build_one_preview(h5_path: Path, out_mp4: Path,
                 task_name=task_name,
                 status_override=(
                     f"[{task_name}] {h5_path.parent.name}/{h5_path.stem}  "
-                    f"H5 frame {f_idx_int}/{T_h5}  "
+                    + (f"gel+{gel_lag}f  " if gel_lag else "")
+                    + f"H5 frame {f_idx_int}/{T_h5}  "
                     f"({float(cam_ts[f_idx_int] - cam_ts[0]):.1f}s)"
                 ),
             )

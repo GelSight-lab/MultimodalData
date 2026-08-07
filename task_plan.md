@@ -1422,3 +1422,32 @@ index 页的 depth_validation_panel.png 只有 raw / |dI| / **matplotlib 热力�
    同一改动自动惠及所有 mesh 产物: 面板 3 张 + 图库 20 张 + 视频 10 段 + 工作台 20 张。
 ### 复核
 布局门 0 违规; 图库 cnc_00 圆形压痕现为饱满穹顶; 站点已发布。
+
+## 用 systematic-debugging 重处理管线 (用户要求)
+### Phase 1 根因: 不是"忘了加 15", 而是**同一事实住在调用方**
+清点发现该延迟在仓库里有 4 份独立实现、3 个不同取值:
+| 位置 | 值 |
+|---|---|
+| run_episode.LEGACY_SHIFT | 15 |
+| build_latency_correction_clips.SHIFT | 15(副本) |
+| play_react_pt --tactile_latency | **3**(矛盾) |
+| latency_align_viewer --latency | **0**(第四个值) |
+| **预览生成器** | **未施加** -> 已发布的 40 个片段触觉超前 0.5s |
+### 找到权威依据(不是我们定的)
+yxma/React `tasks.json` 自带 `tactile_latency`:
+frames_estimate 15 @30fps=0.5s; applies_to "<=2026-06-18"; fixed_in_rig 2026-06-27;
+cause "V4L2 buffer never flushed"; method "tactile shifted +15 so tactile[i] aligns
+with view[i]"; **status CORRECTED_IN_DATA(发布数据已烘焙, 但原始 H5 没有)**。
+### Phase 4 修复
+- 新建 `twm/tactile_align.py` 为**唯一定义**, 并把上述数据集契约写进注释;
+  `gel_lag_frames()` **逐文件检测**(有无逐传感器时间戳)——对已对齐录制施加常数
+  是同等严重的反向错误。4 处调用方全部改为导入。
+- 新建 `twm/pipeline_guard.py`, 4 条不变量(每条都对应真实发生过的缺陷):
+  单一延迟定义 / 禁止裸索引触觉帧 / 力路径不得混入装饰步骤 / 单一刚度。
+- 单测锁住数据集契约(15 / 2026-06-27)与逐文件检测(timestamped 必须得 0)。
+- `twm/PIPELINE_WORKFLOW.md`: 六步流程 + "验证习惯"一节(每条来自真实翻车)。
+### 守卫自身被修了两次 —— 假阳性会训练人忽略它
+1. 力路径检查最初按"函数名是否出现"判定, 误报了站上作为**被否决对照**报告的
+   inpaint 分支(0.737)。改为 AST 判定"是否在条件分支内"。
+2. 裸索引检查最初只看有无中括号, 误报 4 行**已经写了 `gel_at(i)`** 的正确代码。
+   改为检查**索引表达式**内容。违规数 20 -> 1 -> 0。

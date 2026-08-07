@@ -39,7 +39,7 @@ TASK_CFG = {
 WORLD_OFFSET = {("motherboard", "2026-05-19"): (0.23, 0.0, 0.175)}
 FPS = 30
 LEN = 600          # 20 s
-SHIFT = 15
+from twm.tactile_align import LEGACY_SHIFT as SHIFT
 POSITIONS = [0.10, 0.50, 0.85]
 PW, PH = 1280, 480
 

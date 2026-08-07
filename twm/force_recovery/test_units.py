@@ -124,6 +124,35 @@ def test_force_row_mapping_uses_parquet_trim():
     assert row_for_h5_frame(116, 1, 100) is None     # past the last row
 
 
+def test_tactile_lag_matches_the_published_dataset_contract():
+    """15 frames is not ours to choose: yxma/React tasks.json documents it as
+    frames_estimate 15 @ 30 fps, applies_to recordings <= 2026-06-18."""
+    from twm.tactile_align import LEGACY_SHIFT, RIG_FIXED_DATE
+    assert LEGACY_SHIFT == 15
+    assert RIG_FIXED_DATE == "2026-06-27"
+
+
+def test_tactile_lag_is_detected_per_file_not_assumed():
+    """A timestamped recording must get 0 — applying the constant on top of an
+    already-aligned stream is the mirror-image bug of forgetting it."""
+    from twm.tactile_align import gel_lag_frames, LEGACY_SHIFT
+
+    class _Node(dict):
+        def keys(self):
+            return super().keys()
+
+    class _Fake:
+        def __init__(self, ts):
+            self._n = {"gelsight/left": _Node({"frames": 1, **({"timestamps": 1} if ts else {})}),
+                       "gelsight/right": None}
+
+        def get(self, k):
+            return self._n.get(k)
+
+    assert gel_lag_frames(_Fake(ts=True)) == 0
+    assert gel_lag_frames(_Fake(ts=False)) == LEGACY_SHIFT
+
+
 if __name__ == "__main__":
     for name, fn in sorted(globals().items()):
         if name.startswith("test_"):

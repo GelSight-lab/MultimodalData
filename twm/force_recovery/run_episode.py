@@ -16,6 +16,8 @@ calibration tolerates a minority of them being lightly in contact.
 from __future__ import annotations
 
 from pathlib import Path
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 import h5py
 import hdf5plugin  # noqa: F401
@@ -28,7 +30,8 @@ DATA_ROOT = Path("/media/yxma/Disk1/twm/data")
 STAGE_ROOT = Path("/media/yxma/Disk1/twm/release")
 OUT_ROOT = Path("/media/yxma/Disk1/twm/force_recovery")
 
-LEGACY_SHIFT = 15
+# Re-exported from the single definition; do not redeclare the value here.
+from twm.tactile_align import LEGACY_SHIFT  # noqa: E402,F401
 N_REFERENCE = 15
 FIELDS = ("force_normal_n", "volume_mm3", "contact_area_mm2", "max_depth_mm")
 

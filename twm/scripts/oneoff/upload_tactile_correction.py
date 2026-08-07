@@ -17,7 +17,9 @@ from huggingface_hub import HfApi, CommitOperationAdd, hf_hub_download
 REL = Path("/media/yxma/Disk1/twm/release")
 LR = Path("/media/yxma/Disk1/twm/lerobot")
 api = HfApi()
-SHIFT = 15
+import sys as _sys
+_sys.path.insert(0, "/home/yxma/MultimodalData")
+from twm.tactile_align import LEGACY_SHIFT as SHIFT   # single definition
 
 
 def upload_react():
