@@ -197,23 +197,51 @@ global one: on FeelAnyForce the pooled ρ survived <i>global</i> shuffling at
 demonstrated. Reading the table: cnc and GlowTact sit ~0.9 above their
 controls; FEATS sits 0.78 above a control that is flat at 0.00.</p>
 
+<h3 style="margin-bottom:6px">FeelAnyForce, recovered</h3>
+<p class="footnote" style="margin-top:0">We previously excluded this dataset
+because its frame&harr;label join could not be demonstrated. The fix was not a
+better model but better data handling: instead of inferring a per-capture frame
+index, we range-extracted the <b>original timestamped images</b> from the
+publisher's split zip (5,202 members, 609 MB of an 82 GB archive, 5202/5202
+CRC-32 verified). The image filename <i>is</i> the timestamp the label CSV
+references, so the join is filename-exact rather than inferred.</p>
+<table><tr><th>subset</th><th>n</th><th>&rho;</th>
+<th>within-capture shuffle</th><th>MAE</th><th>per-capture &rho; median</th></tr>
+<tr><td><b>14 captures with a contact-free reference</b></td><td>1400</td>
+<td><b>0.961</b></td><td>0.338</td><td>0.85 N</td><td>0.953 [0.89&ndash;0.99]</td></tr>
+<tr><td>same frames, reference from a median image instead</td><td>1400</td>
+<td>0.909</td><td>0.335</td><td>1.18 N</td><td>0.929</td></tr>
+<tr><td>28 captures with no unloaded frame</td><td>1120</td>
+<td>0.519</td><td>0.092</td><td>2.21 N</td><td>0.532</td></tr>
+<tr><td class="footnote">(previous inferred join, for contrast)</td>
+<td class="footnote">&mdash;</td><td class="footnote">0.455</td>
+<td class="footnote">0.442</td><td class="footnote">&mdash;</td>
+<td class="footnote">~0.09</td></tr></table>
+<p class="footnote">The control is now cleared by <b>0.62</b> where the inferred
+join cleared it by 0.013. Two further checks, because a jump from 0.455 to
+0.961 invites the &ldquo;too good&rdquo; objection: <b>join perturbation</b> —
+re-labelling each frame with the force <i>k</i> frames later gives 0.603 at
+k=1 and <b>0.430 at k=25</b>, which lands on the rejected inferred join's
+numbers, so the exact filename match is load-bearing and the old join behaved
+like one wrong by tens of frames; and a <b>time-blocked split</b> (fit on each
+capture's earliest half) still gives <b>0.912</b>, so random half/half is not
+exploiting neighbouring frames. We also found the shipped CSVs put <b>3,188
+frames in more than one official split</b> (train/val/test), identical
+F<sub>z</sub> on every duplicate — de-duplicated by path, otherwise one frame
+could land in both halves of our own split.</p>
+
 <h3 style="margin-bottom:6px">Datasets we evaluated but did not include</h3>
 <p class="footnote" style="margin-top:0">Four GelSight-Mini force datasets are
 rows above. Two more were worked on and left out, and it is worth saying why
 rather than leaving a reader to wonder.</p>
 <table><tr><th>dataset</th><th>why it is not a row</th></tr>
 <tr><td><b>FeelAnyForce</b> (2410.02048)<br>
-<span class="footnote">appears above as a <i>method</i> — its trained network is
-one of our three baselines — but not as a dataset</span></td>
-<td>The 48,197 images we hold locally carry <b>no force labels at all</b>
-(every force column null). The labels are downloadable separately, but joining
-them to the frames requires inferring a per-capture frame index, and that join
-<b>was never demonstrated</b>: pooled &rho; was 0.455 while shuffling the labels
-<i>within</i> each capture still gave 0.442, i.e. the correlation was entirely
-between-capture structure and would survive a completely wrong frame mapping.
-Including it would have meant publishing a number we could not defend. Fixing
-it needs the original timestamped images (&asymp;157 GB) or an official frame
-map.</td></tr>
+<span class="footnote">28 of its 42 captures</span></td>
+<td>Now <b>admitted for 14 captures</b> (see below). The other <b>28 have no
+unloaded frame anywhere</b> — their minimum |F<sub>z</sub>| is 4.87&ndash;6.01 N,
+so no valid reference exists and the reconstruction measures reference mismatch
+rather than contact. They score 0.519 against a 0.092 control and are reported
+separately rather than folded into the headline.</td></tr>
 <tr><td><b>Tactile MNIST</b> (real split)</td>
 <td>Used for reconstruction ground truth, not for force — it has no force
 labels. The <i>simulated</i> split is what gives us the per-pixel depth
@@ -243,19 +271,41 @@ SEC_FORCE_ZH = r'''<h2>每个数字都配上足以否定它的对照</h2>
 混合后的 ρ 在<i>全局</i>打乱下仍有 0.442（对比 0.455），我们正是这样发现它的帧对齐从未被验证。
 读表方式：cnc 与 GlowTact 高出各自对照约 0.9；FEATS 高出 0.78，而它的对照平在 0.00。</p>
 
+<h3 style="margin-bottom:6px">FeelAnyForce：已恢复</h3>
+<p class="footnote" style="margin-top:0">此前排除它，是因为帧&harr;标签的对齐无法被证实。
+解决办法不是更好的模型，而是更好的数据处理：不再推断 capture 内的帧索引，而是用 HTTP Range
+从发布方的分卷 zip 中<b>定向抽取带时间戳的原始图像</b>（5,202 个成员，从 82 GB 的压缩包中
+只下载 609 MB，5202/5202 通过 CRC-32 校验）。图像文件名<i>就是</i>标签 CSV 引用的时间戳，
+所以对齐是"文件名字面相等"而非推断。</p>
+<table><tr><th>子集</th><th>n</th><th>&rho;</th>
+<th>capture 内打乱对照</th><th>MAE</th><th>逐 capture &rho; 中位</th></tr>
+<tr><td><b>14 个有无接触参考帧的 capture</b></td><td>1400</td>
+<td><b>0.961</b></td><td>0.338</td><td>0.85 N</td><td>0.953 [0.89&ndash;0.99]</td></tr>
+<tr><td>同样的帧，改用中值图像作参考</td><td>1400</td>
+<td>0.909</td><td>0.335</td><td>1.18 N</td><td>0.929</td></tr>
+<tr><td>28 个没有无载荷帧的 capture</td><td>1120</td>
+<td>0.519</td><td>0.092</td><td>2.21 N</td><td>0.532</td></tr>
+<tr><td class="footnote">（此前的推断式对齐，作为对比）</td>
+<td class="footnote">&mdash;</td><td class="footnote">0.455</td>
+<td class="footnote">0.442</td><td class="footnote">&mdash;</td>
+<td class="footnote">~0.09</td></tr></table>
+<p class="footnote">对照现在被拉开 <b>0.62</b>，而推断式对齐只拉开 0.013。从 0.455 跳到 0.961
+容易招致"是不是太好了"的质疑，所以又做了两项检验：<b>对齐扰动</b>——把每帧改标成 <i>k</i> 帧之后的力，
+k=1 时降到 0.603，<b>k=25 时降到 0.430</b>，恰好落在被否决的推断式对齐的数值上，说明文件名精确匹配
+是承重的，而旧对齐的行为就像错开了几十帧；<b>按时间分块划分</b>（用每个 capture 时间上靠前的一半拟合）
+仍有 <b>0.912</b>，说明随机半半分并没有在利用相邻帧。我们还发现官方 CSV 把 <b>3,188 帧同时放进了
+多个划分</b>（train/val/test），所有重复帧的 F<sub>z</sub> 完全一致——已按路径去重，
+否则同一帧可能同时落进我们自己划分的两半。</p>
+
 <h3 style="margin-bottom:6px">评测过但未纳入的数据集</h3>
 <p class="footnote" style="margin-top:0">上表是四个 GelSight Mini 力数据集。另有两个做过工作但未纳入，
 与其让读者猜，不如说清楚为什么。</p>
 <table><tr><th>数据集</th><th>为什么它不是表中一行</th></tr>
 <tr><td><b>FeelAnyForce</b>（2410.02048）<br>
-<span class="footnote">它在上文是作为<i>方法</i>出现的——其训练好的网络是我们三个基线之一——
-而不是作为数据集</span></td>
-<td>我们本地持有的 48,197 张图像<b>完全没有力标签</b>（所有力字段为空）。标签可以单独下载，
-但要与帧对应就必须推断每个 capture 内的帧索引，而这个对齐<b>从未被验证</b>：
-混合 &rho; 为 0.455，而在每个 capture <i>内部</i>打乱标签后仍有 0.442——
-也就是说相关性完全来自 capture 之间的结构，即使帧映射完全错误也会保留。
-纳入它就等于发布一个我们无法辩护的数字。要修正需要带时间戳的原始图像（约 157 GB）
-或官方的帧映射表。</td></tr>
+<span class="footnote">42 个 capture 中的 28 个</span></td>
+<td>现已<b>纳入其中 14 个 capture</b>（见上）。另外 <b>28 个通篇没有一帧是无载荷的</b>——
+其 |F<sub>z</sub>| 最小值为 4.87&ndash;6.01 N，不存在有效参考帧，重建量到的是参考失配而非接触。
+它们的 &rho; 为 0.519（对照 0.092），单独报告而不并入头条数字。</td></tr>
 <tr><td><b>Tactile MNIST</b>（真实划分）</td>
 <td>用于重建真值而非力——它没有力标签。上文的逐像素深度验证用的是它的<i>仿真</i>划分。</td></tr></table>
 <p class="footnote">另外经核查因缺少牛顿单位力真值、或传感器不符而排除：Touch and Go、TVL、
