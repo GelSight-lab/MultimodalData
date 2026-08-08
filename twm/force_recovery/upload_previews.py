@@ -122,6 +122,9 @@ def check_fresh(paths: list[Path]) -> list[str]:
     srcs = [repo / "scripts" / "build_episode_previews.py", repo / "viz.py",
             repo / "calib_epoch.py", repo / "force_overlay.py",
             repo / "tactile_align.py"]
+    # ... and the curation the FLAGGED banners are drawn from: re-curating
+    # changes what a correct preview looks like just as surely as a code edit.
+    srcs += list(Path("/media/yxma/Disk1/twm/release").glob("*/bad_frames.json"))
     cut = max(s.stat().st_mtime for s in srcs if s.exists())
     stale = [p for p in paths if p.stat().st_mtime < cut]
     return [f"{p.parent.parent.name}/{p.parent.name}/{p.name}: rendered "

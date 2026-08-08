@@ -29,8 +29,17 @@ def _sidecar_arrays(path: Path) -> tuple[dict, dict]:
     return ep, ep["_contact_meta"]
 
 
-def episode_report(path: Path) -> tuple[dict, dict]:
-    """Run every detector on one sidecar; returns (report, contact_meta)."""
+BAD_KEYS = ("intensity_spikes", "pose_teleports_L", "pose_teleports_R",
+            "ot_loss_L", "ot_loss_R", "cam_corruption", "tactile_corruption")
+
+
+def episode_report(path: Path, video_dir: Path | None = None) -> tuple[dict, dict]:
+    """Run every detector on one sidecar; returns (report, contact_meta).
+
+    `video_dir` points at the episode's published videos; without it the two
+    video-corruption detectors are skipped — which is the pre-2026-08 state,
+    where nothing in curation could see a torn camera frame.
+    """
     ep, cm = _sidecar_arrays(path)
     T = int(ep["timestamps"].shape[0])
     active = cm.get("active_sensors", ["left", "right"])
@@ -47,11 +56,15 @@ def episode_report(path: Path) -> tuple[dict, dict]:
         "pose_teleports_R": D.detect_pose_teleports(pose_r, T) if "right" in active else [],
         "ot_loss_L": D.detect_pose_freezes(pose_l, T) if "left" in active else [],
         "ot_loss_R": D.detect_pose_freezes(pose_r, T) if "right" in active else [],
+        "cam_corruption": [],
+        "tactile_corruption": [],
     }
+    if video_dir is not None and Path(video_dir).is_dir():
+        cache = path.with_name(path.name.replace("._detect.pt", "._camscan.json"))
+        report.update(D.detect_video_corruption(video_dir, T, cache=cache))
 
     mask = np.zeros(T, bool)
-    for key in ("intensity_spikes", "pose_teleports_L", "pose_teleports_R",
-                "ot_loss_L", "ot_loss_R"):
+    for key in BAD_KEYS:
         for a, b in report[key]:
             mask[max(0, a):min(T, b + 1)] = True
     report["total_bad_frames"] = int(mask.sum())
@@ -61,8 +74,7 @@ def episode_report(path: Path) -> tuple[dict, dict]:
 
 def _bad_intervals(report: dict) -> list[tuple[int, int]]:
     return [(int(a), int(b))
-            for key in ("intensity_spikes", "pose_teleports_L", "pose_teleports_R",
-                        "ot_loss_L", "ot_loss_R")
+            for key in BAD_KEYS
             for a, b in report[key]]
 
 
@@ -78,7 +90,8 @@ def build_task(task: str, stage_root: Path = STAGE_ROOT,
     for det in sidecars:
         date, stem = det.parent.name, det.name.replace("._detect.pt", "")
         key = f"{date}/{stem}"
-        report, cm = episode_report(det)
+        report, cm = episode_report(
+            det, video_dir=out_dir / "videos" / date / stem)
         episodes[key] = report
         T = report["n_frames"]
 

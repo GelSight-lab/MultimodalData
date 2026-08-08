@@ -126,8 +126,21 @@ pose teleports and tactile intensity spikes in `bad_frames.json` and excludes
 them from `segments.json` training spans — but previews play the raw stream.
 An unlabelled magenta GelSight flicker or frozen pose reads as dirty data;
 with the red `FLAGGED <detector>` banner it reads as what it is: a known,
-indexed dropout that training never sees. Camera-stream (RealSense)
-corruption has NO detector yet — open item.
+indexed dropout that training never sees.
+
+Video corruption (`cam_corruption` / `tactile_corruption`) is detected from
+the published MP4s themselves — the sidecar scalars cannot see a torn frame.
+Two signatures, both earned: **burst-bracket** (two hot frame-diff boundaries
+≤ 15 frames apart bracket an anomalous run; the single-frame "differs from
+both neighbours" test scores a 9-frame magenta flicker 0, because its
+interior diffs are calm) and **row-band tear** on an RGB per-channel-max
+diff (grayscale measured the magenta flicker at under half its amplitude;
+a torn GelSight frame moves chroma, not luma). Validated: exact hit on the
+known 2026-05-11/ep003 flicker [247,255], two previously unindexed partial
+tears found in the same episode ([2080,2089], [8583,8593] — bottom-band
+magenta), zero false positives from fast arm motion on the colour views
+(the naive "band changed while rest static" tear test flagged exactly that
+motion, three times, before eyeballing killed it).
 
 The uploader enforces two more gates, both proven on the real defects:
 **previews must mirror the release** (a clip for an unpublished episode is
