@@ -34,14 +34,20 @@ def make_renderer(task: str, clip_s: float, speed: float):
 
     def render(job: dict) -> None:
         dx, dy, dz = job["world_offset"]
-        # The release sidecar is the authority on where the episode starts.
-        prior = BEP._get_trim_offset
-        BEP._get_trim_offset = lambda _p, _t=job["trim_offset"]: _t
-        try:
-            BEP.build_one_preview(job["h5"], job["out"], clip_s, speed,
-                                  project_cams, glc, grc, dx=dx, dy=dy, dz=dz)
-        finally:
-            BEP._get_trim_offset = prior
+        # The builder reads the trim from the release parquet itself, so this
+        # used to monkeypatch the sidecar reader it consulted instead. That
+        # hook is gone; assert the two agree rather than silently letting one
+        # win — a plan and a renderer disagreeing about where an episode
+        # starts is precisely the pushT pre-roll defect.
+        want = int(job["trim_offset"])
+        got, _ = BEP._parquet_trim_and_rows(
+            job["task"], job["date"], job["episode"])
+        if got != want:
+            raise ValueError(
+                f"{job['date']}/{job['episode']}: plan says trim {want}, "
+                f"release parquet says {got}")
+        BEP.build_one_preview(job["h5"], job["out"], clip_s, speed,
+                              project_cams, glc, grc, dx=dx, dy=dy, dz=dz)
 
     return render, len(project_cams)
 

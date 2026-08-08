@@ -131,32 +131,30 @@ FORCE_ROOT = Path("/media/yxma/Disk1/twm/force_recovery")
 
 
 def _parquet_trim_and_rows(task, date, ep):
-    """Force rows are indexed by the RELEASE parquet, not by the .pt trim the
-    preview uses elsewhere — see force_overlay for why mixing them shifts the
-    dot ~15 frames."""
+    """Where this episode starts in the H5, and how many rows it has.
+
+    THE source of both, for the clip window and for the force rows alike.
+    They used to come from different places — the window from a
+    processed/.pt sidecar, the rows from here — and the sidecar version answered 0
+    for any episode whose .pt was missing. Zero is also the correct answer
+    for every motherboard episode, so pushT (trim 5373-11617) played minutes
+    of pre-roll and looked like frozen action rather than like a bug.
+
+    Raises for an episode the release does not publish: a preview of
+    unpublished data is a claim that it exists, which is the same defect the
+    uploader's orphan gate refuses at the other end.
+    """
+    import numpy as _np
     import pyarrow.parquet as pq
     f = Path("/media/yxma/Disk1/twm/release")/task/"meta"/date/f"{ep}.parquet"
     if not f.exists():
-        return None, 0
+        raise FileNotFoundError(
+            f"{task}/{date}/{ep}: no release parquet, so its trim offset is "
+            f"unknown. Refusing to assume 0 — pushT episodes start as late as "
+            f"frame 11617 and would render minutes of pre-roll as if it were "
+            f"the episode.")
     t = pq.read_table(str(f), columns=["source_h5_frame"])
-    import numpy as _np
     return int(_np.asarray(t["source_h5_frame"].to_numpy())[0]), t.num_rows
-
-
-def _get_trim_offset(h5_path: Path) -> int:
-    """Read trim_offset from the matching processed/episodes/.pt's _contact_meta.
-    Falls back to 0 if the .pt isn't built yet."""
-    date = h5_path.parent.name
-    ep_stem = h5_path.stem
-    pt_path = EPISODES_ROOT / date / f"{ep_stem}.pt"
-    if not pt_path.exists():
-        return 0
-    import torch
-    try:
-        d = torch.load(str(pt_path), weights_only=False, map_location="cpu", mmap=True)
-        return int(d.get("_contact_meta", {}).get("trim_offset", 0))
-    except Exception:
-        return 0
 
 
 def _flagged_intervals(task: str, date: str, ep: str) -> list[tuple[int, int, str]]:
@@ -192,8 +190,9 @@ def build_one_preview(h5_path: Path, out_mp4: Path,
     # H5 pre-roll: up to 6.5 min BEFORE the episode, sensors parked, action
     # frozen. A silent zero fallback is indistinguishable from the correct
     # answer on every recording that doesn't need one.
-    trim_pq, n_rows = _parquet_trim_and_rows(task_name, date_name, h5_path.stem)
-    trim_offset = trim_pq if trim_pq is not None else _get_trim_offset(h5_path)
+    trim_offset, n_rows = _parquet_trim_and_rows(task_name, date_name,
+                                                h5_path.stem)
+    trim_pq = trim_offset
     flagged = _flagged_intervals(task_name, date_name, h5_path.stem)
     with h5py.File(str(h5_path), "r") as f:
         cam_ts = f["timestamps"][:]

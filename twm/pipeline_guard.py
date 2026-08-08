@@ -33,6 +33,7 @@ import sys
 
 ROOT = pathlib.Path(__file__).resolve().parent
 OPT_OUT = "tactile-lag-exempt"          # marker comment for deliberate cases
+OPT_OUT_FALLBACK = "fallback-ok"        # ... for a deliberate default answer
 # diagnostics/ and legacy_pt/ are dated one-off forensics, frozen with the
 # defects they investigated; guarding them retro-flags history, not pipeline.
 SKIP_DIRS = {"__pycache__", ".git", "calibration", "diagnostics", "legacy_pt"}
@@ -196,8 +197,55 @@ def check_single_calib_epoch() -> list[str]:
     return bad
 
 
+def check_no_silent_fallback() -> list[str]:
+    """A resolver must not answer a question it failed to answer.
+
+    `_get_trim_offset` read a sidecar pushT never had and returned 0 on any
+    failure. Zero is also the correct answer for every motherboard episode,
+    so the wrong answer was indistinguishable from the right one — pushT
+    previews played 6.5 minutes of pre-roll and nothing reported anything.
+    `world_offset_m` shipped the same shape and had to be changed to raise.
+
+    The pattern: a function whose name says it RESOLVES a fact about the
+    data, swallowing an exception and returning a constant. Returning a
+    constant is fine when it is the answer; it is not fine when it means
+    "I don't know". Raise, or name the fallback in a comment marked
+    ``{OPT_OUT}``.
+    """
+    bad = []
+    resolver = re.compile(r"^(_?(get|load|read|resolve|lookup|find)_|.*_"
+                          r"(offset|dir|path|index|shift|epoch|trim))", re.I)
+    for p in _py_files():
+        if p.name == "pipeline_guard.py":
+            continue
+        src = p.read_text()
+        lines = src.splitlines()
+        try:
+            tree = ast.parse(src)
+        except SyntaxError:
+            continue                       # already reported by the lag check
+        for fn in (n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)):
+            if not resolver.match(fn.name):
+                continue
+            for h in (n for n in ast.walk(fn) if isinstance(n, ast.ExceptHandler)):
+                for r in (n for n in ast.walk(h)
+                          if isinstance(n, ast.Return) and n.value is not None):
+                    if not isinstance(r.value, ast.Constant):
+                        continue
+                    near = "\n".join(lines[max(0, h.lineno - 2):r.lineno + 1])
+                    if OPT_OUT_FALLBACK in near:
+                        continue
+                    bad.append(
+                        f"{p.relative_to(ROOT)}:{r.lineno}: {fn.name} returns "
+                        f"{ast.unparse(r.value)} from an except handler — a "
+                        f"silent fallback in a resolver. Raise, or mark it "
+                        f"'{OPT_OUT_FALLBACK}' with the reason.")
+    return bad
+
+
 CHECKS = {
     "single calibration-epoch definition": check_single_calib_epoch,
+    "no silent fallback in resolvers": check_no_silent_fallback,
     "single tactile-lag definition": check_single_lag_definition,
     "no raw GelSight indexing": check_no_raw_gel_indexing,
     "force path free of cosmetic steps": check_force_path_clean,
