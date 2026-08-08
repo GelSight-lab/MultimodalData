@@ -2,7 +2,7 @@
 """
 Visualize a TWM episode HDF5 file. By default the overlay draws the GelSight
 contact centers projected onto each RealSense view using the calibrations in
-`twm/calibration/result/`. Pass `--no_projection` to skip the overlay (and the
+the task's calibration epoch (see `calib_epoch`). Pass `--no_projection` to skip the overlay (and the
 calibration loading).
 
 Usage:
@@ -15,11 +15,12 @@ Usage:
     # Export every episode in a directory to mp4 (with overlay)
     python -m twm.visualize path/to/ --save_videos
 
-    # Override calibration paths (rarely needed)
+    # Override calibration paths (rarely needed; default is the input's task
+    # epoch resolved via calib_epoch)
     python -m twm.visualize path/to/episode_000.h5 \
-        --cam_calib  twm/calibration/result/T_mocap_to_cam_middle.json \
-        --gel_left   twm/calibration/result/T_gel_to_rigid_left.json \
-        --gel_right  twm/calibration/result/T_gel_to_rigid_right.json \
+        --cam_calib <epoch_dir>/T_mocap_to_cam_middle.json \
+        --gel_left  <epoch_dir>/T_gel_to_rigid_left.json \
+        --gel_right <epoch_dir>/T_gel_to_rigid_right.json \
         --save_video output.mp4
 
 Controls:
@@ -45,7 +46,9 @@ import numpy as np
 import h5py
 import cv2
 
-_CALIB_DIR = (Path(__file__).resolve().parent / "calibration" / "result")
+# The calibration epoch is PER TASK (May-12 for motherboard, June-26 for
+# pushT) and is resolved from the input path at parse time via calib_epoch —
+# a constant here defaulted every task to June-26.
 
 from twm.data_collection import make_preview, REALSENSE_SERIALS
 from twm.viz import (
@@ -371,19 +374,13 @@ def main():
     parser.add_argument("path", help="Path to episode .h5 file OR a directory of .h5 files")
     parser.add_argument("--fps", type=float, default=None,
                         help="Playback FPS (default: use recorded FPS from metadata)")
-    parser.add_argument("--cam_calib", type=str, nargs='+',
-                        default=[
-                            str(_CALIB_DIR / "T_mocap_to_cam_middle.json"),
-                            str(_CALIB_DIR / "T_mocap_to_cam_left.json"),
-                            str(_CALIB_DIR / "T_mocap_to_cam_right.json"),
-                        ],
-                        help="Path(s) to T_mocap_to_cam_<name>.json (one per camera)")
-    parser.add_argument("--gel_left", type=str,
-                        default=str(_CALIB_DIR / "T_gel_to_rigid_left.json"),
-                        help="Path to T_gel_to_rigid_left.json")
-    parser.add_argument("--gel_right", type=str,
-                        default=str(_CALIB_DIR / "T_gel_to_rigid_right.json"),
-                        help="Path to T_gel_to_rigid_right.json")
+    parser.add_argument("--cam_calib", type=str, nargs='+', default=None,
+                        help="Path(s) to T_mocap_to_cam_<name>.json (one per "
+                             "camera); default: the input's task epoch via calib_epoch")
+    parser.add_argument("--gel_left", type=str, default=None,
+                        help="Path to T_gel_to_rigid_left.json (default: task epoch)")
+    parser.add_argument("--gel_right", type=str, default=None,
+                        help="Path to T_gel_to_rigid_right.json (default: task epoch)")
     parser.add_argument("--save_video", type=str, default=None,
                         help="Single-file mode: path to output mp4.")
     parser.add_argument("--save_videos", action="store_true",
@@ -399,6 +396,17 @@ def main():
                         help="Frames to advance gelsight reads (h5_frame + N) to "
                              "compensate for tactile capture lag. Default: 3.")
     args = parser.parse_args()
+
+    if not args.no_projection and None in (args.gel_left, args.gel_right,
+                                           args.cam_calib):
+        from twm.calib_epoch import calib_dir_for_path
+        cdir = calib_dir_for_path(args.path)   # raises rather than guessing
+        print(f"calibration epoch: {cdir.name} (from input path)")
+        if args.cam_calib is None:
+            args.cam_calib = [str(cdir / f"T_mocap_to_cam_{n}.json")
+                              for n in ("middle", "left", "right")]
+        args.gel_left = args.gel_left or str(cdir / "T_gel_to_rigid_left.json")
+        args.gel_right = args.gel_right or str(cdir / "T_gel_to_rigid_right.json")
 
     # ── Resolve input: file or directory ─────────────────────────────────────
     if os.path.isdir(args.path):

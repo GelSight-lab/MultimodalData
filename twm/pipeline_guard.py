@@ -33,13 +33,16 @@ import sys
 
 ROOT = pathlib.Path(__file__).resolve().parent
 OPT_OUT = "tactile-lag-exempt"          # marker comment for deliberate cases
-SKIP_DIRS = {"__pycache__", ".git", "calibration"}
+# diagnostics/ and legacy_pt/ are dated one-off forensics, frozen with the
+# defects they investigated; guarding them retro-flags history, not pipeline.
+SKIP_DIRS = {"__pycache__", ".git", "calibration", "diagnostics", "legacy_pt"}
 # Files that legitimately index raw frames: the recorder writing them, the
 # latency studies that exist precisely to compare shifted vs unshifted, and
-# the interactive player whose whole point is a user-adjustable offset.
+# the interactive players whose whole point is a user-adjustable offset.
 RAW_OK = {"data_collection.py", "test_latency.py", "latency_align_viewer.py",
           "build_latency_clips.py", "build_latency_correction_clips.py",
-          "play_react_pt.py", "tactile_align.py", "pipeline_guard.py"}
+          "play_react_pt.py", "visualize.py", "tactile_align.py",
+          "pipeline_guard.py"}
 
 
 def _py_files():
@@ -113,9 +116,12 @@ def check_no_raw_gel_indexing() -> list[str]:
                 continue
             if any(c in m.group(2) for c in corrected):
                 continue                      # already lag-corrected
-                bad.append(f"{p.relative_to(ROOT)}:{i}: indexes raw GelSight "
-                           f"frames — use tactile_align.gel_index, or add the "
-                           f"'{OPT_OUT}' comment if intentional")
+            # NB: this append sat AFTER the continue, inside its block, for
+            # the guard's whole life — unreachable, so the check could never
+            # report anything. A gate you never saw fail is not a gate.
+            bad.append(f"{p.relative_to(ROOT)}:{i}: indexes raw GelSight "
+                       f"frames — use tactile_align.gel_index, or add the "
+                       f"'{OPT_OUT}' comment if intentional")
     return bad
 
 
@@ -162,7 +168,36 @@ def check_single_stiffness() -> list[str]:
     return bad
 
 
+def check_single_calib_epoch() -> list[str]:
+    """The task->extrinsics-epoch mapping lives in calib_epoch, nowhere else.
+
+    The cameras were recalibrated between tasks (May-12 for motherboard,
+    June-26 for pushT). That mapping existed in FIVE copies, and two viewers
+    carried no mapping at all — they defaulted every task to
+    `calibration/result` (June-26). Every motherboard preview shipped through
+    the wrong camera pose: 53-64 mm / 2.6-6.0 deg between epochs, a 35-73 px
+    projection error that looks like a miscalibrated rig, not a bug.
+    `scripts/diagnostics/` is exempt: dated one-off forensics, not pipeline.
+    """
+    bad = []
+    pat = re.compile(r"""result\ backup|calibration.{0,4}[/"']\s*result""")
+    # data_collection.py is the LIVE recorder: for a recording being made right
+    # now, "the current calibration" (`result/`) is correct by definition —
+    # epochs only exist for replaying the past.
+    for p in _py_files():
+        if p.name in ("calib_epoch.py", "pipeline_guard.py",
+                      "data_collection.py"):
+            continue
+        for i, line in enumerate(p.read_text().splitlines(), 1):
+            if pat.search(line) and OPT_OUT not in line:
+                bad.append(f"{p.relative_to(ROOT)}:{i}: names a calibration "
+                           f"epoch directory — resolve it through "
+                           f"calib_epoch.calib_dir(task) instead")
+    return bad
+
+
 CHECKS = {
+    "single calibration-epoch definition": check_single_calib_epoch,
     "single tactile-lag definition": check_single_lag_definition,
     "no raw GelSight indexing": check_no_raw_gel_indexing,
     "force path free of cosmetic steps": check_force_path_clean,

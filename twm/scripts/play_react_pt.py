@@ -105,9 +105,9 @@ SEGMENT_FNAME_RE = re.compile(r"^(episode_\d+)\.segment_(\d+)\.pt$")
 PLAIN_EPISODE_RE = re.compile(r"^(episode_\d+)\.pt$")
 DATE_RE          = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
-# Calibration result dir, resolved relative to this script (works regardless
-# of the user's cwd). Script lives at <repo>/twm/scripts/play_react_pt.py.
-_CALIB_DIR = (Path(__file__).resolve().parent.parent / "calibration" / "result")
+# The calibration epoch is PER TASK (May-12 for motherboard, June-26 for
+# pushT); it is resolved from the input path at parse time via calib_epoch.
+# The old module constant here defaulted every task to June-26.
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -680,19 +680,13 @@ def main():
                          "carries cam0 + both gelsights at 128x128). 'h5' = read full-res "
                          "480x640 frames from the source H5 (original behavior).")
     # ── GelSight-center projection overlay (mirrors visualize.py) ────────────
-    ap.add_argument("--cam_calib", type=str, nargs="+",
-                    default=[
-                        str(_CALIB_DIR / "T_mocap_to_cam_middle.json"),
-                        str(_CALIB_DIR / "T_mocap_to_cam_left.json"),
-                        str(_CALIB_DIR / "T_mocap_to_cam_right.json"),
-                    ],
-                    help="Path(s) to T_mocap_to_cam_<name>.json (one per camera).")
-    ap.add_argument("--gel_left", type=str,
-                    default=str(_CALIB_DIR / "T_gel_to_rigid_left.json"),
-                    help="Path to T_gel_to_rigid_left.json.")
-    ap.add_argument("--gel_right", type=str,
-                    default=str(_CALIB_DIR / "T_gel_to_rigid_right.json"),
-                    help="Path to T_gel_to_rigid_right.json.")
+    ap.add_argument("--cam_calib", type=str, nargs="+", default=None,
+                    help="Path(s) to T_mocap_to_cam_<name>.json (one per "
+                         "camera); default: the input's task epoch via calib_epoch.")
+    ap.add_argument("--gel_left", type=str, default=None,
+                    help="Path to T_gel_to_rigid_left.json (default: task epoch).")
+    ap.add_argument("--gel_right", type=str, default=None,
+                    help="Path to T_gel_to_rigid_right.json (default: task epoch).")
     ap.add_argument("--no_projection", action="store_true",
                     help="Skip the GelSight-center projection overlay "
                          "(and calibration loading). Default: overlay ON.")
@@ -700,6 +694,17 @@ def main():
                     help="Frames to advance gelsight reads (h5_frame + N) to "
                          "compensate for tactile capture lag. Default: 3.")
     args = ap.parse_args()
+
+    if not args.no_projection and None in (args.gel_left, args.gel_right,
+                                           args.cam_calib):
+        from twm.calib_epoch import calib_dir_for_path
+        cdir = calib_dir_for_path(args.path)   # raises rather than guessing
+        print(f"calibration epoch: {cdir.name} (from input path)")
+        if args.cam_calib is None:
+            args.cam_calib = [str(cdir / f"T_mocap_to_cam_{n}.json")
+                              for n in ("middle", "left", "right")]
+        args.gel_left = args.gel_left or str(cdir / "T_gel_to_rigid_left.json")
+        args.gel_right = args.gel_right or str(cdir / "T_gel_to_rigid_right.json")
 
     in_path = Path(args.path)
 

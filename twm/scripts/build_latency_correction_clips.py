@@ -24,16 +24,17 @@ import torch
 sys.path.insert(0, "/home/yxma/MultimodalData")
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import build_episode_previews as BEP
+from twm.calib_epoch import calib_dir
 from twm.viz import build_preview_panel, draw_projection_overlay, load_optitrack, optitrack_at
 
 REL = Path("/media/yxma/Disk1/twm/release")
 CALIB = Path("/home/yxma/MultimodalData/twm/calibration")
 TASK_CFG = {
     "motherboard": {"h5_root": Path("/media/yxma/Disk1/twm/data/motherboard"),
-                    "calib_dir": CALIB / "result backup",
+                    "calib_dir": calib_dir("motherboard"),
                     "eps": [("2026-05-11", "episode_005"), ("2026-05-11", "episode_012")]},
     "pushT": {"h5_root": Path("/media/yxma/Disk1/twm/data/pushT"),
-              "calib_dir": CALIB / "result",
+              "calib_dir": calib_dir("pushT"),
               "eps": [("2026-06-18", "episode_001"), ("2026-06-18", "episode_002")]},
 }
 WORLD_OFFSET = {("motherboard", "2026-05-19"): (0.23, 0.0, 0.175)}
@@ -98,8 +99,7 @@ def render(task, date, ep, start, pc, glc, grc, out):
 
 def main():
     task = sys.argv[1]
-    BEP.CALIB_DIR = TASK_CFG[task]["calib_dir"]
-    pc, glc, grc = BEP._load_proj_calibs()
+    pc, glc, grc = BEP._load_proj_calibs(task)
     print(f"[lat-check] {task} calib={TASK_CFG[task]['calib_dir'].name} cams={len(pc)}", flush=True)
     for date, ep in TASK_CFG[task]["eps"]:
         T = int(torch.load(str(REL/task/'meta'/date/f'{ep}._detect.pt'),

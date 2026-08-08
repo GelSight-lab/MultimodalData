@@ -46,8 +46,8 @@ DISPLAY_LABELS: list[str] = ["left cam", "middle cam", "right cam"]
 # Inverse mapping: H5 cam_idx → its slot (0, 1, or 2) on the displayed panel.
 DISPLAY_POSITION: dict[int, int] = {cam_idx: pos for pos, cam_idx in enumerate(DISPLAY_ORDER)}
 
-# Default calibration filenames for each H5 cam_idx (within
-# `twm/calibration/result/`). Kept here so visualization tools don't have to
+# Default calibration FILENAMES for each H5 cam_idx (the directory is the
+# task's epoch, from `calib_epoch`). Kept here so visualization tools don't have to
 # repeat the mapping.
 CAM_CALIB_NAME: dict[int, str] = {
     0: "T_mocap_to_cam_right.json",

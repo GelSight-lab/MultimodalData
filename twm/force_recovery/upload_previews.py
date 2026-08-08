@@ -84,6 +84,50 @@ def check_decodable(paths: list[Path]) -> list[str]:
     return bad
 
 
+def check_mirrors_release(pairs: list[tuple[str, Path]]) -> tuple[list[str], list[str]]:
+    """Previews must mirror the release: same episodes, nothing more.
+
+    Returns (orphans, missing). An orphan — a clip for an episode the release
+    does not publish — is REFUSED: it asserts data that does not exist, and it
+    can never be refreshed because there is nothing to refresh it from. Four
+    such clips (2026-03-23 x3, 2026-05-15 x1) survived every previous upload
+    and were reported by a reader as "not updated". A missing episode is only
+    WARNED: a gap is visible, an orphan misleads.
+    """
+    import sys
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+    from twm.calib_epoch import release_episodes
+
+    orphans, missing = [], []
+    for task in sorted({t for t, _ in pairs}):
+        rel = release_episodes(task)
+        if not rel:                    # no release tree on this machine
+            continue
+        have = {f"{p.parent.name}/{p.stem}" for t, p in pairs if t == task}
+        orphans += [f"{task}/{k}" for k in sorted(have - rel)]
+        missing += [f"{task}/{k}" for k in sorted(rel - have)]
+    return orphans, missing
+
+
+def check_fresh(paths: list[Path]) -> list[str]:
+    """Every clip must be newer than the code that renders it.
+
+    The calibration-epoch fix went in at 21:36; 31 of 32 motherboard clips on
+    disk were rendered 20:43-21:06 with the wrong extrinsics, and nothing
+    distinguished them from good output — same names, same sizes, decode
+    cleanly. mtime-vs-source is a blunt instrument, but it errs toward
+    re-rendering ~40 clips, and it would have caught both of today's reports.
+    """
+    repo = Path(__file__).resolve().parents[1]
+    srcs = [repo / "scripts" / "build_episode_previews.py", repo / "viz.py",
+            repo / "calib_epoch.py", repo / "force_overlay.py",
+            repo / "tactile_align.py"]
+    cut = max(s.stat().st_mtime for s in srcs if s.exists())
+    stale = [p for p in paths if p.stat().st_mtime < cut]
+    return [f"{p.parent.parent.name}/{p.parent.name}/{p.name}: rendered "
+            f"before the newest renderer source — re-render it" for p in stale]
+
+
 def manifest() -> dict:
     import sys
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
@@ -133,8 +177,13 @@ def manifest() -> dict:
             "supersedes": "Clips uploaded before 2026-08-07 carry (a) a dot "
                           "pinned to the GelSight tile corner and (b) forces "
                           "from a calibration that mixed pixel-unit weights "
-                          "with mm-unit features (end-to-end rho 0.143). Both "
-                          "are replaced; the old newton values are void.",
+                          "with mm-unit features (end-to-end rho 0.143). "
+                          "Motherboard clips additionally used pushT's "
+                          "June-26 camera extrinsics instead of the May-12 "
+                          "epoch (35-73 px projection error), and 2026-05-19 "
+                          "missed its (0.23, 0, 0.175) m world-frame offset. "
+                          "All replaced; each frame's status bar now names "
+                          "the epoch and offset it was projected with.",
         },
         "tasks": tasks(),
         "clips_total": len(clips),
@@ -163,7 +212,28 @@ def main() -> None:
     print(f"tasks: {', '.join(m['tasks'])}")
     print(f"total {total:.0f} MB -> {REPO}:data/<task>/previews/")
 
-    paths = [p for _, p in clip_paths()]
+    pairs = clip_paths()
+    paths = [p for _, p in pairs]
+
+    orphans, missing = check_mirrors_release(pairs)
+    if orphans:
+        print(f"REFUSING TO UPLOAD: {len(orphans)} clip(s) for episodes the "
+              f"release does not publish — delete them, they mislead:")
+        for o in orphans:
+            print("   ", o)
+        raise SystemExit(1)
+    for k in missing:
+        print(f"WARN: release episode {k} has no preview clip")
+
+    stale = check_fresh(paths)
+    if stale:
+        print(f"REFUSING TO UPLOAD: {len(stale)} clip(s) older than the "
+              f"renderer sources:")
+        for s in stale:
+            print("   ", s)
+        raise SystemExit(1)
+    print("all clips mirror the release and post-date the renderer")
+
     print(f"decoding all {len(paths)} clips ...", flush=True)
     bad = check_decodable(paths)
     if bad:

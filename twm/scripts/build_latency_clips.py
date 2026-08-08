@@ -25,13 +25,14 @@ import build_episode_previews as BEP  # reuse calib loader + panel path
 
 REL = Path("/media/yxma/Disk1/twm/release")
 CALIB = Path("/home/yxma/MultimodalData/twm/calibration")
+from twm.calib_epoch import calib_dir
 from twm.viz import build_preview_panel, draw_projection_overlay, load_optitrack, optitrack_at
 
 TASK_CFG = {
     "motherboard": {"h5_root": Path("/media/yxma/Disk1/twm/data/motherboard"),
-                    "calib_dir": CALIB / "result backup"},
+                    "calib_dir": calib_dir("motherboard")},
     "pushT": {"h5_root": Path("/media/yxma/Disk1/twm/data/pushT"),
-              "calib_dir": CALIB / "result"},
+              "calib_dir": calib_dir("pushT")},
 }
 WORLD_OFFSET = {("motherboard", "2026-05-19"): (0.23, 0.0, 0.175)}
 FPS = 30
@@ -125,8 +126,7 @@ def render_clip(task, date, ep_stem, start, project_cams, glc, grc):
 
 def main():
     task = sys.argv[1]
-    BEP.CALIB_DIR = TASK_CFG[task]["calib_dir"]
-    pc, glc, grc = BEP._load_proj_calibs()
+    pc, glc, grc = BEP._load_proj_calibs(task)
     print(f"[latency] {task}: calib={TASK_CFG[task]['calib_dir'].name} cams={len(pc)}", flush=True)
     onsets = find_onsets(task)
     print(f"[latency] {task}: {len(onsets)} onset clips: {[(d,e,s) for d,e,s in onsets]}", flush=True)

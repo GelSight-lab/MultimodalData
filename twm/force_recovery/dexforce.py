@@ -50,13 +50,17 @@ STIFFNESS_N_PER_M = 1000.0
 # verified against the same file's geometry (gel_center = gelball - 5 mm *
 # axis) and by the sign of the approach velocity at force onsets, which the
 # naive [0, 0, 1] guess got wrong.
-CALIB_ROOT = Path(__file__).resolve().parent.parent / "calibration"
-CALIB_DIRS = {"pushT": "result", "motherboard": "result backup"}
+# The task -> calibration-epoch mapping has exactly one home: calib_epoch.
+# This module used to carry its own copy (the mapping existed in five files),
+# which is how every motherboard preview shipped with pushT's extrinsics.
+import sys as _sys
+_sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from twm.calib_epoch import calib_dir as _calib_dir  # noqa: E402
 
 
 def gel_axis(task: str, side: str) -> np.ndarray:
     """Calibrated pressing direction in the sensor's rigid-body frame."""
-    path = CALIB_ROOT / CALIB_DIRS[task] / f"T_gel_to_rigid_{side}.json"
+    path = _calib_dir(task) / f"T_gel_to_rigid_{side}.json"
     axis = np.asarray(json.loads(path.read_text())["gel_axis_in_rigid"], np.float64)
     return axis / np.linalg.norm(axis)
 

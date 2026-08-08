@@ -22,20 +22,15 @@ import build_episode_previews as BEP
 from react_preprocess import previews
 
 
-def make_renderer(calib_dir: Path, clip_s: float, speed: float):
-    """Bind the renderer to one task's calibration.
+def make_renderer(task: str, clip_s: float, speed: float):
+    """Bind the renderer to one task's calibration epoch.
 
-    `_load_proj_calibs` reads module-level `CALIB_DIR`, so it is set just long
-    enough to load and then restored; the loaded calibration is captured in the
-    closure. The renderer therefore stops depending on that global, and two
-    tasks can be rendered in one process.
+    `_load_proj_calibs(task)` resolves the epoch through `calib_epoch` and
+    refuses a wrong one. The old version monkeypatched a module-level
+    `CALIB_DIR` — the exact global whose one-value-for-all-tasks default put
+    pushT's extrinsics under every motherboard preview.
     """
-    previous = BEP.CALIB_DIR
-    BEP.CALIB_DIR = calib_dir
-    try:
-        project_cams, glc, grc = BEP._load_proj_calibs()
-    finally:
-        BEP.CALIB_DIR = previous
+    project_cams, glc, grc = BEP._load_proj_calibs(task)
 
     def render(job: dict) -> None:
         dx, dy, dz = job["world_offset"]
@@ -61,15 +56,15 @@ def main() -> int:
     args = ap.parse_args()
 
     jobs = list(previews.plan(args.task))
-    calib = previews.CALIB_DIRS[args.task]
-    print(f"[previews] {args.task}: {len(jobs)} episodes, calib={calib.name}", flush=True)
+    print(f"[previews] {args.task}: {len(jobs)} episodes, "
+          f"calib={previews.CALIB_DIRS[args.task].name}", flush=True)
     if args.dry_run:
         for j in jobs:
             print(f"  {j['date']}/{j['episode']} trim={j['trim_offset']} "
                   f"world_offset={j['world_offset']}")
         return 0
 
-    render, n_cams = make_renderer(calib, args.clip_s, args.speed)
+    render, n_cams = make_renderer(args.task, args.clip_s, args.speed)
     print(f"[previews] projection cameras: {n_cams}", flush=True)
 
     results = previews.build_task(args.task, render, overwrite=args.overwrite)

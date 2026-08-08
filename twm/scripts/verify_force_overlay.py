@@ -56,12 +56,18 @@ def main(h5_path: str, n: int = 4):
     if not forces:
         raise SystemExit(f"no force npz for {task}/{date}/{ep}")
     trim_pq, n_rows = _parquet_trim_and_rows(task, date, ep)
-    cams, gel_L, gel_R = _load_proj_calibs()
+    cams, gel_L, gel_R = _load_proj_calibs(task)   # this task's epoch, verified
     OUT.mkdir(parents=True, exist_ok=True)
 
     with h5py.File(str(h5), "r") as f:
         cam_ts = f["timestamps"][:]
         ot = load_optitrack(f)
+        # Raw-H5 poses need the per-episode world offset (05-19 redefined the
+        # origin); without it the differential checks still pass — they compare
+        # ink to their own projection — while measuring the wrong place.
+        from twm.calib_epoch import world_offset_m
+        from twm.scripts.build_episode_previews import _apply_world_offset
+        _apply_world_offset(ot, *world_offset_m(task, date, ep))
         lag = gel_lag_frames(f)
         n_gel = len(f["gelsight/left/frames"])
         gel_at = lambda i: min(int(i) + lag, n_gel - 1)      # noqa: E731

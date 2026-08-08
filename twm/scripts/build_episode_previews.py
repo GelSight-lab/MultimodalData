@@ -54,7 +54,10 @@ from twm.viz import (
 TASK = "motherboard"          # overridden by --task in main()
 H5_ROOT  = Path("/media/yxma/Disk1/twm/data") / TASK
 OUT_ROOT = Path("/media/yxma/Disk1/twm/figures/episode_previews") / TASK
-CALIB_DIR = Path("/home/yxma/MultimodalData/twm/calibration/result")
+# Which extrinsics a task needs is NOT a constant here — cameras were
+# recalibrated between tasks and this file pointed at one directory for all of
+# them, publishing 36 motherboard previews with pushT's June-26 calibration.
+# calib_epoch owns the mapping; see its docstring.
 
 PANEL_W, PANEL_H = 1280, 480
 SOURCE_FPS       = 30.0       # recording frame rate
@@ -65,7 +68,13 @@ EPISODES_ROOT    = Path("/media/yxma/Disk1/twm/processed/episodes") / TASK
 
 def _apply_world_offset(ot_lookup, dx, dy, dz):
     """Apply (dx, dy, dz) m offset to every OT sample (in-place mutation
-    of the `poses` array inside the (ts, poses) tuple)."""
+    of the `poses` array inside the (ts, poses) tuple).
+
+    The offset is per EPISODE and comes from `calib_epoch.world_offset_m`,
+    which reads the release's own episodes.jsonl. It used to come from
+    --dx/--dy/--dz flags defaulting to zero, so the 2026-05-19 session — whose
+    raw poses sit 0.23 m + 0.175 m from every other date — rendered with its
+    sensor marker a quarter-metre off unless someone remembered the flags."""
     if dx == 0 and dy == 0 and dz == 0:
         return
     for name, data in ot_lookup.items():
@@ -78,14 +87,18 @@ def _apply_world_offset(ot_lookup, dx, dy, dz):
             poses[:, 2] += dz
 
 
-def _load_proj_calibs():
+def _load_proj_calibs(task: str):
+    """Extrinsics for THIS task's calibration epoch, verified on load."""
+    check_epoch(task)                       # refuses the wrong epoch loudly
+    cdir = calib_dir(task)
+    print(f"  calibration epoch {epoch_of(task)}  ({cdir.name})")
     cam_calib = [
-        str(CALIB_DIR / "T_mocap_to_cam_middle.json"),
-        str(CALIB_DIR / "T_mocap_to_cam_left.json"),
-        str(CALIB_DIR / "T_mocap_to_cam_right.json"),
+        str(cdir / "T_mocap_to_cam_middle.json"),
+        str(cdir / "T_mocap_to_cam_left.json"),
+        str(cdir / "T_mocap_to_cam_right.json"),
     ]
-    gel_L = str(CALIB_DIR / "T_gel_to_rigid_left.json")
-    gel_R = str(CALIB_DIR / "T_gel_to_rigid_right.json")
+    gel_L = str(cdir / "T_gel_to_rigid_left.json")
+    gel_R = str(cdir / "T_gel_to_rigid_right.json")
     try:
         cam_calibs, gel_center_left, gel_center_right = load_calibrations(
             cam_calib, gel_L, gel_R)
@@ -109,6 +122,8 @@ def _load_proj_calibs():
 
 
 from twm.tactile_align import describe as gel_describe, gel_lag_frames
+from twm.calib_epoch import (calib_dir, check_epoch, epoch_of,
+                             world_offset_m, describe as calib_describe)
 from twm.force_overlay import (draw_legend, load_forces,
                                row_for_h5_frame)
 
@@ -144,13 +159,42 @@ def _get_trim_offset(h5_path: Path) -> int:
         return 0
 
 
+def _flagged_intervals(task: str, date: str, ep: str) -> list[tuple[int, int, str]]:
+    """Curation intervals for this episode, in episode-frame coords.
+
+    The release catalogues its own defects (`bad_frames.json`); a preview that
+    plays a flagged frame without saying so reads as dirty data, when it is a
+    known, indexed sensor dropout excluded from the training segments.
+    """
+    import json
+    p = Path("/media/yxma/Disk1/twm/release") / task / "bad_frames.json"
+    if not p.exists():
+        return []
+    eps = json.loads(p.read_text()).get("episodes", {})
+    out = []
+    for k, spans in eps.get(f"{date}/{ep}", {}).items():
+        if isinstance(spans, list):
+            out += [(int(a), int(b), k) for a, b in spans]
+    return sorted(out)
+
+
 def build_one_preview(h5_path: Path, out_mp4: Path,
                       clip_s: float, speed: float,
                       project_cams, gel_center_left, gel_center_right,
                       dx: float = 0.0, dy: float = 0.0, dz: float = 0.0) -> None:
     output_fps = SOURCE_FPS * speed
     n_frames_target = int(round(clip_s * SOURCE_FPS))   # e.g. 30s * 30fps = 900
-    trim_offset = _get_trim_offset(h5_path)
+    task_name = h5_path.parent.parent.name
+    date_name = h5_path.parent.name
+    # Trim: the RELEASE parquet is the authority (same source the force rows
+    # already use). `_get_trim_offset` reads a processed/.pt sidecar that
+    # pushT never had, and "falls back to 0" — so pushT previews played the
+    # H5 pre-roll: up to 6.5 min BEFORE the episode, sensors parked, action
+    # frozen. A silent zero fallback is indistinguishable from the correct
+    # answer on every recording that doesn't need one.
+    trim_pq, n_rows = _parquet_trim_and_rows(task_name, date_name, h5_path.stem)
+    trim_offset = trim_pq if trim_pq is not None else _get_trim_offset(h5_path)
+    flagged = _flagged_intervals(task_name, date_name, h5_path.stem)
     with h5py.File(str(h5_path), "r") as f:
         cam_ts = f["timestamps"][:]
         T_h5 = len(cam_ts)
@@ -171,11 +215,8 @@ def build_one_preview(h5_path: Path, out_mp4: Path,
         gs_ref_L = f["gelsight/left/frames"][gel_at(ref_idx)]
         gs_ref_R = f["gelsight/right/frames"][gel_at(ref_idx)]
 
-        task_name = h5_path.parent.parent.name
-        date_name = h5_path.parent.name
+        calib_note = calib_describe(task_name, date_name, h5_path.stem)
         forces = load_forces(task_name, date_name, h5_path.stem, FORCE_ROOT)
-        trim_pq, n_rows = _parquet_trim_and_rows(task_name, date_name,
-                                                 h5_path.stem)
 
         panels = []
         overlay_errors = 0
@@ -203,10 +244,31 @@ def build_one_preview(h5_path: Path, out_mp4: Path,
                 status_override=(
                     f"[{task_name}] {h5_path.parent.name}/{h5_path.stem}  "
                     + (f"gel+{gel_lag}f  " if gel_lag else "")
+                    # Which calibration epoch and world offset produced the
+                    # projection, in frame. A viewer who can see "calib
+                    # 2026-05-12" can catch the wrong epoch; a viewer who
+                    # cannot has to trust that nobody pointed the builder at
+                    # the wrong directory, which is exactly what happened.
+                    + f"{calib_note}  "
                     + f"H5 frame {f_idx_int}/{T_h5}  "
                     f"({float(cam_ts[f_idx_int] - cam_ts[0]):.1f}s)"
                 ),
             )
+
+            # If the release catalogues this frame as bad (bad_frames.json,
+            # episode coords), say so ON the frame. The curation excludes
+            # these spans from the training segments, but the preview plays
+            # the raw stream — an unlabelled OT freeze or tactile spike here
+            # reads as dirty data, and got reported as exactly that.
+            ep_f = f_idx_int - trim_offset
+            tags = sorted({k for a, b, k in flagged if a <= ep_f <= b})
+            if tags:
+                cv2.rectangle(panel, (0, 0), (PANEL_W - 1, PANEL_H - 1),
+                              (0, 0, 255), 2)
+                cv2.putText(panel, "FLAGGED " + ",".join(tags)
+                            + "  (excluded from training segments)",
+                            (8, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.55,
+                            (0, 0, 255), 2)
 
             # Force for THIS frame, per side, resolved before drawing: the
             # disc is rendered inside draw_projection_overlay so it lands on
@@ -321,7 +383,7 @@ def main():
           f"(first {args.clip_s:.0f}s of post-trim data @ {args.speed:.1f}x speed -> "
           f"{args.clip_s / args.speed:.0f}s output)", flush=True)
 
-    project_cams, glc, grc = _load_proj_calibs()
+    project_cams, glc, grc = _load_proj_calibs(args.task)
     if project_cams:
         print(f"  projection overlay: ON ({len(project_cams)} cameras)", flush=True)
 
@@ -329,10 +391,22 @@ def main():
     for h5 in h5_files:
         out_mp4 = out_dir / f"{h5.stem}.mp4"
         print(f"  {h5.stem}: ", end="", flush=True)
+        # Per-episode world offset from the release's episodes.jsonl. The
+        # --dx/--dy/--dz flags remain as a manual override for recordings the
+        # release does not list; they are NOT the source of truth, because a
+        # flag that defaults to zero silently mis-renders the one date that
+        # needs it.
+        try:
+            dx, dy, dz = (args.dx, args.dy, args.dz)
+            if (dx, dy, dz) == (0.0, 0.0, 0.0):
+                dx, dy, dz = world_offset_m(args.task, args.date, h5.stem)
+        except KeyError as e:
+            print(f"SKIP ({e})", flush=True)
+            continue
         try:
             build_one_preview(h5, out_mp4, args.clip_s, args.speed,
                               project_cams, glc, grc,
-                              dx=args.dx, dy=args.dy, dz=args.dz)
+                              dx=dx, dy=dy, dz=dz)
             print(f"OK  -> {out_mp4.relative_to(OUT_ROOT.parent.parent.parent)}  "
                   f"({out_mp4.stat().st_size / 1024:.0f} KB)", flush=True)
         except Exception as e:

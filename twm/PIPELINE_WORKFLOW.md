@@ -100,6 +100,43 @@ python scripts/build_episode_previews.py --task <task> --date <date>
 python -m force_recovery.upload_previews --dry-run   # then without
 ```
 
+**Extrinsics are per task, world offset per episode — `calib_epoch` owns
+both.** The cameras were recalibrated between tasks (May-12 for motherboard,
+June-26 for pushT; |dT| 53–64 mm, 35–73 px of projection error between the
+epochs) and the 2026-05-19 session redefined the world origin by
+(0.23, 0, 0.175) m. Both facts are recorded in the dataset itself
+(`data/<task>/calibration/`, `episodes.jsonl`) and were nonetheless hard-coded
+to one value in the builder — every motherboard preview shipped with pushT's
+extrinsics, and 05-19 carried both errors at once, which is why it looked
+worst and got reported first. The builder now reads `calib_epoch`, refuses a
+wrong epoch, and bakes `calib <date> world+(dx,dy,dz)` into the status bar so
+a viewer can catch the wrong epoch without trusting the pipeline.
+
+**The clip window starts at the RELEASE trim, read from the release parquet —
+never from a sidecar with a zero fallback.** `_get_trim_offset` read a
+processed/.pt file that pushT never had and "fell back to 0", so pushT
+previews played the H5 pre-roll: up to 6.5 minutes *before* the episode,
+sensors parked, action frozen — reported as frozen actions in clips 2–4. The
+force rows were already using the release trim; the same fact had two
+sources, one right and one silently wrong.
+
+**Frames the release catalogues as bad are labelled ON the frame.** The
+curation (same detectors and thresholds for every task) records OT freezes,
+pose teleports and tactile intensity spikes in `bad_frames.json` and excludes
+them from `segments.json` training spans — but previews play the raw stream.
+An unlabelled magenta GelSight flicker or frozen pose reads as dirty data;
+with the red `FLAGGED <detector>` banner it reads as what it is: a known,
+indexed dropout that training never sees. Camera-stream (RealSense)
+corruption has NO detector yet — open item.
+
+The uploader enforces two more gates, both proven on the real defects:
+**previews must mirror the release** (a clip for an unpublished episode is
+refused — four such orphans sat on the dataset for months and were reported
+as "not updated"; they could never be updated, there was nothing to update
+them from), and **clips must post-date the renderer sources** (31 of 32
+motherboard clips on disk were rendered 30 minutes before the epoch fix and
+were indistinguishable from good output).
+
 The force disc's **area** is linear in newtons (`radius ∝ √F`) — a
 radius-proportional dot exaggerates large forces quadratically to the eye. The
 legend uses the same `radius_px`, so picture and number cannot drift. The

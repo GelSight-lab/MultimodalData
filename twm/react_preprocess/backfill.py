@@ -89,7 +89,10 @@ def _source_is_new(h5_path: Path, side: str, start: int, count: int) -> np.ndarr
     import hdf5plugin  # noqa: F401
 
     with h5py.File(str(h5_path), "r") as f:
-        block = f[f"gelsight/{side}/frames"][start:start + count]
+        # Consecutive frames of ONE stream compared to each other (bit-exact
+        # is_new truth); no cross-modal pairing, so the camera<->gel lag
+        # cannot enter.
+        block = f[f"gelsight/{side}/frames"][start:start + count]  # tactile-lag-exempt
     truth = np.ones(len(block), bool)
     for i in range(1, len(block)):
         truth[i] = not np.array_equal(block[i], block[i - 1])

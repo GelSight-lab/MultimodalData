@@ -25,14 +25,13 @@ from typing import Callable, Iterator
 
 from .config import H5_ROOTS, STAGE_ROOT, WORLD_OFFSET
 
-CALIB_ROOT = Path(__file__).resolve().parent.parent / "calibration"
-
-# The rigs were recalibrated between sessions; each task must use the set that
-# was current when it was recorded.
-CALIB_DIRS = {
-    "motherboard": CALIB_ROOT / "result backup",   # May 12
-    "pushT": CALIB_ROOT / "result",                # June 26
-}
+# The rigs were recalibrated between sessions; each task must use the set
+# that was current when it was recorded. That mapping has exactly one home —
+# calib_epoch — because five separate copies of it is how every motherboard
+# preview shipped with pushT's extrinsics.
+import sys as _sys
+_sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from twm.calib_epoch import CALIB_DIRS  # noqa: E402,F401  (re-export)
 
 CLIP_SECONDS = 30.0
 SPEED = 2.0
