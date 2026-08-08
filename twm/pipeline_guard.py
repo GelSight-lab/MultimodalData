@@ -49,14 +49,49 @@ def _py_files():
 
 
 def check_single_lag_definition() -> list[str]:
+    """No module may state the lag itself — as an assignment OR a default.
+
+    The first version matched assignments only, and missed
+    `row_for_h5_frame(..., legacy_shift: int = 15)` sitting in the force
+    overlay for the whole life of the guard: a fourth copy of the constant,
+    in the exact module whose docstring explains why copies are dangerous.
+    A default argument is a declaration; it just does not look like one.
+    """
     bad = []
+    assign = re.compile(r"\s*(LEGACY_SHIFT|SHIFT|TACTILE_LAG)\s*=\s*\d+")
+    default = re.compile(r"(legacy_shift|shift|tactile_lag|lag)"
+                         r"\s*(:\s*[\w\[\]| ]+)?\s*=\s*(\d+)", re.I)
     for p in _py_files():
         if p.name in ("tactile_align.py", "pipeline_guard.py"):
             continue
-        for i, line in enumerate(p.read_text().splitlines(), 1):
-            if re.match(r"\s*(LEGACY_SHIFT|SHIFT|TACTILE_LAG)\s*=\s*\d+", line):
+        src = p.read_text()
+        for i, line in enumerate(src.splitlines(), 1):
+            if assign.match(line):
                 bad.append(f"{p.relative_to(ROOT)}:{i}: redeclares the tactile "
                            f"lag — import it from tactile_align instead")
+        # defaults: only inside a def, and only a nonzero literal (0 is the
+        # honest "no shift" used by the latency viewer's opt-out)
+        try:
+            tree = ast.parse(src)
+        except SyntaxError as e:
+            # Report, never crash: a guard that dies on one unparseable file
+            # takes every other check down with it and reads as "no run".
+            bad.append(f"{p.relative_to(ROOT)}:{e.lineno}: cannot parse "
+                       f"({e.msg}) — not checked for a duplicate lag")
+            continue
+        for fn in (n for n in ast.walk(tree)
+                   if isinstance(n, ast.FunctionDef)):
+            for arg, dflt in zip(
+                    fn.args.args[len(fn.args.args) - len(fn.args.defaults):],
+                    fn.args.defaults):
+                if (default.match(f"{arg.arg}={ast.unparse(dflt)}")
+                        and isinstance(dflt, ast.Constant)
+                        and isinstance(dflt.value, int) and dflt.value != 0
+                        and OPT_OUT not in src.splitlines()[fn.lineno - 1]):
+                    bad.append(f"{p.relative_to(ROOT)}:{fn.lineno}: "
+                               f"{fn.name}({arg.arg}={dflt.value}) hard-codes "
+                               f"the tactile lag as a default — default to "
+                               f"None and fall back to tactile_align")
     return bad
 
 

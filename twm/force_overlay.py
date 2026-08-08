@@ -1,4 +1,8 @@
-"""Semi-transparent force dot for the episode preview videos.
+"""Semi-transparent press-force disc for the episode preview videos.
+
+It is drawn on the CAMERA views, centred on the sensor's projected position
+(see the WHERE note below), by `viz.draw_projection_overlay`. This module owns
+the force -> pixel law and the legend; `viz` owns the placement.
 
 One mapping function, `radius_px`, is the single source of truth for how a
 newton becomes a pixel. The drawn circle, the legend and any readout all call
@@ -26,18 +30,25 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-# Panel geometry (viz.build_preview_panel): row 2 is
-# [gs_L_raw | gs_L_diff | gs_R_raw | gs_R_diff | blank], 240x240 each.
-GS_THUMB = 240
-ROW2_Y = 240
-TILE_X = {"left": 0, "right": 2 * GS_THUMB}      # the RAW tile of each side
+from twm.tactile_align import LEGACY_SHIFT
 
+# WHERE the dot goes: the camera views, at the sensor's own projected
+# position — not on the tactile tiles. Two reasons the first version was wrong:
+# the tile IS the tactile signal, so a disc over it hides the thing it
+# annotates; and a dot pinned to a tile corner says how hard but never where,
+# which is the half a reader cannot get from the number alone. `viz`
+# draws it inside `draw_projection_overlay`, sharing that function's projected
+# centre, so the dot and the pose axes cannot disagree about the sensor.
+#
 # Force -> radius. F_FULL is the force at which the dot reaches R_MAX; it is
-# the top of the band the React episodes actually occupy (peaks ~2-8 N), not a
-# per-clip autoscale, so a dot means the same thing in every video.
+# the top of the band the React episodes actually occupy, not a per-clip
+# autoscale, so a dot means the same thing in every video.
 F_FULL_N = 8.0
-R_MIN_PX = 4.0
-R_MAX_PX = 74.0                                   # < GS_THUMB/2, stays in tile
+R_MIN_PX = 3.0
+# Sized for a 320x240 camera thumbnail, not the old 240 px tactile tile: at
+# full scale the disc spans 44 px, ~14% of the view's width. The previous
+# 74 px radius covered the workpiece the video exists to show.
+R_MAX_PX = 22.0
 COLOR_BGR = (60, 120, 255)                        # orange, matches site accent
 ALPHA = 0.42
 
@@ -49,8 +60,16 @@ def radius_px(force_n: float) -> float:
 
 
 def row_for_h5_frame(h5_frame: int, trim_parquet: int, n_rows: int,
-                     legacy_shift: int = 15) -> int | None:
-    """Release-parquet row that produced this HDF5 frame, or None if outside."""
+                     legacy_shift: int | None = None) -> int | None:
+    """Release-parquet row that produced this HDF5 frame, or None if outside.
+
+    The shift defaults to `tactile_align.LEGACY_SHIFT` rather than a literal.
+    It sat here as `legacy_shift: int = 15` — a fourth copy of the one fact
+    `tactile_align` exists to own, and one the guard could not see, because a
+    default argument is not an assignment. The guard now looks for both.
+    """
+    if legacy_shift is None:
+        legacy_shift = LEGACY_SHIFT
     row = int(h5_frame) - int(trim_parquet) - int(legacy_shift)
     return row if 0 <= row < n_rows else None
 
@@ -66,50 +85,74 @@ def load_forces(task: str, date: str, episode: str,
     return out
 
 
-def draw_force_dot(panel: np.ndarray, side: str, force_n: float,
-                   centroid_xy: tuple[float, float] | None = None) -> None:
-    """Blend one semi-transparent dot onto the raw GelSight tile, in place.
+def draw_force_halo(canvas: np.ndarray, xy: tuple[float, float],
+                    force_n: float, *, scale: int = 1, label: bool = True,
+                    bounds: tuple[int, int, int, int] | None = None) -> None:
+    """Blend the force disc at a canvas pixel position, in place.
 
-    `centroid_xy` is in tile pixels; without it the dot sits at the tile centre.
-    A zero force draws nothing at all — an always-present dot would imply
+    `xy` is in FINAL panel pixels; `scale` is the supersample factor of
+    `canvas` (viz renders the overlay on a 2x buffer, so radius and text
+    scale with it — hard-coding 1x here would have drawn a half-size dot).
+
+    `bounds` is the (x0, y0, x1, y1) rect the disc may occupy, in final panel
+    pixels — the camera thumbnail it belongs to. It is REQUIRED in practice:
+    `project_gel_pose` happily returns coordinates outside the 640x480 image
+    when the sensor is out of a camera's frustum, and clipping merely to the
+    canvas let one such projection paint a disc down in the tactile row. The
+    render verifier caught it; the eye would not have, since it looks like a
+    plausible dot on a plausible tile.
+
+    A zero force draws nothing at all: an always-present dot would imply
     contact where there is none.
     """
     if not np.isfinite(force_n) or force_n <= 0.02:
         return
-    x0 = TILE_X[side]
-    cx, cy = centroid_xy if centroid_xy else (GS_THUMB / 2, GS_THUMB / 2)
-    r = radius_px(force_n)
-    cx = float(np.clip(cx, r, GS_THUMB - r))
-    cy = float(np.clip(cy, r, GS_THUMB - r))
-    c = (int(x0 + cx), int(ROW2_Y + cy))
+    H, W = canvas.shape[:2]
+    bx0, by0, bx1, by1 = ((0, 0, W // scale, H // scale) if bounds is None
+                          else bounds)
+    # The CENTRE must lie in the view it annotates. A disc whose centre is
+    # outside means the sensor is not visible in this camera; drawing a
+    # clipped crescent at the border would assert a position that is wrong.
+    if not (bx0 <= xy[0] < bx1 and by0 <= xy[1] < by1):
+        return
+    cx, cy = float(xy[0]) * scale, float(xy[1]) * scale
+    r = radius_px(force_n) * scale
+    c = (int(cx), int(cy))
 
-    roi_x0, roi_y0 = int(c[0] - r - 3), int(c[1] - r - 3)
-    roi_x1, roi_y1 = int(c[0] + r + 4), int(c[1] + r + 4)
-    roi_x0, roi_y0 = max(roi_x0, 0), max(roi_y0, 0)
-    roi_x1 = min(roi_x1, panel.shape[1])
-    roi_y1 = min(roi_y1, panel.shape[0])
+    roi_x0 = max(int(cx - r - 3), bx0 * scale)
+    roi_y0 = max(int(cy - r - 3), by0 * scale)
+    roi_x1 = min(int(cx + r + 4), bx1 * scale)
+    roi_y1 = min(int(cy + r + 4), by1 * scale)
     if roi_x1 <= roi_x0 or roi_y1 <= roi_y0:
         return
-    roi = panel[roi_y0:roi_y1, roi_x0:roi_x1]
+    roi = canvas[roi_y0:roi_y1, roi_x0:roi_x1]
     layer = roi.copy()
     cv2.circle(layer, (c[0] - roi_x0, c[1] - roi_y0), int(r), COLOR_BGR, -1,
                cv2.LINE_AA)
     cv2.addWeighted(layer, ALPHA, roi, 1 - ALPHA, 0, roi)
-    cv2.circle(roi, (c[0] - roi_x0, c[1] - roi_y0), int(r), COLOR_BGR, 1,
+    cv2.circle(roi, (c[0] - roi_x0, c[1] - roi_y0), int(r), COLOR_BGR, scale,
                cv2.LINE_AA)
-    # Readout at the TOP of the tile: the bottom strip is occupied by the
-    # panel's own status bar, which covered it in the first render.
-    cv2.putText(panel, f"{force_n:.1f} N", (x0 + 8, ROW2_Y + 22),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.56, (0, 0, 0), 3, cv2.LINE_AA)
-    cv2.putText(panel, f"{force_n:.1f} N", (x0 + 8, ROW2_Y + 22),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.56, COLOR_BGR, 1, cv2.LINE_AA)
+    if label:
+        tx = min(int(cx + r + 4), (bx1 - 46) * scale)
+        ty = max(int(cy - r - 4), (by0 + 12) * scale)
+        for col, th in [((0, 0, 0), 3 * scale), (COLOR_BGR, scale)]:
+            cv2.putText(canvas, f"{force_n:.1f}N", (tx, ty),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.42 * scale, col, th,
+                        cv2.LINE_AA)
 
 
 def draw_legend(panel: np.ndarray, x: int, y: int,
                 marks=(0.5, 2.0, 8.0)) -> None:
-    """Scale key drawn with the SAME `radius_px`, so it cannot drift."""
-    cv2.putText(panel, "force", (x, y - int(R_MAX_PX) - 12),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (210, 210, 210), 1, cv2.LINE_AA)
+    """Scale key drawn with the SAME `radius_px`, so it cannot drift.
+
+    Circles share a vertical CENTRE and labels share a BASELINE. Hanging each
+    label off its own circle instead made the three sit at three heights —
+    the eye reads that stagger as meaning something, when it only encodes the
+    radius already shown by the circle.
+    """
+    cv2.putText(panel, "press force", (x, y - int(R_MAX_PX) - 10),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.42, (210, 210, 210), 1, cv2.LINE_AA)
+    baseline = int(y + R_MAX_PX + 14)
     cursor = x
     for f in marks:
         r = radius_px(f)
@@ -118,7 +161,9 @@ def draw_legend(panel: np.ndarray, x: int, y: int,
         cv2.circle(layer, (cx, cy), int(r), COLOR_BGR, -1, cv2.LINE_AA)
         cv2.addWeighted(layer, ALPHA, panel, 1 - ALPHA, 0, panel)
         cv2.circle(panel, (cx, cy), int(r), COLOR_BGR, 1, cv2.LINE_AA)
-        cv2.putText(panel, f"{f:g}N", (int(cursor + r - 12), int(y + r + 15)),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.44, (210, 210, 210), 1,
+        label = f"{f:g}N"
+        (tw, _), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.36, 1)
+        cv2.putText(panel, label, (cx - tw // 2, baseline),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.36, (210, 210, 210), 1,
                     cv2.LINE_AA)
-        cursor += 2 * r + 14
+        cursor += 2 * r + max(14, tw - 2 * r + 6)   # never let labels collide

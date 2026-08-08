@@ -66,9 +66,9 @@ def process_side(task: str, date: str, ep: str, side: str,
     # What was here — a single N-per-mm3 constant times the v1 MLP volume —
     # scored rho 0.297 on GlowTact `round` and mapped a true 0.16-8 N range
     # onto 0.01-103 N. See react_calib for the held-out numbers.
-    from .react_calib import fit as _fit_calib
+    from .react_calib import CALIBRATION_NAME, fit as _fit_calib
     predict_force = _fit_calib(report=False)
-    scale_source = "react_calib (stages + gain field + clip correction)"
+    scale_source = CALIBRATION_NAME
 
     out = {k: np.zeros(T, np.float32) for k in FIELDS}
     kept_depths: list[tuple[int, np.ndarray]] = []
@@ -122,7 +122,13 @@ def process_side(task: str, date: str, ep: str, side: str,
     np.savez_compressed(
         out_dir / f"{ep}_{side}.npz",
         **out, **{f"depth_row_{row}": d for row, d in kept_depths},
-        **{k: v for k, v in meta.items() if not isinstance(v, str)},
+        # Strings included ON PURPOSE. The previous filter dropped every
+        # str-valued field, which meant `force_calibration` — the identity of
+        # the map turning mm^3 into newtons — existed only in the log. An npz
+        # that cannot say which calibration produced its newtons is how a
+        # pixel-unit weight vector went on scoring mm-unit features for weeks.
+        **{k: (np.str_(v) if isinstance(v, str) else v)
+           for k, v in meta.items()},
         )
     meta["out"] = str(out_dir / f"{ep}_{side}.npz")
     meta["force_max_n"] = float(out["force_normal_n"].max())

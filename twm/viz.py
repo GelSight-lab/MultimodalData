@@ -29,6 +29,8 @@ import numpy as np
 from PIL import Image
 from scipy.spatial.transform import Rotation
 
+from twm.force_overlay import draw_force_halo
+
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Display configuration
@@ -56,6 +58,7 @@ CAM_CALIB_NAME: dict[int, str] = {
 # Layout constants — match what the live recording UI used historically.
 RS_THUMB_W, RS_THUMB_H = 320, 240   # one RealSense thumbnail
 GS_THUMB_W, GS_THUMB_H = 240, 240   # one GelSight thumbnail (raw or diff)
+ROW2_Y = RS_THUMB_H                 # top of row 2 (the tactile strip)
 PANEL_W, PANEL_H = 1280, 480
 
 # OptiTrack tracker colors (BGR, drawn into the BGR panel).
@@ -342,6 +345,7 @@ def draw_projection_overlay(panel: np.ndarray,
                              gel_center_right: np.ndarray,
                              *,
                              frozen_side: Optional[str] = None,
+                             forces_n: Optional[dict] = None,
                              axis_len_mm: float = 120.0) -> None:
     """Draw GelSight projection (center dot + 3 axis tips) on each cam thumb.
 
@@ -354,6 +358,14 @@ def draw_projection_overlay(panel: np.ndarray,
 
     If `frozen_side ∈ {"left", "right"}`, a second red ring + label is drawn
     on top of that sensor's dot in every cam.
+
+    `forces_n` = {"left": N, "right": N} adds the semi-transparent press-force
+    disc, centred on the SAME projected point as that sensor's axes. It is
+    drawn here rather than by the caller for exactly that reason: two
+    independent projections of the sensor would eventually disagree, and the
+    disagreement would look like a calibration error rather than a drawing
+    bug. Drawn before the axes so the crisp pose marker stays readable
+    through it.
 
     Modifies `panel` in place.
     """
@@ -386,6 +398,12 @@ def draw_projection_overlay(panel: np.ndarray,
             cx, cy = _scale_to_thumb(center[0], center[1])
             cx += x_offset
             cx_b, cy_b = cx * SCALE, cy * SCALE
+            # Press force, under the axes, at this same projected centre.
+            if forces_n and forces_n.get(side) is not None:
+                draw_force_halo(big, (cx, cy), float(forces_n[side]),
+                                scale=SCALE,
+                                bounds=(x_offset, 0,
+                                        x_offset + RS_THUMB_W, RS_THUMB_H))
             # Axes (thickness 3 on 2x canvas = 1.5 effective px after downsize)
             for tip, ac, al in zip(axes, AXIS_BGR, AXIS_LABELS):
                 if tip is None:

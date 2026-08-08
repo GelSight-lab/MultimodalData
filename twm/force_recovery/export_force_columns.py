@@ -108,6 +108,13 @@ GEL_THICKNESS_MM = 4.25
 SIDES = ("left", "right")
 POSE_DIM = 7
 
+# Imported, not re-declared: the exporter must reject exactly the npz the
+# batch considers stale. A second literal here would silently let a
+# superseded calibration into the published columns the next time one side
+# was bumped and the other forgotten — which is how 36 sidecars ended up
+# advertising a scale that no longer existed.
+from .batch_worker import PIPELINE_VERSION as MIN_PIPELINE_VERSION  # noqa: E402
+
 
 class RowCountMismatch(RuntimeError):
     """npz row count != parquet row count. Never aligned by truncation."""
@@ -202,7 +209,23 @@ def build_side(task: str, date: str, ep: str, side: str, table: pa.Table,
     with np.load(npz_path) as d:
         force = np.asarray(d["force_normal_n"], np.float64)
         max_depth = np.asarray(d["max_depth_mm"], np.float64)
-        scale = float(d["scale_n_per_mm3"])
+        # WHICH calibration produced these newtons, carried in the artifact.
+        # The old field was a single float `scale_n_per_mm3`, which could only
+        # describe a one-number map; the current estimator is a gain field plus
+        # a clipping correction plus an isotonic fit, so a float cannot name
+        # it. Refuse rather than guess: an unlabelled npz is exactly the state
+        # in which the pixel/mm mismatch went unnoticed.
+        version = int(d["pipeline_version"]) if "pipeline_version" in d else 0
+        if "force_calibration" not in d:
+            raise ValueError(
+                f"{npz_path}: no force_calibration field (pipeline_version "
+                f"{version}) -- run `python -m force_recovery.stamp_calibration`")
+        calibration = str(d["force_calibration"])
+    if version < MIN_PIPELINE_VERSION:
+        raise ValueError(
+            f"{npz_path}: pipeline_version {version} < {MIN_PIPELINE_VERSION}. "
+            f"Versions below {MIN_PIPELINE_VERSION} come from the calibration "
+            f"that scored rho 0.143 end to end; re-run run_episode.")
     T = table.num_rows
     if len(force) != T:
         raise RowCountMismatch(
@@ -243,7 +266,8 @@ def build_side(task: str, date: str, ep: str, side: str, table: pa.Table,
         "side": side,
         "rows": T,
         "npz": str(npz_path),
-        "scale_n_per_mm3": scale,
+        "force_calibration": calibration,
+        "pipeline_version": version,
         "n_contact_rows": int(contact.sum()),
         "no_contact_frac": float(1.0 - contact.mean()),
         "is_new_frac": float(is_new.mean()),
@@ -325,6 +349,13 @@ def export_episode(task: str, date: str, ep: str, stiffness: float,
         "duplicate_rows": "tactile_<side>_is_new == False rows reuse the "
                           "previous estimate (forward fill, asserted exact)",
         "source_release": str(src),
+        "force_calibration": sorted({d["force_calibration"] for d in diags}),
+        "supersedes": "Exports before 2026-08-07 used a calibration that "
+                      "applied pixel-unit weights to mm-unit features "
+                      "(end-to-end rho 0.143, peak force 18.3 N). Those "
+                      "newton values are void; these come from react_calib "
+                      "(held-out rho 0.739, MAE 1.23 N, split by press "
+                      "position).",
     }
     meta = dict(table.schema.metadata or {})
     meta[b"twm.force_export"] = json.dumps(header).encode()
@@ -484,6 +515,15 @@ def verify(root: Path = EXPORT_ROOT) -> dict:
         "k_for_p95_within_gel": float(np.percentile(force, 95)
                                       / GEL_THICKNESS_MM),
         "k_for_max_within_gel": float(force.max() / GEL_THICKNESS_MM),
+        # How much of the data sits ON the estimator's upper limit. The
+        # isotonic stage clips at the hardest press in its calibration set,
+        # so anything harder is recorded AT that value, not above it — the
+        # max is a floor, and this fraction says how often it is one.
+        # Computed here rather than quoted, because quoting it from a partial
+        # batch is exactly how "0.27%" (48 of 72 sides) reached a draft when
+        # the full set says 0.90%.
+        "force_ceiling_n": float(force.max()),
+        "force_at_ceiling_frac": float((force >= force.max() - 0.01).mean()),
         "identity_rows_checked": ident_rows,
         "identity_max_abs_dev": float(max(ident_dev)) if ident_dev else 0.0,
         "identity_pass": bool(ident_dev and max(ident_dev) == 0.0),

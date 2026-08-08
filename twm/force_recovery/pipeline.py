@@ -81,6 +81,12 @@ def penetration_mm(force_n, k_n_per_mm: float = STIFFNESS_N_PER_MM):
 
     Zero force gives exactly zero penetration (not NaN), so a no-contact frame
     yields a target pose identical to the observed one.
+
+    At the shipped k = 1 N/mm this is knowingly soft: p95 = 5.78 mm and 8.84%
+    of the 480,080 exported samples exceed the 4.25 mm gel. k = 1.4 puts p95
+    inside the gel, k = 1.7 the maximum. The data ships at 1 N/mm because the
+    stiffness is a declared assumption a consumer may override, not a fact —
+    but a consumer treating the target as a reachable pose should raise it.
     """
     return np.asarray(force_n, dtype=float) / float(k_n_per_mm)
 

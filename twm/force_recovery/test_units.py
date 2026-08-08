@@ -153,6 +153,63 @@ def test_tactile_lag_is_detected_per_file_not_assumed():
     assert gel_lag_frames(_Fake(ts=False)) == LEGACY_SHIFT
 
 
+def test_force_disc_annotates_rather_than_covers():
+    """The disc lives on a camera view now, so it is bounded by that view.
+
+    The first version was sized for a 240 px tactile tile (R_MAX 74) and, moved
+    as-is onto the 320x240 camera thumbnail, would have spanned 46% of its
+    width — hiding the workpiece the video exists to show.
+    """
+    from twm.force_overlay import R_MAX_PX
+    from twm.viz import RS_THUMB_W, RS_THUMB_H
+    assert 2 * R_MAX_PX <= 0.20 * RS_THUMB_W, "disc too wide for a cam view"
+    assert 2 * R_MAX_PX <= 0.25 * RS_THUMB_H, "disc too tall for a cam view"
+
+
+def test_force_halo_stays_inside_the_view_it_annotates():
+    """A sensor out of a camera's frustum must draw NOTHING in that view.
+
+    `project_gel_pose` returns coordinates outside the 640x480 image when the
+    sensor is not visible; scaled and offset by the thumbnail slot, those land
+    on a *neighbouring* tile — or below the camera row entirely, on the
+    tactile tiles. The first version clipped only to the canvas and did
+    exactly that: a confident orange disc on a panel region where no sensor
+    was. Only the render verifier caught it.
+    """
+    import numpy as np
+    from twm.force_overlay import draw_force_halo
+
+    panel = np.full((480, 1280, 3), 40, np.uint8)
+    view = (320, 0, 640, 240)                      # the middle camera view
+    for outside in [(700, 120), (300, 120), (480, 300), (480, -10)]:
+        draw_force_halo(panel, outside, 8.0, bounds=view)
+        assert (panel == 40).all(), f"drew ink for out-of-view {outside}"
+
+    draw_force_halo(panel, (480, 120), 8.0, bounds=view)
+    ink = (panel != 40).any(axis=2)
+    assert ink.sum() > 0, "in-view centre drew nothing"
+    assert ink[:, :320].sum() == 0 and ink[:, 640:].sum() == 0, "spilled sideways"
+    assert ink[240:].sum() == 0, "spilled into the tactile row"
+
+
+def test_force_halo_tracks_the_supersample_scale():
+    """`viz` blends the disc on a 2x buffer; radius must scale with it.
+
+    Ignoring `scale` draws a half-size dot that survives every other check —
+    it looks deliberate, just wrong — so assert the 2x ink is ~4x the 1x ink.
+    """
+    import numpy as np
+    from twm.force_overlay import draw_force_halo
+
+    def ink(scale):
+        c = np.full((240 * scale, 320 * scale, 3), 40, np.uint8)
+        draw_force_halo(c, (160, 120), 6.0, scale=scale, label=False)
+        return int((c != 40).any(axis=2).sum())
+
+    one, two = ink(1), ink(2)
+    assert one > 0 and abs(two / one - 4.0) < 0.15, (one, two)
+
+
 if __name__ == "__main__":
     for name, fn in sorted(globals().items()):
         if name.startswith("test_"):

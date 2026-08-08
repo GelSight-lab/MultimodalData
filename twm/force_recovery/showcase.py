@@ -90,6 +90,12 @@ def _basis(x, y):
     return np.column_stack([np.ones_like(x), x, y, x * x, y * y, x * y])
 
 
+def _react_calib_name() -> str:
+    """The calibration's own name, never a second description of it."""
+    from .react_calib import CALIBRATION_NAME
+    return CALIBRATION_NAME
+
+
 def _glowtact_calib():
     """React's newton scale — delegated to `react_calib`.
 
@@ -547,7 +553,7 @@ def react_showcase(task: str = "motherboard", date: str = "2026-05-10",
     trace = {
         "meta": {"episode": f"{task}/{date}/{ep}", "side": side, "fps": 30,
                  "stiffness": float(act.stiffness), "t0_row": t0,
-                 "peak_row": peak, "force": "LUT v2, GlowTact-calibrated"},
+                 "peak_row": peak, "force": _react_calib_name()},
         "force_n": [round(float(v), 3) for v in force[sl]],
         "pen_mm": [round(float(v) * 1000.0, 3)
                    for v in act.penetration_m[sl]],

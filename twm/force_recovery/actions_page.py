@@ -177,7 +177,7 @@ is why the offset is drawn on its own millimetre scale.</p>
 <div class="lbl" style="margin-top:6px">k·‖target−pose‖ vs F̂ — machine precision</div></div>
 <div class="stat"><div class="lbl">penetration in contact</div>
 <div class="val">__P50__ mm <span style="font-size:.9rem;color:var(--dim)">median</span></div>
-<div class="lbl" style="margin-top:6px">max __PMAX__ mm at the hardest ~23 N press</div></div>
+<div class="lbl" style="margin-top:6px">max __PMAX__ mm, i.e. the hardest __FMAX__ N press at k=__KNMM__ N/mm</div></div>
 </div>
 <div class="card">
 <p style="margin-top:0"><b>Why this matters for training.</b> Policies trained on
@@ -290,6 +290,8 @@ setI(Math.round(N*0.5));
             .replace("__RT__", f"{rt:.0e}")
             .replace("__P50__", f"{pen_p50:.1f}")
             .replace("__PMAX__", f"{pen_max:.1f}")
+            .replace("__FMAX__", f"{pen_max * STIFFNESS_N_PER_M / 1000.0:.1f}")
+            .replace("__KNMM__", f"{STIFFNESS_N_PER_M / 1000.0:g}")
             .replace("__NS__", str(n_sides)))
     out = SITE / "actions.html"
     page = page.replace("@@K_NM@@", f"{STIFFNESS_N_PER_M:.0f}")
@@ -382,8 +384,8 @@ is why the offset is drawn on its own millimetre scale.</p>""",
     ("k·‖target−pose‖ vs F̂ — machine precision", "k·‖target−pose‖ 对比 F̂ —— 机器精度"),
     ('<div class="lbl">penetration in contact</div>', '<div class="lbl">接触期穿透量</div>'),
     ('>median</span>', '>中位数</span>'),
-    ("max {pmax} mm at the hardest ~23 N press",
-     "最硬的 ~23 N 按压达 {pmax} mm"),
+    ("max {pmax} mm, i.e. the hardest {fmax} N press at k={knmm} N/mm",
+     "最大 {pmax} mm，即 k={knmm} N/mm 下最硬的 {fmax} N 按压"),
     ("""<p style="margin-top:0"><b>Why this matters for training.</b> Policies trained on
 raw poses learn "touch the surface and stop": the label says the fingertip halts
 at the contact plane, so at deployment the controller exerts whatever residual
@@ -432,11 +434,14 @@ def build_zh() -> Path:
     # numeric placeholders inside translated strings
     import re
     ns = re.search(r"all (\d+) sides", en).group(1)
-    pmax = re.search(r"max ([\d.]+) mm at the hardest", en).group(1)
+    pmax = re.search(r"max ([\d.]+) mm, i\.e\.", en).group(1)
+    fmax = re.search(r"hardest ([\d.]+) N press", en).group(1)
+    knmm = re.search(r"press at k=([\d.]+) N/mm", en).group(1)
     zh = en
     for old, new in ZH:
-        old = old.replace("{ns}", ns).replace("{pmax}", pmax)
-        new = new.replace("{ns}", ns).replace("{pmax}", pmax)
+        sub = lambda t: (t.replace("{ns}", ns).replace("{pmax}", pmax)
+                          .replace("{fmax}", fmax).replace("{knmm}", knmm))
+        old, new = sub(old), sub(new)
         assert old in zh, f"ZH replacement missed: {old[:60]!r}"
         zh = zh.replace(old, new, 1)
     out = SITE / "actions_zh.html"

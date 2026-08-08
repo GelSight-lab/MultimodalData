@@ -244,85 +244,154 @@ FeelAnyForce 从 0.985 掉到 0.976；背景相减是死线——不减背景时
 18.4&ndash;19.5 N，&rho; 变<b>负</b>。</p>
 </div>'''
 
-SEC_EXPORT_EN = r'''<h2>Force as an observation, and a force-informed action</h2>
+
+# ── the export section's numbers come from the artifact, never from memory ───
+VERIFY_JSON = Path("/media/yxma/Disk1/twm/release_force/force_export_verify.json")
+MANIFEST_JSON = Path(
+    "/media/yxma/Disk1/twm/release_force/force_export_manifest.json")
+
+
+def _export_stats() -> dict:
+    """Numbers for the export section, read from `export_force_columns verify`.
+
+    They used to be typed into the HTML. After the calibration fix six of them
+    were wrong on a published page at once (94.3% -> 88.6%, 219,518 ->
+    301,727 rows, and the whole stiffness table), because prose does not
+    recompute itself. Now the page cannot state a number the artifact does
+    not contain: a stale run shows up as a missing file, not as confident
+    wrong text.
+    """
+    v = json.loads(VERIFY_JSON.read_text())
+    mf = json.loads(MANIFEST_JSON.read_text())
+    sweep = v["penetration_sweep"]
+
+    def _rows(shipped_label: str) -> str:
+        out = []
+        for k in sorted(sweep, key=float):
+            r, hot = sweep[k], k == "1.0"
+            b0, b1 = ("<b>", "</b>") if hot else ("", "")
+            name = f"{k} ({shipped_label})" if hot else k
+            out.append(
+                f"<tr><td>{b0}{name}{b1}</td>"
+                f"<td>{b0}{r['p95_mm']:.2f} mm{b1}</td>"
+                f"<td>{r['max_mm']:.2f} mm</td>"
+                f"<td>{b0}{r['frac_over_gel']:.2%}{b1}</td></tr>")
+        return "".join(out)
+    g = v["gel_stiffness_implied_n_per_mm_p5_p25_p50_p75_p95"]
+    return {
+        "episodes": mf["n_episodes"], "rows": f"{mf['total_rows']:,}",
+        "sides": v["n_sensor_sides"], "samples": f"{v['total_force_samples']:,}",
+        "align": f"{v['alignment_pass']}/{v['n_sensor_sides']}",
+        "rise": f"{v['direction_rise_positive_frac']:.1%}",
+        "corr_pos": f"{v['direction_corr_positive_frac']:.1%}",
+        "identity_rows": f"{v['identity_rows_checked']:,}",
+        "roundtrip": f"{v['roundtrip_max_abs_err_n']:.1e}",
+        "p95": f"{sweep['1.0']['p95_mm']:.2f}",
+        "over_gel": f"{sweep['1.0']['frac_over_gel']:.2%}",
+        "ceiling": f"{v['force_ceiling_n']:.3f}",
+        "at_ceiling": f"{v['force_at_ceiling_frac']:.2%}",
+        "k_p95": f"{v['k_for_p95_within_gel']:.1f}",
+        "k_max": f"{v['k_for_max_within_gel']:.1f}",
+        "gel_k_med": f"{g[2]:.1f}", "gel_k_lo": f"{g[0]:.1f}",
+        "gel_k_hi": f"{g[4]:.1f}",
+        "sweep_rows": _rows("as shipped"),
+        "sweep_rows_zh": _rows("当前导出"),
+    }
+
+
+ES = _export_stats()
+
+SEC_EXPORT_EN = f'''<h2>Force as an observation, and a force-informed action</h2>
 <div class="card">
 <p style="margin-top:0">The estimated normal force is written back into the
-dataset together with the action it implies: 36 episodes, 72 sensor-sides,
-240,040 rows, 480,080 force samples. Row-count alignment verified 72/72, and a
-deliberately truncated file raises instead of silently truncating.</p>
+dataset together with the action it implies: {ES["episodes"]} episodes,
+{ES["sides"]} sensor-sides, {ES["rows"]} rows, {ES["samples"]} force samples.
+Row-count alignment
+verified {ES["align"]}, and a deliberately truncated file raises instead of
+silently truncating.</p>
 <table><tr><th>new column</th><th>meaning</th></tr>
-<tr><td><code>force_{side}_normal_n</code></td><td>estimated normal force [N]</td></tr>
-<tr><td><code>force_{side}_penetration_mm</code></td><td><i>F / k</i></td></tr>
-<tr><td><code>force_{side}_target_pose</code></td><td>observed pose pushed
+<tr><td><code>force_{{side}}_normal_n</code></td><td>estimated normal force [N]</td></tr>
+<tr><td><code>force_{{side}}_penetration_mm</code></td><td><i>F / k</i></td></tr>
+<tr><td><code>force_{{side}}_target_pose</code></td><td>observed pose pushed
 <i>F/k</i> along the contact normal (position + quaternion carried through)</td></tr></table>
 <p class="footnote">The pressing direction is <b>not</b> a coordinate axis: it
 comes from the rig's dual-ball calibration (pose-to-pose consistency
 &le;1.07&deg;), and guessing &ldquo;the tool z axis&rdquo; would be
 71&ndash;108&deg; wrong. Verified independently of that calibration using
 kinematics alone: during force rise <i>v&middot;n&#770;&gt;0</i> on
-<b>94.3%</b> of sensor-sides, and corr(&Delta;F, <i>v&middot;n&#770;</i>) is
-positive on <b>95.7%</b>. Free space is exact identity &mdash; 219,518
-no-contact rows have <code>max|target &minus; observed| = 0</code>
-element-wise, and the round trip
-<i>k&middot;&#8214;target&minus;observed&#8214; = F</i> closes to 5.8e-14 N.
+<b>{ES["rise"]}</b> of sensor-sides, and corr(&Delta;F, <i>v&middot;n&#770;</i>)
+is positive on <b>{ES["corr_pos"]}</b>. Free space is exact identity &mdash;
+{ES["identity_rows"]} no-contact rows have
+<code>max|target &minus; observed| = 0</code> element-wise, and the round trip
+<i>k&middot;&#8214;target&minus;observed&#8214; = F</i> closes to
+{ES["roundtrip"]} N.
 Re-running the export reproduces byte-identical files.</p>
 <h3 style="margin-bottom:6px">1 N/mm is the declared starting point &mdash; and
 the full data says it is too soft</h3>
 <p class="footnote" style="margin-top:0">Stiffness is an <b>assumption about
 the environment</b>, not a measured property, so it is exported into the
 parquet field metadata and a sidecar beside the data rather than living only
-in code. Across all 480,080 samples it does not hold:</p>
+in code. Across all {ES["samples"]} samples it does not hold:</p>
 <table><tr><th>k [N/mm]</th><th>p95 penetration</th><th>max</th>
 <th>past the 4.25 mm gel</th></tr>
-<tr><td><b>1.0 (as shipped)</b></td><td><b>5.69 mm</b></td><td>23.8 mm</td>
-<td><b>7.85%</b></td></tr>
-<tr><td>1.5</td><td>3.79 mm</td><td>15.9 mm</td><td>3.86%</td></tr>
-<tr><td>3.0</td><td>1.90 mm</td><td>7.9 mm</td><td>0.31%</td></tr>
-<tr><td>5.6</td><td>1.02 mm</td><td>4.26 mm</td><td>0.00%</td></tr></table>
-<p class="footnote">Read as a virtual impedance offset, <b>3&ndash;6 N/mm</b>
-keeps the commanded target inside the gel; read as real gel compression, the
-estimator's own <i>F / max depth</i> gives a median of <b>15.4 N/mm</b>
-(p5&ndash;p95 5.3&ndash;34.7). 1 N/mm is defensible only below about 4 N. An
-earlier version of this page inferred &ldquo;0% past the gel&rdquo; from a
-single sensor-side whose forces peaked at 2.3 N; the full-dataset number
-retired that claim.</p>
+{ES["sweep_rows"]}</table>
+<p class="footnote">Read as a virtual impedance offset, <b>{ES["k_p95"]} N/mm</b>
+puts p95 inside the gel and <b>{ES["k_max"]} N/mm</b> puts the maximum inside
+it; read as real gel compression, the estimator's own <i>F / max depth</i>
+gives a median of <b>{ES["gel_k_med"]} N/mm</b> (p5&ndash;p95
+{ES["gel_k_lo"]}&ndash;{ES["gel_k_hi"]}).</p>
+<p class="footnote"><b>Corrected 2026-08-07.</b> Every number above was
+recomputed after the calibration fix, and the correction is not the one I
+predicted. Peak force fell 2.5&times; (18.3 &rarr; 7.29 N), so I expected the
+penetration verdict to reverse; it barely moved (p95 5.69 &rarr;
+{ES["p95"]} mm, 7.85% &rarr; {ES["over_gel"]} past the gel). The broken map
+inflated a thin tail, not the bulk &mdash; the <i>max</i> collapsed
+23.8 &rarr; 7.29 mm while the distribution stayed put. What did change is the
+recommendation: this page previously said 3&ndash;6 N/mm, sized against that
+phantom tail and about 2&times; too stiff. Treat the max as a floor rather
+than a fact: the isotonic stage clips at {ES["ceiling"]} N, so harder presses
+are recorded at the ceiling ({ES["at_ceiling"]} of samples).</p>
 </div>'''
 
-SEC_EXPORT_ZH = r'''<h2>力作为 observation，以及由它导出的 action</h2>
+SEC_EXPORT_ZH = f'''<h2>力作为 observation，以及由它导出的 action</h2>
 <div class="card">
-<p style="margin-top:0">估计出的法向力被写回数据集，连同它蕴含的动作：36 个 episode、
-72 个 sensor-side、240,040 行、480,080 个力样本。行数对齐 72/72 全部通过，
-人为截断的文件会报错退出而不是静默截断。</p>
+<p style="margin-top:0">估计出的法向力被写回数据集，连同它蕴含的动作：
+{ES["episodes"]} 个 episode、{ES["sides"]} 个 sensor-side、{ES["rows"]} 行、
+{ES["samples"]} 个力样本。行数对齐
+{ES["align"]} 全部通过，人为截断的文件会报错退出而不是静默截断。</p>
 <table><tr><th>新增列</th><th>含义</th></tr>
-<tr><td><code>force_{side}_normal_n</code></td><td>估计法向力 [N]</td></tr>
-<tr><td><code>force_{side}_penetration_mm</code></td><td><i>F / k</i></td></tr>
-<tr><td><code>force_{side}_target_pose</code></td><td>观测位姿沿接触法向推进
+<tr><td><code>force_{{side}}_normal_n</code></td><td>估计法向力 [N]</td></tr>
+<tr><td><code>force_{{side}}_penetration_mm</code></td><td><i>F / k</i></td></tr>
+<tr><td><code>force_{{side}}_target_pose</code></td><td>观测位姿沿接触法向推进
 <i>F/k</i>（位置 + 四元数一并带出）</td></tr></table>
 <p class="footnote">按压方向<b>不是</b>某个坐标轴：它来自装置的双球标定
 （位姿间一致性 &le;1.07&deg;），若天真地猜&ldquo;工具 z 轴&rdquo;会偏
 71&ndash;108&deg;。并且用<b>纯运动学</b>独立验证过（不依赖该标定）：力上升期
-<i>v&middot;n&#770;&gt;0</i> 的 sensor-side 占 <b>94.3%</b>，
-corr(&Delta;F, <i>v&middot;n&#770;</i>) 为正的占 <b>95.7%</b>。
-自由空间是严格恒等——219,518 个无接触行的
+<i>v&middot;n&#770;&gt;0</i> 的 sensor-side 占 <b>{ES["rise"]}</b>，
+corr(&Delta;F, <i>v&middot;n&#770;</i>) 为正的占 <b>{ES["corr_pos"]}</b>。
+自由空间是严格恒等——{ES["identity_rows"]} 个无接触行的
 <code>max|target &minus; observed| = 0</code> 逐元素成立，往返
-<i>k&middot;&#8214;target&minus;observed&#8214; = F</i> 闭合到 5.8e-14 N。
+<i>k&middot;&#8214;target&minus;observed&#8214; = F</i> 闭合到 {ES["roundtrip"]} N。
 重跑导出可得逐字节相同的文件。</p>
 <h3 style="margin-bottom:6px">1 N/mm 是声明的起点——而全量数据说它偏软</h3>
 <p class="footnote" style="margin-top:0">刚度是<b>关于环境的假设</b>而非实测属性，
 所以它被写进 parquet 字段元数据和数据旁的 sidecar，而不是只存在代码里。
-在全部 480,080 个样本上实测，它不成立：</p>
+在全部 {ES["samples"]} 个样本上实测，它不成立：</p>
 <table><tr><th>k [N/mm]</th><th>p95 穿透</th><th>最大</th>
 <th>超过 4.25 mm 凝胶</th></tr>
-<tr><td><b>1.0（当前导出）</b></td><td><b>5.69 mm</b></td><td>23.8 mm</td>
-<td><b>7.85%</b></td></tr>
-<tr><td>1.5</td><td>3.79 mm</td><td>15.9 mm</td><td>3.86%</td></tr>
-<tr><td>3.0</td><td>1.90 mm</td><td>7.9 mm</td><td>0.31%</td></tr>
-<tr><td>5.6</td><td>1.02 mm</td><td>4.26 mm</td><td>0.00%</td></tr></table>
-<p class="footnote">若把穿透读作虚拟阻抗偏移，<b>3&ndash;6 N/mm</b> 能让指令目标
-留在凝胶内；若读作真实凝胶压缩，估计器自己的 <i>F / 最大压深</i> 给出中位
-<b>15.4 N/mm</b>（p5&ndash;p95 为 5.3&ndash;34.7）。1 N/mm 只在约 4 N 以下站得住。
-本页早前版本曾据<b>单个</b> sensor-side（力上限仅 2.3 N）推断&ldquo;0% 超出凝胶&rdquo;，
-全量数字已使该说法作废。</p>
+{ES["sweep_rows_zh"]}</table>
+<p class="footnote">若把穿透读作虚拟阻抗偏移，<b>{ES["k_p95"]} N/mm</b> 能让 p95
+留在凝胶内，<b>{ES["k_max"]} N/mm</b> 能让最大值也留在其中；若读作真实凝胶压缩，
+估计器自己的 <i>F / 最大压深</i> 给出中位 <b>{ES["gel_k_med"]} N/mm</b>
+（p5&ndash;p95 为 {ES["gel_k_lo"]}&ndash;{ES["gel_k_hi"]}）。</p>
+<p class="footnote"><b>2026-08-07 更正。</b>以上数字都在标定修复后重算过，而更正
+的方向和我预判的相反。峰值力降到原来的 1/2.5（18.3 &rarr; 7.29 N），我本以为穿透
+的结论会翻转；结果几乎没动（p95 5.69 &rarr; {ES["p95"]} mm，超出凝胶
+7.85% &rarr; {ES["over_gel"]}）。坏的标定放大的是一条细尾巴而不是主体——<i>最大值</i>
+从 23.8 塌到 7.29 mm，分布本身没变。真正变的是建议值：本页此前写的 3&ndash;6 N/mm
+正是照着那条幻影尾巴定的，大约偏硬 2 倍。最大值应当读作下界而非事实：isotonic
+阶段在 {ES["ceiling"]} N 处截断，更重的按压会被记在这个上限上（占样本
+{ES["at_ceiling"]}）。</p>
 </div>'''
 
 SEC_FORCE_EN = r'''<h2>Every number beside the control that could have killed it</h2>

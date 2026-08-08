@@ -32,6 +32,12 @@ import numpy as np
 from .lut_calibration import GLOWTACT, MM_PER_PIXEL, PAT, crop
 from .run_episode import OUT_ROOT
 
+# THE name of this calibration, imported by everything that has to say which
+# map produced a newton (npz metadata, the export sidecar, the site's action
+# trace). A copy in each of those places is how the site went on advertising
+# "LUT v2, GlowTact-calibrated" after that map had been replaced.
+CALIBRATION_NAME = "react_calib (stages + gain field + clip correction)"
+
 CACHE = OUT_ROOT / "feature_cache" / "glowtact_round_mm.json"
 FEATURES = ("vol", "vol2", "maxd", "area", "h1")
 # The React clips span roughly 0-8 N; calibrating past that would fit the

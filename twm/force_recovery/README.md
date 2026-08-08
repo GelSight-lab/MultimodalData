@@ -108,24 +108,68 @@ levels off-dot, so the valid mask covers nearly the whole frame.
 field metadata plus a sidecar beside the data — it is an assumption about the
 environment, not a measured property, so a reader of a target pose must be
 able to see which stiffness produced it. Free space is exactly identity:
-`F = 0 → target == observed` element-wise (219,518 rows verified), asserted in
-`test_units.py`; the round trip `k·‖target−observed‖ = F` closes to 5.8e-14 N.
+`F = 0 → target == observed` element-wise (301,727 rows verified), asserted in
+`test_units.py`; the round trip `k·‖target−observed‖ = F` closes to 5.6e-14 N.
+
+Which calibration produced a given newton is recorded **in the artifact**, not
+just in a log: every `*.npz` carries `force_calibration` and
+`pipeline_version`, and `export_force_columns` refuses any file below the
+current version rather than exporting it. That check exists because the
+previous scale lived only as a float named `scale_n_per_mm3`, which could not
+describe the current estimator (a gain field + clipping correction + isotonic
+fit) and, being unlabelled, let pixel-unit weights score mm-unit features
+undetected — end-to-end ρ 0.143.
+
+### Reading the force in the preview videos
+
+The clips at
+[`data/motherboard/previews`](https://huggingface.co/datasets/yxma/React/tree/main/data/motherboard/previews)
+show it directly: a semi-transparent disc on each **camera view**, centred on
+that sensor's projected position, with the in-frame legend as the scale.
+
+- **Area is linear in newtons** (`radius ∝ √F`, saturating at 8 N). Judge size
+  by area, which is what the eye does anyway; a radius-proportional dot would
+  exaggerate hard presses quadratically.
+- **No disc means no contact** (below 0.02 N), not a missing render. Four of
+  the 36 clips have no force estimation at all; `previews_manifest.json` marks
+  which, so absence of input never looks like a rendering failure.
+- The disc is drawn at the sensor's projected pose, so it answers *where* as
+  well as *how hard* — and it is drawn by the same function that draws the
+  pose axes, so the two cannot disagree.
 
 **1 N/mm is too soft for the full dataset.** Over all 480,080 samples the
-penetration `F/k` has p95 = 5.69 mm and 7.85% of rows exceed the 4.25 mm gel
-thickness. Reading penetration as a virtual impedance offset, 3–6 N/mm keeps
-the target inside the gel; reading it as real gel compression, the estimator's
-own `F / max_depth` gives a median of 15.4 N/mm. 1 N/mm holds only below ~4 N.
-The data ships at the declared 1 N/mm; changing it is one constant and a
-re-run.
+penetration `F/k` has p95 = 5.78 mm and 8.84% of rows exceed the 4.25 mm gel
+thickness. Reading penetration as a virtual impedance offset, **1.4 N/mm** puts
+p95 inside the gel and **1.7 N/mm** puts the maximum inside it; reading it as
+real gel compression, the estimator's own `F / max_depth` gives a median of
+8.4 N/mm (p5–p95 2.6–26.2). The data ships at the declared 1 N/mm; changing it
+is one constant and a re-run.
+
+> Recomputed 2026-08-07 after the calibration fix, and worth recording because
+> the prediction was wrong: I expected these numbers to reverse, since peak
+> force fell 2.5× (18.3 → 7.29 N). They barely moved — p95 5.69 → 5.78 mm,
+> 7.85% → 8.84% over gel. The broken map inflated a thin tail, not the bulk,
+> so the *max* collapsed (23.8 → 7.29 mm) while the distribution stayed put.
+> What did change is the recommendation: the old page said 3–6 N/mm, which was
+> sized against that phantom tail and is roughly 2× too stiff. Treat the max
+> as a floor, not a fact — `react_calib`'s isotonic stage clips at 7.285 N, so
+> presses harder than that are recorded at the ceiling (0.90% of samples;
+> `force_export_verify.json` computes it, after a draft quoted 0.27% from 48
+> of the 72 sensor-sides).
 
 ## Running it
 
 ```bash
+python -m force_recovery.react_calib fit          # the newton scale + held-out
 python -m force_recovery.run_episode              # batch force over episodes
+python -m force_recovery.stamp_calibration        # backfill provenance in old npz
+python -m force_recovery.export_force_columns export && \
+  python -m force_recovery.export_force_columns verify
 python -m force_recovery.force_eval_all           # all datasets + controls
 python -m force_recovery.improvement_study all    # 5 candidates, 2 adopted
 python -m force_recovery.test_units
+python ../scripts/verify_force_overlay.py <episode.h5>   # measures the overlay
+python -m twm.pipeline_guard                      # pipeline invariants
 python -m force_recovery.design_guard             # layout gate before publishing
 
 # anything rendering 3-D needs a display (Open3D 0.15.2 segfaults offscreen)

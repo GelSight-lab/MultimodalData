@@ -40,6 +40,8 @@ sys.path.insert(0, "/home/yxma/MultimodalData")
 
 from twm.data_collection import REALSENSE_SERIALS    # noqa
 from twm.viz import (
+    GS_THUMB_W,
+    ROW2_Y,
     build_preview_panel,
     draw_projection_overlay,
     cam_aligned_pose,
@@ -107,8 +109,8 @@ def _load_proj_calibs():
 
 
 from twm.tactile_align import describe as gel_describe, gel_lag_frames
-from twm.force_overlay import (draw_force_dot, draw_legend,
-                               load_forces, row_for_h5_frame)
+from twm.force_overlay import (draw_legend, load_forces,
+                               row_for_h5_frame)
 
 FORCE_ROOT = Path("/media/yxma/Disk1/twm/force_recovery")
 
@@ -176,6 +178,7 @@ def build_one_preview(h5_path: Path, out_mp4: Path,
                                                  h5_path.stem)
 
         panels = []
+        overlay_errors = 0
         for f_idx_int in sample_idx:
             f_idx_int = int(f_idx_int)
             color_frames = [
@@ -205,25 +208,50 @@ def build_one_preview(h5_path: Path, out_mp4: Path,
                 ),
             )
 
+            # Force for THIS frame, per side, resolved before drawing: the
+            # disc is rendered inside draw_projection_overlay so it lands on
+            # the same projected sensor centre as the pose axes.
+            frame_forces = {}
+            if forces and trim_pq is not None:
+                row = row_for_h5_frame(f_idx_int, trim_pq, n_rows)
+                if row is not None:
+                    frame_forces = {s: float(a[row]) for s, a in forces.items()
+                                    if row < len(a)}
+
             if project_cams:
                 try:
                     draw_projection_overlay(
                         panel, opt_poses,
                         project_cams,
                         gel_center_left, gel_center_right,
+                        forces_n=frame_forces or None,
                     )
-                except Exception:
-                    pass
+                except Exception as e:
+                    # Was `except Exception: pass`. A frame that failed to
+                    # draw its overlay still encoded fine and looked
+                    # deliberate — a clip could lose every disc and every
+                    # axis without anyone learning why. Report once per
+                    # episode; still don't abort, since one bad pose should
+                    # not cost the whole preview.
+                    if not overlay_errors:
+                        print(f"  WARN: overlay failed at frame {f_idx_int}: "
+                              f"{type(e).__name__}: {e}")
+                    overlay_errors += 1
+            elif frame_forces:
+                # No calibration -> no sensor position to attach the disc to.
+                # Say so rather than dropping the force silently.
+                cv2.putText(panel, "force: no cam calibration", (8, 232),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.42, (60, 120, 255), 1,
+                            cv2.LINE_AA)
 
-            if forces and trim_pq is not None:
-                row = row_for_h5_frame(f_idx_int, trim_pq, n_rows)
-                if row is not None:
-                    for side, arr in forces.items():
-                        if row < len(arr):
-                            draw_force_dot(panel, side, float(arr[row]))
-                    draw_legend(panel, 4 * 240 + 24, 240 + 110)
+            if frame_forces:
+                draw_legend(panel, 4 * GS_THUMB_W + 26, ROW2_Y + 96)
 
             panels.append(panel)
+
+    if overlay_errors:
+        print(f"  WARN: {overlay_errors}/{len(sample_idx)} frames "
+              f"rendered without the projection/force overlay")
 
     # Write MP4 via ffmpeg (rawvideo BGR -> H.264 yuv444p)
     out_mp4.parent.mkdir(parents=True, exist_ok=True)
