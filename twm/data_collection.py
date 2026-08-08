@@ -167,10 +167,28 @@ class HDF5Writer:
     is full, so the main loop never stalls.
     """
 
+    # Seconds between H5Fflush calls. HDF5 keeps object headers, chunk B-trees
+    # and the superblock's EOF field in a metadata cache and writes them at
+    # close; raw chunks go straight through. So a recorder that dies without
+    # closing leaves every byte of pixel data on disk and no way to reach it.
+    # pushT/2026-06-18/episode_004.h5 is 79 GB in exactly that state: the root
+    # object header is 24 zero bytes and the superblock still claims EOF 2048.
+    # Recovering it took a scan for orphaned B-tree leaves and a chain of
+    # inferences, and even then the timestamps were unrecoverable — only 2 of
+    # 16 chunks had been evicted to disk, and reconstructing the rest by
+    # interpolation misplaces frames by 15-24 (measured against episodes with
+    # known timestamps; one episode stalls and it misses by 1431).
+    #
+    # A flush costs one metadata write against ~190 MB/s of pixels, and turns
+    # "lose the entire recording" into "lose the last few seconds".
+    FLUSH_INTERVAL_S = 10.0
+
     def __init__(self, maxsize: int = 300, batch_size: int = 10):
         self._queue      = queue.Queue(maxsize=maxsize)
         self._batch_size = batch_size
         self._dropped    = 0
+        self._last_flush = time.time()
+        self._flushes    = 0
         self._thread     = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
 
@@ -205,6 +223,26 @@ class HDF5Writer:
     def _write_batch(self, batch):
         f = batch[0][0]
         append_camera_frames_batch(f, [item[1:] for item in batch])
+        self._maybe_flush(f)
+
+    def _maybe_flush(self, f):
+        """Push HDF5's metadata cache to disk on a timer.
+
+        Without this the file is unopenable until close() — see
+        FLUSH_INTERVAL_S. Failures are swallowed deliberately: a flush that
+        cannot happen must not take the recording down with it, and the next
+        one will try again.
+        """
+        now = time.time()
+        if now - self._last_flush < self.FLUSH_INTERVAL_S:
+            return
+        self._last_flush = now
+        try:
+            f.flush()
+            self._flushes += 1
+        except Exception as e:                      # pragma: no cover
+            print(f"[HDF5Writer] WARNING: flush failed ({e}); "
+                  f"a crash now would leave the file unopenable")
 
     def enqueue(self, f, color_frames, depth_frames, gs_frames, timestamp,
                 gs_timestamps=None):
@@ -295,10 +333,16 @@ REALSENSE_SERIALS = [
     "217222066989",
 ]
 GELSIGHT_SERIALS = {
-    # "left":  "2BGLKZNT",   # /dev/video14  (old left sensor)
-    "left":  "2DUPB53G",   # /dev/video8
-    # 'left': "2BKRDTAD"
-    "right": "2BKRDTAD",   # /dev/video12
+    # BROKEN as of 2026-08-07: fails USB enumeration (error -71 / "Device not
+    # responding to setup address") on every port tried (1-8.1, 1-11, 1-1) —
+    # fault travels with the unit, so it's the cable/sensor, not the host
+    # port. _try_start_gelsight() falls back to a black dummy frame for this
+    # side; run data_collection.py with --active_sensors right until it's
+    # replaced so the OT watchdog doesn't wait on it.
+    "left":  "28YGZL6K",   # /dev/video0  (replacement unit, registered 2026-08-07)
+    "right": "2BGLKZNT",   # /dev/video2  (replacement unit, registered 2026-08-07)
+    # "left":  "2DUPB53G"  # old left sensor
+    # "right": "2BKRDTAD"  # old right sensor
 }
 DATA_DIR = "/media/yxma/Disk1/twm/data"
 FPS = 30
