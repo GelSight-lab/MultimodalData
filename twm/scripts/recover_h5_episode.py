@@ -230,12 +230,14 @@ def read_chunk(f, entry) -> tuple[bytes, int]:
 
 
 def write_recovered(src: Path, idx: dict, ref: Path, out: Path,
-                    assign: list[str]) -> None:
+                    assign: list[str], limit: int = 0) -> None:
     import h5py
     import hdf5plugin
 
     chains = idx["chains"]
     n_frames = min(v["n"] for v in chains.values())
+    if limit:
+        n_frames = min(n_frames, limit)
     print(f"[recover] {n_frames} complete frames across all 8 streams",
           flush=True)
 
@@ -269,17 +271,24 @@ def write_recovered(src: Path, idx: dict, ref: Path, out: Path,
             print(f"  {name}: {s['shape']} {s['dtype']} chunks={s['chunks']} "
                   f"(itemsize {typesize})", flush=True)
 
+        # FRAME-major, not stream-major. One frame's eight chunks sit within a
+        # few MB of each other, while the same stream's consecutive chunks are
+        # ~4.89 MB apart across all 79 GB. Draining one stream at a time reads
+        # the whole file once per stream — 632 GB of seeking on a spinning
+        # disk, measured at roughly 0.5 GB/min. Frame-major reads it once.
+        ranks = {ci: len(dsets[ci].shape) for ci in range(len(assign))}
+        ents = {ci: chains[ci]["entries"] for ci in range(len(assign))}
         with open(src, "rb") as f:
-            for ci, name in enumerate(assign):
-                d = dsets[ci]
-                ent = chains[ci]["entries"]
-                rank = len(d.shape)
-                for fr in range(n_frames):
-                    raw, mask = read_chunk(f, ent[str(fr)])
-                    d.id.write_direct_chunk((fr,) + (0,) * (rank - 1), raw,
-                                            filter_mask=mask)
-                    if fr % 2000 == 0:
-                        print(f"    {name} {fr}/{n_frames}", flush=True)
+            for fr in range(n_frames):
+                key = str(fr)
+                todo = sorted((ents[ci][key], ci) for ci in range(len(assign)))
+                for entry, ci in todo:          # ascending byte offset
+                    raw, mask = read_chunk(f, entry)
+                    dsets[ci].id.write_direct_chunk(
+                        (fr,) + (0,) * (ranks[ci] - 1), raw, filter_mask=mask)
+                if fr % 500 == 0:
+                    print(f"    frame {fr}/{n_frames} "
+                          f"({100*fr/n_frames:.1f}%)", flush=True)
     print(f"[recover] wrote {out} ({os.path.getsize(out)/1e9:.1f} GB)")
 
 
@@ -341,6 +350,8 @@ def main() -> int:
     ap.add_argument("--assign", type=Path,
                     help="JSON list mapping chain i -> dataset name")
     ap.add_argument("--samples", type=int, default=200)
+    ap.add_argument("--limit", type=int, default=0,
+                    help="stop after N frames (for an end-to-end smoke test)")
     args = ap.parse_args()
 
     if args.mode == "index":
@@ -354,7 +365,8 @@ def main() -> int:
     assign = json.loads(args.assign.read_text())
 
     if args.mode == "write":
-        write_recovered(args.src, idx, args.ref, args.out, assign)
+        write_recovered(args.src, idx, args.ref, args.out, assign,
+                        limit=args.limit)
         return 0
     return verify(args.src, idx, args.out, assign, args.samples)
 
