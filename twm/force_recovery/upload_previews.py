@@ -23,20 +23,36 @@ import argparse
 import json
 from pathlib import Path
 
-PREVIEW_ROOT = Path("/media/yxma/Disk1/twm/figures/episode_previews")
+from react_preprocess.config import STAGE_ROOT
+
 FORCE_ROOT = Path("/media/yxma/Disk1/twm/force_recovery")
 REPO = "yxma/React"
+
+# Where the renderer writes, asked of the renderer — not restated here.
+# This module used to name its own directory, `figures/episode_previews`, while
+# `react_preprocess.previews.plan()` wrote to `<STAGE_ROOT>/<task>/previews`.
+# Both held 36 clips with identical names, so a full re-render produced fresh
+# output in one tree and left the other untouched, and the uploader published
+# the untouched one. The freshness gate below is what caught it — every clip
+# reported stale on a run that had just re-rendered every clip. Had the gate
+# not existed, this would have shipped a silent no-op.
+PREVIEW_ROOT = STAGE_ROOT
+
+
+def clip_dir(task: str) -> Path:
+    """The directory `previews.plan()` renders `task` into."""
+    return STAGE_ROOT / task / "previews"
 
 
 def tasks() -> list[str]:
     """Tasks that have rendered previews, from disk — never a literal list."""
-    return sorted(d.name for d in PREVIEW_ROOT.iterdir()
-                  if d.is_dir() and any(d.rglob("*.mp4")))
+    return sorted(d.name for d in STAGE_ROOT.iterdir()
+                  if d.is_dir() and any(clip_dir(d.name).rglob("*.mp4")))
 
 
 def clip_paths() -> list[tuple[str, Path]]:
     return [(t, p) for t in tasks()
-            for p in sorted((PREVIEW_ROOT / t).rglob("*.mp4"))]
+            for p in sorted(clip_dir(t).rglob("*.mp4"))]
 
 
 def check_decodable(paths: list[Path]) -> list[str]:
@@ -253,22 +269,23 @@ def main() -> None:
 
     from huggingface_hub import HfApi
     api = HfApi()
-    mf = PREVIEW_ROOT / "previews_manifest.json"
+    mf = STAGE_ROOT / "previews_manifest.json"
     mf.write_text(json.dumps(m, indent=1))
     api.upload_file(path_or_fileobj=str(mf), repo_id=REPO, repo_type="dataset",
                     path_in_repo="data/previews_manifest.json")
     for task in m["tasks"]:
+        # clip_dir(task), NOT the task root: the task root also holds the
+        # release's own `videos/`, and `allow_patterns=["*.mp4"]` would have
+        # published every raw episode video into the previews folder.
         api.upload_folder(
-            folder_path=str(PREVIEW_ROOT / task), repo_id=REPO,
+            folder_path=str(clip_dir(task)), repo_id=REPO,
             repo_type="dataset", path_in_repo=f"data/{task}/previews",
             allow_patterns=["*.mp4"],
             commit_message=(
-                f"previews [{task}]: force disc moved onto the camera views "
-                "at the sensor's projected position (was pinned to the "
-                "GelSight tile) and shrunk to annotate rather than cover; "
-                "forces recomputed with react_calib — the previous newton "
-                "values are void (end-to-end rho 0.143 from pixel-unit "
-                "weights on mm-unit features)"))
+                f"previews [{task}]: re-rendered against the task's own "
+                "calibration epoch and the current curation — FLAGGED frames "
+                "are outlined and named, and the clip window starts at the "
+                "episode's release trim offset rather than at H5 frame 0"))
     print("uploaded")
 
 

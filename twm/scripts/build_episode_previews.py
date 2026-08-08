@@ -20,7 +20,10 @@ Usage
     python scripts/build_episode_previews.py --date 2026-05-19
     python scripts/build_episode_previews.py --date 2026-05-10 --clip_s 30 --speed 2
 
-Output: /media/yxma/Disk1/twm/figures/episode_previews/<task>/<date>/episode_NNN.mp4
+Output: <STAGE_ROOT>/<task>/previews/<date>/episode_NNN.mp4 — the same tree
+the release pipeline renders and the uploader publishes from. This script
+used to write to figures/episode_previews/ instead, so a full re-render
+refreshed one tree while the uploader kept publishing the other.
 """
 from __future__ import annotations
 
@@ -51,9 +54,21 @@ from twm.viz import (
 )
 
 
+def _preview_root(task: str) -> Path:
+    """Where previews live, asked of the release config rather than restated.
+
+    One directory, because two directories of identically-named clips is how a
+    re-render can appear to succeed and publish nothing.
+    """
+    import sys as _sys
+    _sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    from react_preprocess.config import STAGE_ROOT
+    return STAGE_ROOT / task / "previews"
+
+
 TASK = "motherboard"          # overridden by --task in main()
 H5_ROOT  = Path("/media/yxma/Disk1/twm/data") / TASK
-OUT_ROOT = Path("/media/yxma/Disk1/twm/figures/episode_previews") / TASK
+OUT_ROOT = _preview_root(TASK)
 # Which extrinsics a task needs is NOT a constant here — cameras were
 # recalibrated between tasks and this file pointed at one directory for all of
 # them, publishing 36 motherboard previews with pushT's June-26 calibration.
@@ -314,7 +329,16 @@ def build_one_preview(h5_path: Path, out_mp4: Path,
         print(f"  WARN: {overlay_errors}/{len(sample_idx)} frames "
               f"rendered without the projection/force overlay")
 
-    # Write MP4 via ffmpeg (rawvideo BGR -> H.264 yuv444p)
+    # Write MP4 via ffmpeg (rawvideo BGR -> H.264 yuv444p), then PROVE it plays.
+    #
+    # ffmpeg exiting 0 is not evidence the file is good. On 2026-08-08 a pushT
+    # render reported "OK (2766 KB)" for all four episodes and every one of them
+    # decoded to ZERO frames: the container held two copies of the moov atom, so
+    # every sample offset in the first copy was short by one moov (11606 bytes)
+    # and the demuxer read NAL lengths out of the second copy's tail. Re-running
+    # the identical command produced four clean files, so this is intermittent
+    # and I could not reproduce it — which is exactly why the check below counts
+    # decoded frames instead of trusting the exit status.
     out_mp4.parent.mkdir(parents=True, exist_ok=True)
     cmd = [
         "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
@@ -331,13 +355,37 @@ def build_one_preview(h5_path: Path, out_mp4: Path,
         "-an",
         str(out_mp4),
     ]
-    p = subprocess.Popen(cmd, stdin=subprocess.PIPE)
-    for panel in panels:
-        p.stdin.write(panel.tobytes())
-    p.stdin.close()
-    ret = p.wait()
-    if ret != 0:
-        raise RuntimeError(f"ffmpeg failed with code {ret}")
+    for attempt in (1, 2, 3):
+        p = subprocess.Popen(cmd, stdin=subprocess.PIPE)
+        for panel in panels:
+            p.stdin.write(panel.tobytes())
+        p.stdin.close()
+        ret = p.wait()
+        if ret != 0:
+            raise RuntimeError(f"ffmpeg failed with code {ret}")
+        got = _decoded_frame_count(out_mp4)
+        if got == len(panels):
+            return
+        print(f"  WARN: {out_mp4.name} wrote {out_mp4.stat().st_size} bytes but "
+              f"decodes to {got}/{len(panels)} frames — rewriting "
+              f"(attempt {attempt}/3)", flush=True)
+    raise RuntimeError(
+        f"{out_mp4}: ffmpeg exited 0 three times and the file still decodes to "
+        f"{got}/{len(panels)} frames. Refusing to publish an unplayable preview.")
+
+
+def _decoded_frame_count(mp4: Path) -> int:
+    """How many frames the file actually yields to a decoder.
+
+    Decoded at 32x12 so the check costs demuxing plus a cheap scale rather than
+    a full-size decode; a container whose sample offsets are wrong fails here
+    the same way it fails at full size.
+    """
+    out = subprocess.run(
+        ["ffmpeg", "-v", "error", "-i", str(mp4), "-vf", "scale=32:12",
+         "-f", "rawvideo", "-pix_fmt", "gray", "-"],
+        capture_output=True).stdout
+    return len(out) // (32 * 12)
 
 
 def main():
@@ -365,7 +413,7 @@ def main():
     global TASK, H5_ROOT, OUT_ROOT, EPISODES_ROOT
     TASK = args.task
     H5_ROOT = Path("/media/yxma/Disk1/twm/data") / TASK
-    OUT_ROOT = Path("/media/yxma/Disk1/twm/figures/episode_previews") / TASK
+    OUT_ROOT = _preview_root(TASK)
     EPISODES_ROOT = Path("/media/yxma/Disk1/twm/processed/episodes") / TASK
 
     h5_dir = H5_ROOT / args.date
