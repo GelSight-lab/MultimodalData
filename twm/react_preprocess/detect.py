@@ -44,18 +44,23 @@ EPS_POSE_BIT = 1e-7
 #           test scores a 9-frame flicker exactly 0: its interior diffs are
 #           calm and each boundary is hot one way only.
 #
-#   magenta — pixels where R and B both sit far above G. A GelSight is lit by
-#           three coloured LEDs from three sides; the colours it can produce
-#           are bounded by that illumination, and MAGENTA is outside it. A
-#           torn frame injects saturated magenta bands the sensor physically
-#           cannot generate. Burst alone misses these when the band is a
-#           minority of the frame: the 2026-05-11/ep003 right-sensor tear
+#   magenta ROW FILL — pixels where R and B both sit far above G. A GelSight is
+#           lit by three coloured LEDs from three sides; the colours it can
+#           produce are bounded by that illumination, and MAGENTA is outside
+#           it. A torn frame injects saturated magenta bands the sensor
+#           physically cannot generate. Burst alone misses these when the band
+#           is a minority of the frame: the 2026-05-11/ep003 right-sensor tear
 #           moved the whole-frame mean only 21.6 against a floor of 25.
-#           This is a physical constraint, not a tuned threshold, and it
-#           separates absolutely: measured over the labelled set, real tears
-#           read 0.133-0.748 of the frame and real contacts read exactly
-#           0.0000 — including sharp edges and tips, whose strong orange/blue
-#           photometric gradients defeated every amplitude-based test.
+#
+#           What is thresholded is the SHAPE of the magenta, not how much of it
+#           there is and not how fast it arrived. Per frame, take the widest
+#           single image row that is magenta, as a fraction of image width. A
+#           lost or duplicated scanline is written edge to edge, so it fills
+#           its rows; an object pressed into the gel produces its off-gamut rim
+#           around the contact patch, which stays compact however deep it goes.
+#           Measured: 0.725-1.000 for the nine labelled tears, 0.069-0.075 for
+#           a probe tip. Corruption is row-structured because video is stored
+#           in rows; contact is not, because gel is not.
 #
 # Five discriminators were tried and killed by measurement, not opinion. Each
 # is recorded because "we tried X" is the cheapest thing to lose and the most
@@ -74,15 +79,33 @@ EPS_POSE_BIT = 1e-7
 #   * off-gamut channel spread, by level (92 intervals in one episode) and by
 #     step (7 intervals, 4 of them sharp-edge contacts — a knife edge in the
 #     gel steps exactly like a tear).
-# Magenta needs neither a step nor a pairing rule, because contact scores
-# exactly zero: it is a statement about the sensor's physics, not a threshold
-# fitted to this release.
+#   * magenta by AREA: separated on the 5-episode labelled set, and an earlier
+#     header here claimed "real contacts read exactly 0.0000". That claim was
+#     FALSE and is retracted. The first full-release run found a probe tip at
+#     2026-05-19/ep000 f=1383-1392 reading 0.0110 against a 0.0100 threshold,
+#     while the weakest real tear reads only 0.0130 — 18% apart, no threshold
+#     between them. Five episodes is not a validation set.
+#   * magenta by ONSET ("appeared faster than gel can deform"): killed within
+#     the hour by the same episode. The tip's area ramps 0.0069 -> 0.0110 at
+#     0.0014/frame once pressed, which looked like clean separation from the
+#     0.0130/frame of the weakest tear — but TOUCHDOWN at f=1358 goes 0.0000
+#     -> 0.0064 in one frame. Contact is continuous only after it starts.
+#     Note the shape of that mistake: the margin was measured in a window
+#     centred on the deep press, which excluded the moment of first contact.
+#     A window chosen around the phenomenon you already believe in will
+#     confirm it.
+# The two surviving rules each say something physical: burst, that a run of
+# frames is bracketed by two hot boundaries; magenta row fill, that off-gamut
+# colour is laid out in scanlines rather than around a contact patch.
 CAM_SCAN_W, CAM_SCAN_H = 160, 120
 CAM_SPIKE_ABS = 25.0          # a frame-to-frame diff this hot is a boundary
 CAM_SPIKE_REL = 4.0           # ... and > REL * median + 5 (motion-adaptive)
 CAM_BURST_MAX = 15            # two boundaries <= this far apart bracket a burst
 GEL_MAGENTA_MARGIN = 50       # R and B this far above G = off-illumination
-GEL_MAGENTA_FRAC = 0.01       # 13x below the weakest real tear (0.133)
+GEL_MAGENTA_ROWFILL = 0.25    # widest magenta row, as a fraction of image width.
+                              # Nine labelled tears: 0.725-1.000. A probe tip
+                              # pressed into the gel: 0.069 at touchdown, 0.075
+                              # at full depth. ~3x of margin on both sides.
 
 
 def merge_intervals(events, gap: int = 1) -> list[list[int]]:
@@ -166,12 +189,18 @@ def detect_pose_freezes(pose: np.ndarray, T: int) -> list[list[int]]:
 
 
 def _video_stats(mp4) -> tuple[np.ndarray, np.ndarray]:
-    """(frame-to-frame mean diff, magenta pixel fraction) for one video.
+    """(frame-to-frame mean diff, widest magenta ROW FILL) for one video.
 
     Decoded at CAM_SCAN_W x CAM_SCAN_H in RGB. The diff is the MAX over
     channels per pixel: a GelSight tear swaps the gel's colour balance while
     barely moving the greyscale mean, so a grey decode measured the known
     2026-05-11/ep003 flicker at under half its amplitude.
+
+    The second return is per frame: of all image rows, the largest fraction of
+    that row which is off-gamut magenta. NOT the magenta area — see the module
+    header. Area cannot tell a corrupt scanline from a probe tip pressed into
+    the gel (0.0130 vs 0.0110); row fill can (0.725 vs 0.075), because the two
+    differ in shape, not amount.
     """
     import subprocess
     W, H = CAM_SCAN_W, CAM_SCAN_H
@@ -187,7 +216,21 @@ def _video_stats(mp4) -> tuple[np.ndarray, np.ndarray]:
     fmean = np.abs(np.diff(a, axis=0)).max(axis=3).mean(axis=(1, 2))
     r, g, b = a[..., 0], a[..., 1], a[..., 2]
     magenta = (r > g + GEL_MAGENTA_MARGIN) & (b > g + GEL_MAGENTA_MARGIN)
-    return fmean, magenta.mean(axis=(1, 2))
+    return fmean, magenta.mean(axis=2).max(axis=1)
+
+
+def _magenta_bands(rowfill: np.ndarray) -> list[tuple[int, int]]:
+    """Frames holding an off-gamut magenta band that spans its row.
+
+    ``rowfill[k]`` is the widest single row of frame k that is magenta. A lost
+    or duplicated scanline is written edge to edge, so it fills its rows; an
+    object pressed into the gel produces its off-gamut rim around the contact
+    patch, which is compact whatever its depth. Measured: 0.725-1.000 for the
+    nine labelled tears, 0.069-0.075 for a probe tip at touchdown and at full
+    depth. The threshold sits ~3x from each.
+    """
+    return [(int(i), int(i))
+            for i in np.where(rowfill > GEL_MAGENTA_ROWFILL)[0]]
 
 
 def detect_video_corruption(video_dir, T: int, cache=None) -> dict[str, list[list[int]]]:
@@ -218,7 +261,7 @@ def detect_video_corruption(video_dir, T: int, cache=None) -> dict[str, list[lis
     for mp4 in mp4s:
         is_gel = "tactile" in mp4.name
         fam = "tactile_corruption" if is_gel else "cam_corruption"
-        fmean, chroma = _video_stats(mp4)
+        fmean, rowfill = _video_stats(mp4)
         med = float(np.median(fmean)) if len(fmean) else 0.0
         ev = []
         # (1) BURST. Boundary pairs, not a single-frame spike test: the
@@ -230,17 +273,17 @@ def detect_video_corruption(video_dir, T: int, cache=None) -> dict[str, list[lis
         hot = [int(i) for i in np.where(fmean > thr)[0]]   # diff k -> k+1
         ev += [(b1 + 1, b2) for b1, b2 in zip(hot, hot[1:])
                if b2 - b1 <= CAM_BURST_MAX]
-        # (2) MAGENTA, gel only. The absolute floor above is right for a
+        # (2) MAGENTA ONSET, gel only. The absolute floor above is right for a
         # moving colour view and far too high for a static gel (median diff
         # 0.17), so a banded tear that moved the whole-frame mean by 21.6
         # slipped through. Dropping the floor catches it — and also flags
         # real CONTACT, whose intensity step looks the same in the mean. What
-        # contact cannot do is produce colours outside the gel's own
-        # illumination gamut, so the discriminator is off-gamut area, not
-        # amplitude.
-        if is_gel and len(chroma):
-            ev += [(int(i), int(i))
-                   for i in np.where(chroma > GEL_MAGENTA_FRAC)[0]]
+        # contact cannot do is produce colour outside the gel's own
+        # illumination gamut FASTER THAN GEL DEFORMS. Thresholding the level
+        # instead of the rise flagged a real probe tip at 0.0110 against a
+        # weakest-tear level of 0.0130; see the module header.
+        if is_gel and len(rowfill):
+            ev += _magenta_bands(rowfill)
         out[fam] += ev
     out = {k: pad_and_merge(v, T, BUFFER_FRAMES) for k, v in out.items()}
     if cache is not None:
@@ -273,6 +316,6 @@ def thresholds() -> dict:
             "spike_abs": CAM_SPIKE_ABS, "spike_rel": CAM_SPIKE_REL,
             "burst_max_frames": CAM_BURST_MAX,
             "gel_magenta_margin": GEL_MAGENTA_MARGIN,
-            "gel_magenta_frac": GEL_MAGENTA_FRAC,
+            "gel_magenta_rowfill": GEL_MAGENTA_ROWFILL,
         },
     }
