@@ -74,6 +74,11 @@ import numpy as np
 UNDEF = 0xFFFFFFFFFFFFFFFF
 SCAN_CHUNK = 64 << 20
 
+# The recorder lays down the same skeleton every run, so the metadata group's
+# object header sits at the same address in every file it writes. Verified
+# identical across all five episodes of 2026-06-18.
+METADATA_OH_ADDR = 800
+
 # The eight image datasets, in the chain order this script resolves them to.
 # Names come from the reference file; nothing here assumes an ordering.
 IMAGE_STREAMS = [
@@ -241,13 +246,30 @@ def write_recovered(src: Path, idx: dict, ref: Path, out: Path,
     print(f"[recover] {n_frames} complete frames across all 8 streams",
           flush=True)
 
+    # The reference supplies SCHEMA only. Metadata is a fact about this
+    # recording and is read out of the broken file itself — see
+    # h5_forensics.group_attributes. Taking it from the reference stamped the
+    # first recovered file with the reference episode's start time.
     with h5py.File(ref, "r") as r:
         spec = {}
         for name in IMAGE_STREAMS:
             d = r[name]
             spec[name] = {"dtype": d.dtype, "chunks": d.chunks,
                           "shape": (n_frames,) + d.shape[1:]}
-        meta_attrs = {k: r["metadata"].attrs[k] for k in r["metadata"].attrs}
+        ref_attrs = {k: r["metadata"].attrs[k] for k in r["metadata"].attrs}
+
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from h5_forensics import group_attributes
+    meta_attrs = group_attributes(str(src), METADATA_OH_ADDR)
+    missing = sorted(set(ref_attrs) - set(meta_attrs))
+    if missing:
+        print(f"[recover] WARNING: {missing} not readable from the source; "
+              f"they are NOT being copied from the reference — a metadata "
+              f"field taken from another episode is worse than an absent one",
+              flush=True)
+    print(f"[recover] metadata from source: "
+          f"{ {k: v for k, v in meta_attrs.items() if k == 'created_at'} }",
+          flush=True)
 
     with h5py.File(out, "w") as w:
         g = w.create_group("metadata")

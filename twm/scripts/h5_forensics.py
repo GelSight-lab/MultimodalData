@@ -134,6 +134,83 @@ class H5Raw:
         return out
 
 
+def group_attributes(path: str, oh_addr: int) -> dict:
+    """Attributes of one group, read without the library.
+
+    Recovering a file means taking its schema from a healthy sibling, and the
+    temptation is to take the sibling's metadata with it. That is how the first
+    recovered episode_004 came out stamped `created_at 2026-06-18T17:51:19` —
+    episode_003's start time, 21 minutes off. Everything else in that group
+    (fps, task, both sets of serials) genuinely is per-session and identical,
+    which is exactly what makes the one per-episode field easy to miss.
+
+    So: schema from the reference, facts about the recording from the file
+    itself. This reads the latter.
+    """
+    h = H5Raw(path)
+    out: dict = {}
+
+    def gcol(addr: int, index: int, length: int):
+        blk = h.at(addr, 1 << 16)
+        if blk[:4] != b"GCOL":
+            return None
+        p = 16
+        while p + 16 <= len(blk):
+            idx, _ref = struct.unpack("<HH", blk[p:p + 4])
+            size = struct.unpack("<Q", blk[p + 8:p + 16])[0]
+            if idx == index:
+                return blk[p + 16:p + 16 + (length or size)]
+            if size == 0:
+                break
+            p += 16 + ((size + 7) // 8 * 8)
+        return None
+
+    def walk(addr: int, length: int, depth: int = 0, seen=None) -> None:
+        seen = seen if seen is not None else set()
+        if addr in seen or depth > 6:
+            return
+        seen.add(addr)
+        blk = h.at(addr, length)
+        p = 0
+        while p + 8 <= len(blk):
+            mtype, msize = struct.unpack("<HH", blk[p:p + 4])
+            data = blk[p + 8:p + 8 + msize]
+            if mtype == 0x0C and len(data) > 8:
+                nlen, dtlen, dslen = struct.unpack("<HHH", data[2:8])
+                pad = lambda n: (n + 7) // 8 * 8      # noqa: E731
+                name = data[8:8 + nlen].split(b"\0")[0].decode("utf8", "replace")
+                off = 8 + pad(nlen) + pad(dtlen) + pad(dslen)
+                val = data[off:]
+                strings, ok = [], True
+                for k in range(0, len(val) - 15, 16):
+                    ln = struct.unpack("<I", val[k:k + 4])[0]
+                    ga = struct.unpack("<Q", val[k + 4:k + 12])[0]
+                    gi = struct.unpack("<I", val[k + 12:k + 16])[0]
+                    if not (0 < ln < 4096 and 0 < ga < 10 ** 13):
+                        ok = False
+                        break
+                    s = gcol(ga, gi, ln)
+                    if s is None:
+                        ok = False
+                        break
+                    strings.append(s.decode("utf8", "replace"))
+                if ok and strings:
+                    out[name] = strings if len(strings) > 1 else strings[0]
+            elif mtype == 0x10 and msize >= 16:
+                a2, l2 = struct.unpack("<QQ", data[:16])
+                walk(a2, l2, depth + 1, seen)
+            if mtype == 0 and msize == 0:
+                break
+            p += 8 + msize
+
+    oh = h.object_header(oh_addr)
+    for m in oh["messages"]:
+        if m["type"] == 0x10:
+            a, l = struct.unpack("<QQ", m["data"][:16])
+            walk(a, l)
+    return out
+
+
 def describe(path: str) -> None:
     h = H5Raw(path)
     sb = h.sb
