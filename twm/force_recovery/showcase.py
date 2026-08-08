@@ -91,72 +91,18 @@ def _basis(x, y):
 
 
 def _glowtact_calib():
-    """Sphere-supervised force model on the LUT's home sensor (GlowTact).
+    """React's newton scale — delegated to `react_calib`.
 
-    The published React-range calibration (method page): GlowTact `round`
-    presses, strictly in view, 0-8 N, with the pixel-space spatial gain
-    field — holdout rho 0.98, MAE 0.24 N. Pooled multi-object fits are much
-    worse (rho 0.47): the volume->force gain is object-dependent, which is
-    exactly why the sphere (known geometry) is the calibration object.
-
-    Returns predict(stages_dict) -> force [N]; the gain field is evaluated
-    at the depth-weighted contact centroid of the frame itself.
+    The version that lived here fitted on `lut_full.json` (PIXEL units, and a
+    cache predating the current reconstruction) and applied those weights to
+    mm-unit `stages()` output. End-to-end on its own calibration objects that
+    scored rho 0.143 / MAE 1.23 N, and every published React newton came from
+    it. `react_calib` recomputes the calibration features with the SAME
+    `stages()` that runs at inference, so the two cannot drift again:
+    held-out (split by press position) rho 0.739 / MAE 1.23 N.
     """
-    from scipy.stats import spearmanr
-    from sklearn.isotonic import IsotonicRegression
-
-    rows = json.loads(
-        (OUT_ROOT / "feature_cache" / "lut_full.json").read_text())
-    rows = [r for r in rows if r["f"] > 0.15
-            and np.isfinite(r.get("cx", float("nan")))]
-    a = lambda k: np.array([r[k] for r in rows])
-    x, y, z, f = a("x"), a("y"), a("z"), a("f")
-    V, V2, A, D, cx, cy = (a("vol"), a("vol2"), a("area"), a("maxd"),
-                           a("cx"), a("cy"))
-    grp = np.array([r["fam"] for r in rows])
-
-    m = (grp == "round") & (x > 3.5) & (x < 14.5) & (y > 3.0) & (y < 13.5)
-    PHI = _basis(cx[m] / 100, cy[m] / 100)
-    w, *_ = np.linalg.lstsq(np.hstack([PHI * z[m][:, None], -PHI]), D[m],
-                            rcond=None)
-    gain = w[:6]
-
-    def u_at(px, py):
-        return 1.0 / np.clip(_basis(np.atleast_1d(px / 100),
-                                    np.atleast_1d(py / 100)) @ gain,
-                             0.15, 3.0)
-
-    u = u_at(cx, cy)
-    X = np.column_stack([V * u, V2 * u ** 2, D * u,
-                         np.sqrt(np.clip(A, 0, None)) * D * u, A])
-    r_eff = np.sqrt(np.clip(A, 0, None) / np.pi)
-    sc = ((cx - r_eff > 24) & (cx + r_eff < 296) & (cy - r_eff > 20)
-          & (cy + r_eff < 220) & (z <= 4.2) & (grp == "round")
-          & (x > 3.5) & (x < 14.5) & (y > 3.0) & (y < 13.5) & (f <= 8.0))
-    wl, *_ = np.linalg.lstsq(X[sc], f[sc], rcond=None)
-    iso = IsotonicRegression(out_of_bounds="clip").fit(X[sc] @ wl, f[sc])
-    rho = spearmanr(iso.predict(X[sc] @ wl), f[sc]).statistic
-    print(f"  glowtact sphere calibration (in-view, 0-8 N): n={sc.sum()} "
-          f"in-sample rho={rho:.3f}")
-
-    def predict(st: dict) -> float:
-        ft = st["feats"]
-        if ft["area"] < 1.0:                    # no measurable contact
-            return 0.0
-        d = st["depth"]
-        mm = d > 0.05
-        yy, xx = np.nonzero(mm)
-        wgt = d[mm]
-        pcx = float((xx * wgt).sum() / wgt.sum())
-        pcy = float((yy * wgt).sum() / wgt.sum())
-        uu = float(u_at(pcx, pcy)[0])
-        v = np.array([ft["vol"] * uu, ft["vol2"] * uu ** 2,
-                      ft["maxd"] * uu,
-                      np.sqrt(max(ft["area"], 0.0)) * ft["maxd"] * uu,
-                      ft["area"]])
-        return float(max(0.0, iso.predict([float(v @ wl)])[0]))
-
-    return predict
+    from .react_calib import fit
+    return fit(report=True)
 
 
 # ------------------------------------------------------------------ 3D view

@@ -16,7 +16,11 @@ import numpy as np
 
 from .run_episode import OUT_ROOT, STAGE_ROOT, process_side
 
-PIPELINE_VERSION = 3      # v3: flatfield illumination normalization      # bump when the estimator changes; stale npz rerun
+# Bump whenever the estimator OR its calibration changes; stale npz rerun.
+# v4: force comes from stages() + react_calib instead of the v1 MLP estimator
+#     times a single N-per-mm3 constant (that path scored rho 0.297 and mapped
+#     a true 0.16-8 N range onto 0.01-103 N).
+PIPELINE_VERSION = 4
 
 
 def all_episodes() -> list[tuple[str, str, str]]:

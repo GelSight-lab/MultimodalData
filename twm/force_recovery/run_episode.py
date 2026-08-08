@@ -62,16 +62,13 @@ def process_side(task: str, date: str, ep: str, side: str,
     h5_path = DATA_ROOT / task / date / f"{ep}.h5"
     ref_rows = _reference_rows(inten, is_new)
 
-    # Absolute scale: N per mm^3 of displaced gel volume. The FEATS
-    # ground-truth fit supersedes the theoretical Winkler constant when the
-    # external validation has been run (assumes the same pad stiffness
-    # across gels — stated, not verified).
-    from .external_validation import calibrated_scale
-    scale = calibrated_scale()
-    scale_source = "feats_calibrated" if scale is not None else "winkler_theory"
-    if scale is None:
-        from .depth_force import FORCE_PER_MM3
-        scale = FORCE_PER_MM3
+    # Force comes from the SAME calibration the rest of the project uses.
+    # What was here — a single N-per-mm3 constant times the v1 MLP volume —
+    # scored rho 0.297 on GlowTact `round` and mapped a true 0.16-8 N range
+    # onto 0.01-103 N. See react_calib for the held-out numbers.
+    from .react_calib import fit as _fit_calib
+    predict_force = _fit_calib(report=False)
+    scale_source = "react_calib (stages + gain field + clip correction)"
 
     out = {k: np.zeros(T, np.float32) for k in FIELDS}
     kept_depths: list[tuple[int, np.ndarray]] = []
@@ -86,32 +83,38 @@ def process_side(task: str, date: str, ep: str, side: str,
         # flatfield: validated on cnc_Mini ground truth (held-out rho
         # 0.34 -> 0.65 with edge filtering); normalizes the vignette the
         # depth MLP was never trained under.
-        est = DepthForceEstimator([frames[src(int(r))] for r in ref_rows],
-                                  flatfield=True)
+        # Reconstruction is `stages()` — the same function the studies and the
+        # site use — not the retired v1 MLP estimator.
+        from .debug_gallery import stages
+        from .lut_calibration import crop
+
+        ref = np.median(np.stack([crop(frames[src(int(r))]).astype(np.float32)
+                                  for r in ref_rows[:12]]), 0)
 
         last = None
         for row in range(T):
             if is_new[row] or last is None:
-                last = est.estimate(frames[src(row)])
-            for key, value in zip(FIELDS, (last.volume_mm3 * scale,
-                                           last.volume_mm3,
-                                           last.contact_area_mm2,
-                                           last.max_depth_mm)):
+                st = stages(crop(frames[src(row)]).astype(np.float32), ref)
+                ft = st["feats"]
+                last = (predict_force(st), ft["vol"], ft["area"], ft["maxd"])
+            for key, value in zip(FIELDS, last):
                 out[key][row] = value
 
         # re-run the strongest rows with the depth map kept, for figures
         top = np.argsort(out["force_normal_n"])[::-1][:keep_top_depths]
         for row in top:
-            r = est.estimate(frames[src(int(row))], keep_depth=True)
-            kept_depths.append((int(row), r.depth_map.astype(np.float32)))
+            st = stages(crop(frames[src(int(row))]).astype(np.float32), ref)
+            kept_depths.append((int(row), st["depth"].astype(np.float32)))
 
     meta = {
         "task": task, "date": date, "episode": ep, "side": side,
         "trim": trim, "shift": LEGACY_SHIFT,
-        "contact_threshold_mm": est.contact_threshold_mm,
-        "noise_std_mm": est.noise_std_mm,
+        # thresholds now live in stages(): |dI|>8 for the valid mask and
+        # depth>0.05 mm for the contact mask
+        "contact_threshold_mm": 0.05,
+        "valid_mask_dI": 8.0,
         "reference_rows": ref_rows,
-        "scale_n_per_mm3": scale,
+        "force_calibration": scale_source,
         "scale_source": scale_source,
     }
     out_dir = OUT_ROOT / task / date
