@@ -30,22 +30,59 @@ FREEZE_THRESHOLD_S = 0.25
 BUFFER_FRAMES = 3
 EPS_POSE_BIT = 1e-7
 
-# Camera/tactile VIDEO corruption. Everything above reads the sidecar scalars;
-# none of it can see a torn or garbage camera frame, which is why "partially
-# corrupted images" survived curation unflagged. Two signatures on a 160x120
-# grayscale decode:
-#   spike — a frame that differs sharply from BOTH neighbours (full-frame
-#           garbage; real motion differs from one side only)
-#   tear  — the per-row diff profile is a step: a contiguous band of rows
-#           changed hard while the rest of the frame stayed put (partial
-#           corruption from a torn capture)
+# VIDEO corruption. Everything above reads the sidecar scalars; none of it can
+# see a torn or garbage frame, which is why "partially corrupted images"
+# survived curation unflagged.
+#
+# ONE signature, on a 160x120 RGB decode with the per-pixel diff taken as the
+# MAX over channels (a GelSight flicker swaps the gel's colour balance while
+# barely moving the greyscale mean — a grey decode measured the known
+# 2026-05-11/ep003 flicker at under half its amplitude):
+#
+#   burst — two hot frame-to-frame boundaries close together bracket an
+#           anomalous run. The obvious "frame differs from BOTH neighbours"
+#           test scores a 9-frame flicker exactly 0: its interior diffs are
+#           calm and each boundary is hot one way only.
+#
+#   magenta — pixels where R and B both sit far above G. A GelSight is lit by
+#           three coloured LEDs from three sides; the colours it can produce
+#           are bounded by that illumination, and MAGENTA is outside it. A
+#           torn frame injects saturated magenta bands the sensor physically
+#           cannot generate. Burst alone misses these when the band is a
+#           minority of the frame: the 2026-05-11/ep003 right-sensor tear
+#           moved the whole-frame mean only 21.6 against a floor of 25.
+#           This is a physical constraint, not a tuned threshold, and it
+#           separates absolutely: measured over the labelled set, real tears
+#           read 0.133-0.748 of the frame and real contacts read exactly
+#           0.0000 — including sharp edges and tips, whose strong orange/blue
+#           photometric gradients defeated every amplitude-based test.
+#
+# Five discriminators were tried and killed by measurement, not opinion. Each
+# is recorded because "we tried X" is the cheapest thing to lose and the most
+# expensive to rediscover:
+#   * row-band tear ("a band changed hard while the rest stayed put"): 8
+#     intervals over the whole release, every one a fast arm sweep on a colour
+#     view — 56 frames of good data lost, zero corruption caught.
+#   * reversion ("same rows hot going in and coming out"): 0.000 on true AND
+#     false positives alike; a corrupt band persists several frames, so it
+#     never reverts within one frame-diff.
+#   * dropping burst's absolute floor so it adapts to a static gel: catches
+#     the tear, and also every real CONTACT — the intensity step is identical
+#     in the whole-frame mean.
+#   * closure ("the scene returns after the burst"): 3.07 for a real tear vs
+#     5.60 and 8.04 for two real contacts. Backwards, and overlapping.
+#   * off-gamut channel spread, by level (92 intervals in one episode) and by
+#     step (7 intervals, 4 of them sharp-edge contacts — a knife edge in the
+#     gel steps exactly like a tear).
+# Magenta needs neither a step nor a pairing rule, because contact scores
+# exactly zero: it is a statement about the sensor's physics, not a threshold
+# fitted to this release.
 CAM_SCAN_W, CAM_SCAN_H = 160, 120
 CAM_SPIKE_ABS = 25.0          # a frame-to-frame diff this hot is a boundary
 CAM_SPIKE_REL = 4.0           # ... and > REL * median + 5 (motion-adaptive)
 CAM_BURST_MAX = 15            # two boundaries <= this far apart bracket a burst
-CAM_TEAR_ROW_HOT = 30.0       # a row counts as "changed hard"
-CAM_TEAR_HOT_FRAC = 0.15      # >=15% of rows hot ...
-CAM_TEAR_COLD_FRAC = 0.40     # ... while >=40% of rows essentially static (<5)
+GEL_MAGENTA_MARGIN = 50       # R and B this far above G = off-illumination
+GEL_MAGENTA_FRAC = 0.01       # 13x below the weakest real tear (0.133)
 
 
 def merge_intervals(events, gap: int = 1) -> list[list[int]]:
@@ -128,13 +165,13 @@ def detect_pose_freezes(pose: np.ndarray, T: int) -> list[list[int]]:
     return pad_and_merge(events, T, 0)
 
 
-def _video_diff_stats(mp4) -> tuple[np.ndarray, np.ndarray]:
-    """(frame mean diff, per-row mean diff) for one video, low-res RGB.
+def _video_stats(mp4) -> tuple[np.ndarray, np.ndarray]:
+    """(frame-to-frame mean diff, magenta pixel fraction) for one video.
 
-    Per pixel the diff is the MAX over channels: a GelSight flicker swaps the
-    gel's colour balance (magenta <-> green) while barely moving the greyscale
-    mean, so a grey decode measured the 2026-05-11/episode_003 flicker at
-    under half its chromatic amplitude and missed it entirely.
+    Decoded at CAM_SCAN_W x CAM_SCAN_H in RGB. The diff is the MAX over
+    channels per pixel: a GelSight tear swaps the gel's colour balance while
+    barely moving the greyscale mean, so a grey decode measured the known
+    2026-05-11/ep003 flicker at under half its amplitude.
     """
     import subprocess
     W, H = CAM_SCAN_W, CAM_SCAN_H
@@ -145,9 +182,12 @@ def _video_diff_stats(mp4) -> tuple[np.ndarray, np.ndarray]:
     n = len(raw) // (W * H * 3)
     a = np.frombuffer(raw[:n * W * H * 3], np.uint8) \
           .reshape(n, H, W, 3).astype(np.int16)
-    d = (np.abs(np.diff(a, axis=0)).max(axis=3) if n > 1
-         else np.zeros((0, H, W), np.int16))
-    return d.mean(axis=(1, 2)), d.mean(axis=2)
+    if n < 2:
+        return np.zeros(0), np.zeros(max(n, 0))
+    fmean = np.abs(np.diff(a, axis=0)).max(axis=3).mean(axis=(1, 2))
+    r, g, b = a[..., 0], a[..., 1], a[..., 2]
+    magenta = (r > g + GEL_MAGENTA_MARGIN) & (b > g + GEL_MAGENTA_MARGIN)
+    return fmean, magenta.mean(axis=(1, 2))
 
 
 def detect_video_corruption(video_dir, T: int, cache=None) -> dict[str, list[list[int]]]:
@@ -176,28 +216,31 @@ def detect_video_corruption(video_dir, T: int, cache=None) -> dict[str, list[lis
 
     out = {"cam_corruption": [], "tactile_corruption": []}
     for mp4 in mp4s:
-        fam = "tactile_corruption" if "tactile" in mp4.name else "cam_corruption"
-        fmean, rows = _video_diff_stats(mp4)
-        n = len(fmean) + 1
+        is_gel = "tactile" in mp4.name
+        fam = "tactile_corruption" if is_gel else "cam_corruption"
+        fmean, chroma = _video_stats(mp4)
         med = float(np.median(fmean)) if len(fmean) else 0.0
-        thr = max(CAM_SPIKE_ABS, CAM_SPIKE_REL * med + 5)
         ev = []
-        # Boundary-pair ("burst") logic instead of the single-frame spike
-        # test: `fmean[i-1] hot AND fmean[i] hot` only fires when the anomaly
-        # is exactly one frame long. A sustained flicker — 9 frames of
-        # magenta at 2026-05-11/episode_003 — has calm interior diffs and one
-        # hot boundary at each end, so the single-frame test scored it 0.
-        # Two hot boundaries at most CAM_BURST_MAX frames apart bracket the
-        # anomalous run; an unpaired boundary is scene motion and is ignored.
+        # (1) BURST. Boundary pairs, not a single-frame spike test: the
+        # obvious "differs from BOTH neighbours" scores a 9-frame flicker 0,
+        # because its interior diffs are calm and each boundary is hot one
+        # way only. Two hot boundaries close together bracket the anomalous
+        # run; an unpaired boundary is scene motion and is ignored.
+        thr = max(CAM_SPIKE_ABS, CAM_SPIKE_REL * med + 5)
         hot = [int(i) for i in np.where(fmean > thr)[0]]   # diff k -> k+1
-        for b1, b2 in zip(hot, hot[1:]):
-            if b2 - b1 <= CAM_BURST_MAX:
-                ev.append((b1 + 1, b2))
-        for i in range(1, n - 1):                          # torn single frames
-            r = rows[i - 1]
-            if ((r > CAM_TEAR_ROW_HOT).mean() >= CAM_TEAR_HOT_FRAC
-                    and (r < 5).mean() >= CAM_TEAR_COLD_FRAC):
-                ev.append((i, i))
+        ev += [(b1 + 1, b2) for b1, b2 in zip(hot, hot[1:])
+               if b2 - b1 <= CAM_BURST_MAX]
+        # (2) MAGENTA, gel only. The absolute floor above is right for a
+        # moving colour view and far too high for a static gel (median diff
+        # 0.17), so a banded tear that moved the whole-frame mean by 21.6
+        # slipped through. Dropping the floor catches it — and also flags
+        # real CONTACT, whose intensity step looks the same in the mean. What
+        # contact cannot do is produce colours outside the gel's own
+        # illumination gamut, so the discriminator is off-gamut area, not
+        # amplitude.
+        if is_gel and len(chroma):
+            ev += [(int(i), int(i))
+                   for i in np.where(chroma > GEL_MAGENTA_FRAC)[0]]
         out[fam] += ev
     out = {k: pad_and_merge(v, T, BUFFER_FRAMES) for k, v in out.items()}
     if cache is not None:
@@ -229,8 +272,7 @@ def thresholds() -> dict:
             "scan_res": [CAM_SCAN_W, CAM_SCAN_H], "metric": "rgb_max_channel",
             "spike_abs": CAM_SPIKE_ABS, "spike_rel": CAM_SPIKE_REL,
             "burst_max_frames": CAM_BURST_MAX,
-            "tear_row_hot": CAM_TEAR_ROW_HOT,
-            "tear_hot_frac": CAM_TEAR_HOT_FRAC,
-            "tear_cold_frac": CAM_TEAR_COLD_FRAC,
+            "gel_magenta_margin": GEL_MAGENTA_MARGIN,
+            "gel_magenta_frac": GEL_MAGENTA_FRAC,
         },
     }
