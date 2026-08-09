@@ -105,8 +105,20 @@ def _basis(x, y):
 
 
 # ------------------------------------------------------------------ datasets
-def ds_glowtact() -> dict:
-    """GlowTact: 6 indenter families, 0-20 N, sphere-supervised gain field.
+def ds_mini_cnc26() -> dict:
+    """GelSight Mini CNC presses (2026): 6 indenter families, 0-20 N.
+
+    NAMING. This was called `ds_mini_cnc26` and its row read "GlowTact", which
+    is wrong and was wrong everywhere it was published. The GlowTact release
+    ships one press protocol recorded on TWO sensors; this is the **GelSight
+    Mini** arm (manifest: controlled_source ".../GelSight_Mini_clean_final"),
+    kept on disk as `mini_cnc26/`. The self-made GlowTact pad is the other
+    directory and is used only by `glowtact_selfmade`.
+
+    The mislabel is not cosmetic: it made the validation table look like it
+    covered two gel technologies when two of its four rows are the same
+    sensor model, and it sent a reader (and this author) chasing a
+    cross-sensor explanation for React's reconstruction that does not exist.
 
     Scope is physical, not cherry-picked: contact fully inside the frame and
     the gel not bottomed out (z <= 4.2 mm).
@@ -251,7 +263,7 @@ def spotcheck(n: int = 40) -> dict:
 
 # ------------------------------------------------------------------ report
 ROWS = [
-    ("GlowTact (markerless, 0-20 N)", ds_glowtact),
+    ("Mini CNC 2026 (markerless, 0-20 N)", ds_mini_cnc26),
     ("FoTa cnc_Mini (markerless, in view)", ds_cnc),
     ("FEATS (marker gel)", ds_feats),
     ("Sparsh / Meta (markerless, Sparsh LUT, in view)", ds_sparsh),

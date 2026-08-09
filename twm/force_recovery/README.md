@@ -44,7 +44,7 @@ preserves that group's force range — a global shuffle proves nothing.
 
 | dataset | gel | n | ρ | within-group shuffle | MAE |
 |---|---|---|---|---|---|
-| GlowTact | markerless | 201 | **0.986** | 0.171 | 0.53 N |
+| Mini CNC 2026 | markerless | 201 | **0.986** | 0.171 | 0.53 N |
 | Sparsh / Meta (self-calibrated LUT, in view) | markerless | 1667 | **0.968** | 0.264 | 0.042 N |
 | FeelAnyForce (14 of 42 captures) | markerless | 1400 | **0.961** | 0.338 | 0.85 N |
 | FoTa cnc_Mini (in view) | markerless | 337 | **0.946** | 0.056 | 0.25 N |

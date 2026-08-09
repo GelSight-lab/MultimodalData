@@ -29,7 +29,14 @@ import numpy as np
 
 from .run_episode import OUT_ROOT
 
-GLOWTACT = OUT_ROOT / "glowtact" / "GelSight_force_final_14716"
+# The LUT's calibration set. NOT a GlowTact recording: the GlowTact
+# release ships the same CNC press protocol on two sensors, and this is
+# the GelSight Mini arm (manifest: controlled_source
+# ".../GelSight_Mini_clean_final"). It was called GLOWTACT for months and
+# that name led a reader — and this author — to diagnose React's poor
+# reconstruction as cross-sensor transfer from a GlowTact pad. It is not.
+MINI_CNC26 = OUT_ROOT / "glowtact" / "mini_cnc26"
+GLOWTACT = MINI_CNC26          # deprecated alias, do not use in new code
 CAL_OUT = OUT_ROOT / "lut_calibration"
 
 # same view as the rest of the pipeline: 1/7 border crop -> 320x240

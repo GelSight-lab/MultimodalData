@@ -3,7 +3,7 @@
 Why this file exists
 --------------------
 The GlowTact release ships the same press protocol recorded on TWO different
-sensors: `GelSight_force_final_14716/` (a commercial GelSight Mini) and
+sensors: `mini_cnc26/` (a commercial GelSight Mini) and
 `GlowTact_force_final_14716/` (the authors' own pad). Every table we have
 built so far came from the COMMERCIAL subset, but React's sensors are the
 self-made kind. Measured rest-gel colour (median HSV over the reference
@@ -65,13 +65,13 @@ import cv2
 import numpy as np
 from PIL import Image
 
-from .lut_calibration import (BINS, CAL_OUT, DI_RANGE, GLOWTACT, MM_PER_PIXEL,
+from .lut_calibration import (BINS, CAL_OUT, DI_RANGE, MINI_CNC26, MM_PER_PIXEL,
                               PAT, W, H, build_lut, crop, detect_circle,
                               fill_lut_holes, fit_sphere_geometry)
 from .run_episode import OUT_ROOT
 
 SELFMADE = OUT_ROOT / "glowtact" / "GlowTact_force_final_14716"
-COMMERCIAL = GLOWTACT                       # GelSight_force_final_14716
+COMMERCIAL = MINI_CNC26                     # GelSight Mini CNC presses
 CMP = OUT_ROOT / "lut_compare"
 OLD_LUT = CAL_OUT / "glowtact_lut.npz"
 NEW_LUT = CAL_OUT / "glowtact_selfmade_lut.npz"
