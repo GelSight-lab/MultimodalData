@@ -512,8 +512,22 @@ def verify(root: Path = EXPORT_ROOT) -> dict:
             e["pen_p95_mm"] > GEL_THICKNESS_MM for e in ep_stats)),
         "gel_stiffness_implied_n_per_mm_p5_p25_p50_p75_p95": _pct(
             k_gel, [5, 25, 50, 75, 95]),
+        # Minimum stiffness that keeps a penetration inside the gel. These are
+        # LOWER BOUNDS, so they must be quoted rounded UP — the README used to
+        # carry k_for_max_within_gel = 1.7141 as "k ~ 1.7", and 7.285/1.7 =
+        # 4.285 mm, which is outside the 4.25 mm gel. Rounding a threshold to
+        # the nearest value inverts what it asserts.
+        #
+        # The p95 over ALL rows is a poor number to choose a stiffness from:
+        # 62.8% of rows are free space, so it is mostly a percentile of zeros.
+        # The contact-only figure is the one a user needs, and it is much
+        # larger — 6.86 mm against 5.78 mm.
         "k_for_p95_within_gel": float(np.percentile(force, 95)
                                       / GEL_THICKNESS_MM),
+        "k_for_contact_p95_within_gel": float(
+            np.percentile(force[force > 0], 95) / GEL_THICKNESS_MM),
+        "contact_p95_penetration_mm": float(np.percentile(force[force > 0], 95)),
+        "contact_frac": float((force > 0).mean()),
         "k_for_max_within_gel": float(force.max() / GEL_THICKNESS_MM),
         # How much of the data sits ON the estimator's upper limit. The
         # isotonic stage clips at the hardest press in its calibration set,

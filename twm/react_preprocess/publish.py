@@ -82,8 +82,62 @@ def parquet_operations(stage_root: Path, tasks=("motherboard", "pushT")) -> list
     return ops
 
 
-def publish(ops: list, message: str, repo: str = HF_REPO, dry_run: bool = False):
+def check_no_column_loss(ops: list, repo: str = HF_REPO) -> list[str]:
+    """A parquet may not replace a published one that has columns it lacks.
+
+    The six force columns are not produced by this pipeline. `build` writes 19
+    columns; `force_recovery.export_force_columns` reads those, adds
+    `force_{left,right}_{normal_n,penetration_mm,target_pose}`, and
+    `upload_force_columns` publishes the 25-column superset to the SAME path.
+    So the published file is not the file this module last wrote, and
+    `parquet_operations(STAGE_ROOT)` targets all 36 of them.
+
+    Re-publishing after any rebuild would therefore have silently deleted the
+    force channel from a dataset whose README documents it, leaving 36 files
+    that look completely normal. Nothing about a 19-column parquet says a
+    column is missing.
+
+    The schema is read through HfFileSystem, which range-reads the parquet
+    footer instead of downloading the file.
+    """
+    from huggingface_hub import HfFileSystem
+    import pyarrow.parquet as pq
+
+    fs = HfFileSystem()
+    problems = []
+    for op in ops:
+        if not op.path_in_repo.endswith(".parquet"):
+            continue
+        remote = f"datasets/{repo}/{op.path_in_repo}"
+        try:
+            with fs.open(remote, "rb") as fh:
+                published = set(pq.read_schema(fh).names)
+        except FileNotFoundError:
+            continue                      # new file, nothing to lose
+        except Exception as exc:          # noqa: BLE001
+            problems.append(f"{op.path_in_repo}: cannot read the published "
+                            f"schema to compare against ({exc}) — refusing "
+                            f"rather than overwriting blind")
+            continue
+        local = set(pq.read_schema(str(op.path_or_fileobj)).names)
+        lost = sorted(published - local)
+        if lost:
+            problems.append(
+                f"{op.path_in_repo}: would drop {lost} — the published file "
+                f"has columns this one does not. Re-run "
+                f"force_recovery.export_force_columns and publish the "
+                f"superset instead")
+    return problems
+
+
+def publish(ops: list, message: str, repo: str = HF_REPO, dry_run: bool = False,
+            check_columns: bool = True):
     """Push one commit to the dataset repo."""
+    if check_columns:
+        problems = check_no_column_loss(ops, repo)
+        if problems:
+            raise SystemExit("refusing to publish — column loss:\n  "
+                             + "\n  ".join(problems[:10]))
     if dry_run or not ops:
         return {"committed": 0, "dry_run": True,
                 "paths": [o.path_in_repo for o in ops][:20]}
