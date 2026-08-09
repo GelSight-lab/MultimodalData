@@ -21,6 +21,7 @@ import hdf5plugin  # noqa: F401  (registers BLOSC for the recorded files)
 import numpy as np
 
 from . import meta as meta_mod
+from . import repair
 from .config import CAM_STREAM, CHUNK, GEL_STREAM, SIDES, stage_dirs
 from .encode import depth_writer, rgb_writer
 from .h5io import open_episode
@@ -105,14 +106,34 @@ def _write_detect_sidecar(path: Path, source, tactile) -> None:
 
 
 def build_episode(h5_path: Path, task: str, force: bool = False,
-                  with_depth: bool = False, encode_video: bool = True) -> BuildReport:
-    """Build every published artefact for one source recording."""
+                  with_depth: bool = False, encode_video: bool = True,
+                  auto_repair: bool = True) -> BuildReport:
+    """Build every published artefact for one source recording.
+
+    A recording that will not open is diagnosed and, for the one signature
+    that is safely recoverable, repaired — see ``repair``. The recovered file
+    then has to pass ``release_eligibility`` like anything else. It usually
+    will not: recovery gets back what HDF5 had evicted from its metadata
+    cache, which is the pixels and rarely the timestamps, and an episode whose
+    timestamps were invented is worse than an episode that is missing.
+    """
     h5_path = Path(h5_path)
     t0 = time.time()
+
     try:
         source = open_episode(h5_path, task)
     except Exception as exc:                                    # noqa: BLE001
-        return BuildReport(h5_path.stem, "FAIL", detail=f"unreadable ({exc})")
+        opened, note = repair.ensure_readable(h5_path, auto=auto_repair)
+        if opened is None:
+            return BuildReport(h5_path.stem, "FAIL",
+                               detail=f"unreadable ({exc}) — {note}")
+        ok, why = repair.release_eligibility(opened)
+        if not ok:
+            return BuildReport(
+                h5_path.stem, "RECOVERED-NOT-PUBLISHABLE",
+                detail=f"{note}, but it cannot become an episode: {why}")
+        h5_path = opened
+        source = open_episode(h5_path, task)
 
     video_dir, meta_dir = stage_dirs(task, source.date, source.episode)
     pq_path = meta_dir / f"{source.episode}.parquet"

@@ -28,6 +28,7 @@ from pathlib import Path
 import h5py
 import numpy as np
 
+from . import repair
 from .config import EXCLUDE_DATES, SIDES, WORLD_OFFSET
 
 
@@ -130,7 +131,7 @@ def open_episode(h5_path: Path, task: str) -> EpisodeSource:
     Frame pixels are *not* loaded here; the encoder streams them in blocks.
     """
     h5_path = Path(h5_path)
-    date, episode = h5_path.parent.name, h5_path.stem
+    date, episode = h5_path.parent.name, repair.source_stem(h5_path)
     offset = WORLD_OFFSET.get((task, date), (0.0, 0.0, 0.0))
 
     with h5py.File(str(h5_path), "r") as f:
@@ -173,8 +174,12 @@ def open_episode(h5_path: Path, task: str) -> EpisodeSource:
 
 def discover(task: str, root: Path, date=None, episodes=None) -> list[Path]:
     """All publishable source recordings for a task, sorted."""
+    # A `.recovered.h5` is not an episode of its own — it is reached through
+    # the source it was rebuilt from. Left in, it would publish as
+    # `episode_004.recovered` beside `episode_004`.
     paths = sorted(p for p in root.rglob("episode_*.h5")
-                   if p.parent.name not in EXCLUDE_DATES)
+                   if p.parent.name not in EXCLUDE_DATES
+                   and not repair.is_recovered(p))
     if date:
         paths = [p for p in paths if p.parent.name == date]
     if episodes:

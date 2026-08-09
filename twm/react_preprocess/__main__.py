@@ -25,14 +25,20 @@ def cmd_build(args) -> int:
         print(f"no source recordings under {root}", file=sys.stderr)
         return 1
     print(f"[build] {args.task}: {len(paths)} episodes -> {STAGE_ROOT}", flush=True)
-    failures = 0
+    failures = refused = 0
     for p in paths:
         report = build_episode(p, args.task, force=args.force,
                                with_depth=args.with_depth,
-                               encode_video=not args.meta_only)
+                               encode_video=not args.meta_only,
+                               auto_repair=not args.no_repair)
         print(f"  {report}", flush=True)
         failures += report.status == "FAIL"
-    print(f"[build] done ({failures} failed)")
+        refused += report.status == "RECOVERED-NOT-PUBLISHABLE"
+    # A refusal is not a failure, but it must not vanish into the log either:
+    # it means a recording exists that the release does not contain.
+    tail = f" ({failures} failed"
+    tail += f", {refused} recovered but not publishable" if refused else ""
+    print(f"[build] done{tail})")
     return 1 if failures else 0
 
 
@@ -154,6 +160,11 @@ def main(argv=None) -> int:
     b.add_argument("--with-depth", action="store_true")
     b.add_argument("--meta-only", action="store_true",
                    help="recompute parquet without re-encoding video")
+    b.add_argument("--no-repair", action="store_true",
+                   help="do not attempt to recover a recording that will not "
+                        "open; report the diagnosis and move on. Recovery "
+                        "rewrites the recording's worth of bytes and can take "
+                        "half an hour")
     b.set_defaults(func=cmd_build)
 
     a = sub.add_parser("audit", help="report tactile duplication")

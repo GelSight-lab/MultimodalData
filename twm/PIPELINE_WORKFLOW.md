@@ -36,45 +36,71 @@ redeclares the constant or indexes frames without it.
 > `gelsight[i]` and 40 clips went to the dataset repo with the tactile tiles
 > half a second ahead of the video beside them.
 
-## 0b. If a recording will not open at all
+## 0b. If a recording will not open: the build already handles it
 
-`OSError: bad object header version number` means the recorder died without
-`close()`. HDF5 streams raw chunks straight to disk but keeps object headers,
-chunk B-trees and the superblock's EOF field in a metadata cache, so the
-pixels are all there and nothing can reach them. Check the superblock first —
-`EOF` stuck at 2048 against a multi-GB file, and the consistency flag reading
-1, is this failure and not a truncated write:
+`python -m react_preprocess build` diagnoses and, for one specific signature,
+repairs an unopenable recording on its own. You do not have to do anything.
+What you **do** have to do is read the line it prints, because the honest
+outcome is usually a refusal:
+
+```
+episode_004: RECOVERED-NOT-PUBLISHABLE — using existing recovery
+  (episode_004.recovered.h5), but it cannot become an episode:
+  missing ['timestamps'] — recovery cannot rebuild what was still in the
+  metadata cache, and interpolating timestamps misplaces frames by 15-1431
+[build] done (0 failed, 1 recovered but not publishable)
+```
+
+A refusal is not a failure and does not stop the build, but it does mean a
+recording exists that the release does not contain. `--no-repair` skips the
+recovery attempt (it rewrites the recording's worth of bytes, ~35 min for
+79 GB).
+
+**The failure.** `bad object header version number` means the recorder died
+without `close()`. HDF5 streams raw chunks straight to disk but keeps object
+headers, chunk B-trees and the superblock's EOF field in a metadata cache, so
+every pixel is present and nothing can reach it. `repair.diagnose` confirms
+this rather than assuming it — EOF stuck at its creation value, consistency
+flag reading open-for-write, root header version not 1 — and reports anything
+else as `unknown-damage` without touching it. To look yourself:
 
 ```
 python scripts/h5_forensics.py <broken.h5> <a_healthy_sibling.h5>
 ```
 
-`HDF5Writer.FLUSH_INTERVAL_S` (10 s) exists so this cannot happen again;
+**Prevention is the real fix.** `HDF5Writer.FLUSH_INTERVAL_S` (10 s) turns
+"lose the recording" into "lose the last few seconds".
 `scripts/test_crash_leaves_readable_h5.py` kills a writer with and without it
-and requires the unflushed arm to reproduce the exact error above.
+and requires the unflushed arm to reproduce the exact error above — if that
+arm ever starts opening, the test fails loudly, because it is then measuring
+nothing.
 
-Recovery, when it is already broken —
-`scripts/recover_h5_episode.py index|write|verify`. It scans for orphaned
-B-tree leaves, chains them by their sibling pointers into one component per
-dataset, and copies chunks with `write_direct_chunk`. Two things it will not
-let you skip:
+**What recovery gets back, and what it must never invent.** It returns what
+HDF5 had already evicted. For pushT/2026-06-18/episode_004 that is all eight
+image streams — 15,447 complete frames, byte-verified — but only 2 of 16
+timestamp chunks and no usable OptiTrack poses. Do **not** interpolate the
+missing timestamps: a line through the two surviving anchors, checked against
+episodes whose timestamps are known, misplaces frames by 15.6, 24.5 and 1431,
+and the tactile lag this pipeline exists to get right is 15.
+
+`repair.release_eligibility` is the gate, its default answer is no, and
+`scripts/test_repair_refuses.py` reintroduces each defect (no timestamps,
+short timestamps, no poses, unfamiliar damage, a `.recovered.h5` leaking into
+`discover`) to watch it refuse. **A recovered recording with no timestamps is
+video, not an episode.**
+
+Two rules recovery will not let you skip, both learned by getting them wrong:
 
 * **Use the filter mask from the B-tree key, never the chunk size.** "Exactly
   921,600 bytes means unfiltered" holds for 10,635 chunks of one stream and is
   wrong for 37 more, which are blosc output that lands on that length.
-* **Identify streams against a healthy sibling, and check the weak margins.**
-  Frame correlation separated the GelSights only 0.995 vs 0.908; averaging 41
-  frames cancels contact and leaves the sensor's fixed pattern, which reads
-  0.9996 vs 0.929 against all three reference episodes.
-
-**What does not come back:** anything still in the cache. For
-pushT/2026-06-18/episode_004 that is all eight image streams recovered
-(15,447 complete frames) but only 2 of 16 timestamp chunks and no usable
-OptiTrack poses. Do **not** interpolate the missing timestamps — reconstructing
-them linearly from two surviving anchors was measured against episodes whose
-timestamps are known and misplaces frames by 15.6, 24.5 and 1431. A recovered
-recording with no timestamps is video, not an episode, and must not enter the
-release.
+* **Verify stream identity separately from byte fidelity.** Comparing the
+  recovered file against the index it was written from proves only that the
+  copy is faithful; both sides use the same index. `verify_stream_identity`
+  reads each dataset *by name* and correlates it against a healthy sibling.
+  Watch the weak margins: single frames separate the two GelSights only
+  0.995 vs 0.908, while averaging 41 frames cancels contact and leaves the
+  sensor's own fixed pattern at 0.9996 vs 0.929.
 
 ## 1. Preprocess → release
 

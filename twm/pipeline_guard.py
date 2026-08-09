@@ -243,8 +243,45 @@ def check_no_silent_fallback() -> list[str]:
     return bad
 
 
+def check_single_repair_policy() -> list[str]:
+    """Only `repair` decides whether a damaged recording may be published.
+
+    Auto-repair hands the pipeline a file rebuilt from a crashed recording.
+    Recovery returns whatever HDF5 had evicted from its metadata cache — the
+    pixels, and for pushT/2026-06-18/episode_004 only 2 of 16 timestamp
+    chunks. The single most dangerous thing anyone can add to this codebase is
+    a second place that decides such a file is good enough, or that fills in
+    the missing time base. Interpolating those timestamps is measurably wrong:
+    it misplaces frames by 15.6, 24.5 and 1431 against episodes where the
+    answer is known, and the pipeline's tactile lag is 15 frames.
+
+    So the naming rule (`.recovered.h5`) and the publish decision both live in
+    `repair` and are reached through `repair.is_recovered` / `source_stem` /
+    `release_eligibility`. `scripts/` may name the suffix in test fixtures.
+    """
+    bad = []
+    pat = re.compile(r'["\']\.recovered|\.recovered\.h5|'
+                     r'bad object header version')
+    for p in _py_files():
+        if p.name in ("repair.py", "pipeline_guard.py", "h5raw.py"):
+            continue
+        if p.parts[-2:-1] == ("scripts",) and p.name.startswith("test_"):
+            continue
+        for i, line in enumerate(p.read_text().splitlines(), 1):
+            if line.lstrip().startswith("#"):
+                continue
+            if pat.search(line) and OPT_OUT_FALLBACK not in line:
+                bad.append(f"{p.relative_to(ROOT)}:{i}: hard-codes the "
+                           f"recovered-file naming or the crash signature — "
+                           f"go through react_preprocess.repair, which is the "
+                           f"only module allowed to decide that a rebuilt "
+                           f"recording may be published")
+    return bad
+
+
 CHECKS = {
     "single calibration-epoch definition": check_single_calib_epoch,
+    "single repair/publish policy": check_single_repair_policy,
     "no silent fallback in resolvers": check_no_silent_fallback,
     "single tactile-lag definition": check_single_lag_definition,
     "no raw GelSight indexing": check_no_raw_gel_indexing,
