@@ -54,11 +54,26 @@ def depth_heat(d: np.ndarray) -> np.ndarray:
     return np.clip(np.asarray(d, np.float32), 0.0, None)
 
 
-def mesh(d: np.ndarray, w: int = 320, h: int = 240) -> np.ndarray:
-    """Open3D surface of a depth map — the site's one mesh renderer."""
+def mesh(d: np.ndarray, w: int = 320, h: int = 240,
+         relative: bool = False) -> np.ndarray:
+    """Open3D surface of a depth map — the site's one mesh renderer.
+
+    `relative=True` normalises to the frame's own peak first. Required for any
+    reconstruction whose scale is not calibrated: the renderer applies a FIXED
+    z exaggeration, so an uncalibrated magnitude 3.5x the LUT's draws the same
+    correct geometry as a vertical tower. That is what made the
+    calibration-free surfaces look broken when they were not
+    (`calib_free.RETURNS_MILLIMETRES`).
+
+    Passing relative=True for a depth that IS in millimetres would throw away
+    real information — the height difference between a light press and a hard
+    one — so it is opt-in per caller, not the default.
+    """
     from .showcase import mesh_tile
-    return mesh_tile(np.clip(np.asarray(d, np.float32), 0.0, None),
-                     w=w, h=h, bg=1.0)
+    d = np.clip(np.asarray(d, np.float32), 0.0, None)
+    if relative:
+        d = d / max(float(d.max()), 1e-12)
+    return mesh_tile(d, w=w, h=h, bg=1.0)
 
 
 def panel_row(ax_row, img, ref, depth, titles=None, mm_note: str = "") -> None:

@@ -109,6 +109,26 @@ import numpy as np
 # normal to the gel), and it is left visible rather than tuned away.
 LED_AZIMUTH_DEG = (210.0, 330.0, 90.0)
 
+# Does `reconstruct` return millimetres? NO, and the code now says so where a
+# consumer can see it, because the docstring saying it was not enough.
+#
+# The solve produces a DIMENSIONLESS gradient (tan of the surface slope) and
+# `fast_poisson` integrates it in PIXELS, so the result is a height in pixel
+# units up to one unknown global factor. The LUT, by contrast, returns
+# millimetres per pixel and integrates to millimetres.
+#
+# Presented as millimetres, the number reads 1.48-13.12 on a 4.25 mm gel, and
+# the Open3D renderer — which applies a FIXED z exaggeration — drew those
+# surfaces as vertical towers. That looked like a geometry failure and was
+# reported as one. It is not: rescaling each surface to the LUT's peak turns
+# every tower back into the right shape (a triangle indenter into a triangle,
+# a two-hole stamp into a blob with two dimples), and per-pixel shape
+# agreement with the LUT inside the contact is rho 0.75+.
+#
+# So: shape is recovered, scale is not. Consumers must normalise (figures) or
+# absorb the factor in a fit (force — a linear least squares already does).
+RETURNS_MILLIMETRES = False
+
 # Contact test, shared with `stages()` so the two reconstructions are compared
 # on identical pixels rather than on their own private masks.
 VALID_DI = 8.0
@@ -161,8 +181,18 @@ def gradients(dI: np.ndarray, azimuth_deg=LED_AZIMUTH_DEG,
 
 
 def reconstruct(img: np.ndarray, ref: np.ndarray,
-                azimuth_deg=LED_AZIMUTH_DEG, scale: float = 1.0) -> dict:
-    """Depth (arbitrary units x `scale`) with no per-sensor calibration."""
+                azimuth_deg=LED_AZIMUTH_DEG, scale: float = 1.0,
+                normalize: bool = False) -> dict:
+    """Surface height with no per-sensor calibration — SHAPE, not millimetres.
+
+    `normalize=True` divides by the frame's own peak, giving 0..1. That is the
+    right choice for any FIGURE: a mesh renderer with a fixed z exaggeration
+    turns an uncalibrated magnitude into a tower and makes correct geometry
+    look broken. It is the wrong choice for feature extraction, where relative
+    magnitude between frames carries the force signal.
+
+    See RETURNS_MILLIMETRES.
+    """
     import sys
     from pathlib import Path
     sys.path.insert(0, str(Path.home() / "gelsight_heightmap_reconstruction"
@@ -178,7 +208,11 @@ def reconstruct(img: np.ndarray, ref: np.ndarray,
     if valid.any() and np.median(depth[valid]) < 0:
         depth = -depth
     d = np.maximum(depth, 0.0) * scale
-    return {"dI": dI, "valid": valid, "gx": gx, "gy": gy, "depth": d}
+    if normalize:
+        d = d / max(float(d.max()), 1e-12)
+    return {"dI": dI, "valid": valid, "gx": gx, "gy": gy, "depth": d,
+            "units": "relative (peak = 1)" if normalize
+                     else "arbitrary (scale not recovered)"}
 
 
 def flat_gel_leak(depth: np.ndarray, valid: np.ndarray) -> float:

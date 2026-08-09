@@ -19,9 +19,24 @@ from .run_episode import DATA_ROOT, LEGACY_SHIFT, OUT_ROOT, STAGE_ROOT
 ASSETS = OUT_ROOT / "site_assets"
 
 # ── the one way a difference image is drawn ─────────────────────────────────
-# Gain applied to dI before it is centred on mid-grey. Contact moves the gel
-# only a few grey levels, so an ungained dI reads as a flat grey rectangle.
-DIFF_GAIN = 3.0
+# Gain applied to dI before it is centred on mid-grey. NONE — the difference
+# image is shown as it is.
+#
+# This was 3.0, justified by "contact moves the gel only a few grey levels, so
+# an ungained dI reads as a flat grey rectangle". Measured over 8 strong
+# contacts each from React and cnc_mini_26, that is false in both directions:
+#
+#   gain   contact-region |dI|            clipped pixels
+#    x1    median +-25..31, p95 +-80..93   0.16 - 0.33 %
+#    x2                                    4.99 - 5.41 %
+#    x3                                   10.27 - 14.79 %
+#
+# At x1 the contact already occupies 19-24 % of the +-128 range at its median
+# and 62-73 % at p95 — not a flat grey rectangle. At x3 one contact pixel in
+# seven is clipped, and they are the strongest ones, which is exactly the part
+# of the image the figure exists to show. A gain that saturates the signal to
+# make it look stronger is not a display choice, it is a loss.
+DIFF_GAIN = 1.0
 
 
 def diff_rgb(img: np.ndarray, ref: np.ndarray, gain: float = DIFF_GAIN):
