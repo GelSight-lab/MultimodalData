@@ -18,6 +18,29 @@ from .run_episode import DATA_ROOT, LEGACY_SHIFT, OUT_ROOT, STAGE_ROOT
 
 ASSETS = OUT_ROOT / "site_assets"
 
+# ── the one way a difference image is drawn ─────────────────────────────────
+# Gain applied to dI before it is centred on mid-grey. Contact moves the gel
+# only a few grey levels, so an ungained dI reads as a flat grey rectangle.
+DIFF_GAIN = 3.0
+
+
+def diff_rgb(img: np.ndarray, ref: np.ndarray, gain: float = DIFF_GAIN):
+    """Signed difference image as COLOUR, the way the React previews show it.
+
+    `|img - ref|` averaged over channels was what several panels drew, and it
+    throws away the two things the difference image is for. The sign says
+    which side of the indenter a pixel is on — a bump and a dent have the same
+    magnitude and opposite colour — and the channel split is the raw material
+    of every reconstruction here, LUT or calibration-free: three LEDs from
+    three directions, one per channel. A grey magnitude image is a picture of
+    neither.
+
+    Returns uint8 RGB centred on 128, so no contact is neutral grey.
+    """
+    d = (np.asarray(img, np.float32) - np.asarray(ref, np.float32)) * gain
+    return np.clip(d + 128.0, 0, 255).astype(np.uint8)
+
+
 plt.rcParams.update({
     "figure.dpi": 130, "font.size": 9, "axes.grid": True,
     "grid.alpha": 0.25, "axes.spines.top": False, "axes.spines.right": False,

@@ -65,6 +65,7 @@ import cv2
 import numpy as np
 from PIL import Image
 
+from . import visualize as _V
 from .lut_calibration import (BINS, CAL_OUT, DI_RANGE, MINI_CNC26, MM_PER_PIXEL,
                               PAT, W, H, build_lut, crop, detect_circle,
                               fill_lut_holes, fit_sphere_geometry)
@@ -1188,7 +1189,7 @@ def cmd_panel(task="motherboard", date="2026-05-10", ep="episode_000",
         for i, row in enumerate(picks):
             img = crop(frame(row)).astype(np.float32)
             st = stages_lut(img, ref, L["lut"], L["count"])
-            diff = np.abs(img - ref).mean(axis=2)
+            diff = _V.diff_rgb(img, ref)
             stats.append({"row": row, "force_n": float(force[row]),
                           "peak_mm": float(st["depth"].max()),
                           "unobserved": st["unobserved"],

@@ -84,10 +84,30 @@ from __future__ import annotations
 
 import numpy as np
 
-# Three LEDs, 120 degrees apart, in (R, G, B) channel order. This is the
-# layout the Wedge driver's collapsed form implies, and the one that scores
-# best on the flat-gel test — see `azimuth_search`.
-LED_AZIMUTH_DEG = (210.0, 90.0, 330.0)
+# Three LEDs, 120 degrees apart, in (R, G, B) channel order.
+#
+# Determined on SPHERE presses, not on React. A sphere pressed into the gel
+# must reconstruct as a circular dome, so the second moment of the depth peak
+# has axis ratio 1; anything else is the channel-to-LED map being wrong. Over
+# 30 sphere presses from `mini_cnc26/round` (3-12 N):
+#
+#     (R,G,B) azimuth     axis ratio   flat-gel leak
+#     (210, 330,  90)         1.266         0.0344     <- this one
+#     ( 90, 210, 330)         1.328         0.0447
+#     (210,  90, 330)         1.798         0.0602     <- the first guess here
+#     (330,  90, 210)         1.848         0.0491
+#
+# The flat-gel leak alone did NOT settle this: searched on React frames it
+# ranked six assignments within 1.7x of each other and reordered completely
+# between a 3-frame and a 36-frame sample. A criterion that rewards a
+# reconstruction for being small cannot tell a correct shape from a wrong one
+# — the first-guess assignment split a connector into two blobs and turned a
+# horizontal edge into a vertical bar while scoring the LOWEST leak of all.
+# Known geometry is what settles it.
+#
+# 1.266 is not 1.0. Some of that is real (the indenter is not always pressed
+# normal to the gel), and it is left visible rather than tuned away.
+LED_AZIMUTH_DEG = (210.0, 330.0, 90.0)
 
 # Contact test, shared with `stages()` so the two reconstructions are compared
 # on identical pixels rather than on their own private masks.

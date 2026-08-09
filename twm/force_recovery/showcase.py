@@ -61,6 +61,7 @@ from .lut_calibration import MM_PER_PIXEL, crop
 from .marker_removal import marker_mask, stages_depth
 from .o3d_view import (crop_to_contact, crop_to_content, has_display,
                        remove_halo_pedestal, render_depth_mesh)
+from . import visualize as V
 from .run_episode import DATA_ROOT, LEGACY_SHIFT, OUT_ROOT, STAGE_ROOT
 
 ASSETS = OUT_ROOT / "site_assets"
@@ -210,7 +211,7 @@ def _panel(img: np.ndarray, depth: np.ndarray, f_pred: float,
         # from `st` rather than recomputed, so on a marker gel this and every
         # panel right of it show the inpainted (dot-free) chain while the raw
         # panel still shows the dots.
-        add(np.clip(st["dI"] * 3 + 128, 0, 255).astype(np.uint8),
+        add(V.diff_rgb(st["dI"], 0.0),
             f"difference image  dI = img − ref  (×3){depth_note}")
         add(st["valid"], "valid mask  |dI| > 8", cmap="gray")
         add(st["gmag"], "|LUT surface gradient|", cmap="magma")
@@ -515,11 +516,11 @@ def react_showcase(task: str = "motherboard", date: str = "2026-05-10",
     for r_i, row in enumerate(rows):
         img = crop(frame(row)).astype(np.float32)
         st = stages_depth(img, ref)      # markerless React: identical to stages()
-        diff = np.abs(img - ref).mean(axis=2)
+        diff = V.diff_rgb(img, ref)
         for c, (data, cmap, title) in enumerate((
                 (np.clip(img, 0, 255).astype(np.uint8), None,
                  f"row {row}  F={force[row]:.2f} N"),
-                (diff, "gray", "|frame - reference|"),
+                (diff, None, "difference  dI = frame − ref  (×3, colour)"),
                 (st["depth"], "inferno",
                  f"LUT depth (max {st['depth'].max():.2f} mm)"),
                 (mesh_view(st["depth"]), None,

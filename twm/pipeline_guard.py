@@ -279,8 +279,35 @@ def check_single_repair_policy() -> list[str]:
     return bad
 
 
+def check_difference_images_are_colour() -> list[str]:
+    """A difference image is drawn in colour, through `visualize.diff_rgb`.
+
+    Several panels drew `|img - ref|` averaged over channels. That discards
+    the sign — a bump and a dent are the same picture — and it discards the
+    channel split, which is the raw material of every reconstruction in this
+    project: three LEDs from three directions, one per channel. The React
+    dataset previews have always shown the signed colour difference; the
+    force figures did not, and a reader comparing the two saw two different
+    things called the same thing.
+    """
+    bad = []
+    pat = re.compile(r"np\.abs\(\s*(img|frame|st\[.dI.\])\s*-\s*ref\s*\)"
+                     r"\s*\.\s*mean\s*\(\s*axis\s*=\s*2")
+    for p in _py_files():
+        if p.name in ("visualize.py", "pipeline_guard.py"):
+            continue
+        for i, line in enumerate(p.read_text().splitlines(), 1):
+            if pat.search(line):
+                bad.append(f"{p.relative_to(ROOT)}:{i}: draws a difference "
+                           f"image as a greyscale magnitude — use "
+                           f"force_recovery.visualize.diff_rgb, which keeps "
+                           f"the sign and the channels")
+    return bad
+
+
 CHECKS = {
     "single calibration-epoch definition": check_single_calib_epoch,
+    "difference images drawn in colour": check_difference_images_are_colour,
     "single repair/publish policy": check_single_repair_policy,
     "no silent fallback in resolvers": check_no_silent_fallback,
     "single tactile-lag definition": check_single_lag_definition,
