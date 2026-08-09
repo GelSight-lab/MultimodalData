@@ -213,7 +213,7 @@ details and the Taxim caveat on the
 <td>{fm['FEATS']['shuffle_rho']:+.2f}</td><td><b>0.96</b> in-domain</td><td>0.43</td></tr>
 <tr><td>FoTa cnc_Mini (markerless)</td><td>{fm['FoTa']['rho']:.2f} (in view)</td>
 <td>{fm['FoTa']['shuffle_rho']:+.2f}</td><td>0.07</td><td><b>0.83</b></td></tr>
-<tr><td>Mini CNC 2026 (markerless)</td><td><b>{fm['Mini CNC']['rho']:.2f}</b></td>
+<tr><td>cnc_mini_26 (markerless)</td><td><b>{fm['Mini CNC']['rho']:.2f}</b></td>
 <td>{fm['Mini CNC']['shuffle_rho']:+.2f}</td><td>0.04</td><td>0.90</td></tr>
 <tr><td>Sparsh / Meta (markerless, 10 pads)</td>
 <td><b>{fm['Sparsh']['rho']:.2f}</b> *</td>
@@ -229,7 +229,7 @@ force labels shuffled <i>within</i> each group. Predicted-vs-ground-truth
 scatters, per dataset, on the
 <a href="results.html"><b>results page</b></a>.</p>
 <p class="footnote" style="margin-bottom:0">* Sparsh is a <b>foreign sensor</b>.
-Our Mini CNC 2026 table reaches 0.878 there; rebuilding the table from Sparsh's own
+Our cnc_mini_26 table reaches 0.878 there; rebuilding the table from Sparsh's own
 sphere presses gives <b>0.968 (MAE 0.042 N)</b> and turns a bilobed
 reconstruction into a true dome. That is <b>calibrate once per sensor</b>, not
 zero-shot — and absolute newtons still do not transfer across indenter shapes.

@@ -105,14 +105,14 @@ def _basis(x, y):
 
 
 # ------------------------------------------------------------------ datasets
-def ds_mini_cnc26(cache: str = "lut_full.json") -> dict:
+def ds_cnc_mini_26(cache: str = "lut_full.json") -> dict:
     """GelSight Mini CNC presses (2026): 6 indenter families, 0-20 N.
 
     NAMING. This was called `ds_glowtact` and its row read "GlowTact", which
     is wrong and was wrong everywhere it was published. The GlowTact release
     ships one press protocol recorded on TWO sensors; this is the **GelSight
     Mini** arm (manifest: controlled_source ".../GelSight_Mini_clean_final"),
-    kept on disk as `mini_cnc26/`. The self-made GlowTact pad is the other
+    kept on disk as `cnc_mini_26/`. The self-made GlowTact pad is the other
     directory and is used only by `glowtact_selfmade`.
 
     The mislabel is not cosmetic: it made the validation table look like it
@@ -285,7 +285,7 @@ def spotcheck(n: int = 40) -> dict:
 
 # ------------------------------------------------------------------ report
 ROWS = [
-    ("Mini CNC 2026 (markerless, 0-20 N)", ds_mini_cnc26),
+    ("cnc_mini_26 (markerless, 0-20 N)", ds_cnc_mini_26),
     ("FoTa cnc_Mini (markerless, in view)", ds_cnc),
     ("FEATS (marker gel)", ds_feats),
     ("Sparsh / Meta (markerless, Sparsh LUT, in view)", ds_sparsh),

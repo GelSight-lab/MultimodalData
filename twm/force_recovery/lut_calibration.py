@@ -35,8 +35,8 @@ from .run_episode import OUT_ROOT
 # ".../GelSight_Mini_clean_final"). It was called GLOWTACT for months and
 # that name led a reader — and this author — to diagnose React's poor
 # reconstruction as cross-sensor transfer from a GlowTact pad. It is not.
-MINI_CNC26 = OUT_ROOT / "glowtact" / "mini_cnc26"
-GLOWTACT = MINI_CNC26          # deprecated alias, do not use in new code
+CNC_MINI_26 = OUT_ROOT / "glowtact" / "cnc_mini_26"
+GLOWTACT = CNC_MINI_26          # deprecated alias, do not use in new code
 CAL_OUT = OUT_ROOT / "lut_calibration"
 
 # same view as the rest of the pipeline: 1/7 border crop -> 320x240

@@ -16,7 +16,7 @@ That was asked earlier with a label-free proxy (depth outside the contact must
 be zero) and the proxy picked an LED map that split a connector into two blobs.
 Force labels are the arbiter here.
 
-    python -m force_recovery.calibfree_eval [--datasets mini_cnc26 cnc feats]
+    python -m force_recovery.calibfree_eval [--datasets cnc_mini_26 cnc feats]
 """
 from __future__ import annotations
 
@@ -71,9 +71,9 @@ def _load(name: str):
     """(iterable of (img, ref, force, group), label) for one GT dataset."""
     from .debug_gallery import load_cnc, load_feats, load_glowtact
 
-    if name == "mini_cnc26":
+    if name == "cnc_mini_26":
         rows, get = load_glowtact()
-        return rows, get, "Mini CNC 2026 (markerless, 0-20 N)"
+        return rows, get, "cnc_mini_26 (markerless, 0-20 N)"
     if name == "cnc":
         rows, get = load_cnc()
         return rows, get, "FoTa cnc_Mini (markerless, in view)"
@@ -111,7 +111,7 @@ def score(cache: dict, method: str, seeds: int = 5) -> dict:
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--datasets", nargs="*",
-                    default=["mini_cnc26", "cnc", "feats"])
+                    default=["cnc_mini_26", "cnc", "feats"])
     ap.add_argument("--limit", type=int, default=0)
     ap.add_argument("--out", type=Path,
                     default=CACHE / "calibfree_vs_lut.json")

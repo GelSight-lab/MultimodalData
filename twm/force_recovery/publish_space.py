@@ -13,14 +13,14 @@ def check_fresh_and_labelled() -> list[str]:
     """The site must be REGENERATED, not just re-uploaded, and correctly named.
 
     Both failures happened on the same deploy. The dataset behind the LUT was
-    renamed `mini_cnc26` in the generators, which broke `site._force_row`'s
+    renamed `cnc_mini_26` in the generators, which broke `site._force_row`'s
     prefix lookup — so a regeneration would have crashed. Nothing regenerated,
     because `publish` only uploads a folder; the stale HTML shipped, and the
     Space went on claiming "validated on GlowTact rho=0.986" for a row that is
     GelSight Mini data. The rename was the very thing being fixed.
 
     So: refuse if a page is older than the generator that writes it, and
-    refuse if a page still labels mini_cnc26 as GlowTact. The citation of the
+    refuse if a page still labels cnc_mini_26 as GlowTact. The citation of the
     GlowTact *release* is legitimate and is allowed by requiring the dataset
     handle beside it.
     """
@@ -44,7 +44,7 @@ def check_fresh_and_labelled() -> list[str]:
             around = txt[max(0, m.start() - 60):m.start() + 60]
             if "GlowTact_Datasets" in around or "dacongming666" in around:
                 continue                      # citing the source release: fine
-            bad.append(f"{page}: calls mini_cnc26 'GlowTact' — that dataset is "
+            bad.append(f"{page}: calls cnc_mini_26 'GlowTact' — that dataset is "
                        f"the GelSight Mini arm of the GlowTact release")
             break
     return bad

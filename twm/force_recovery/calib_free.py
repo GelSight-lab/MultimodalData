@@ -12,7 +12,7 @@ from.
 TWO EXPLANATIONS I PUBLISHED HERE AND THEN HAD TO WITHDRAW
 
 1. "It is cross-sensor transfer: a GlowTact table applied to a GelSight Mini."
-   FALSE, and the pairing was backwards. `mini_cnc26/` (long misnamed
+   FALSE, and the pairing was backwards. `cnc_mini_26/` (long misnamed
    `GelSight_force_final_14716` and referred to as GLOWTACT) is itself a
    **GelSight Mini** capture — it is the Mini arm of a two-sensor GlowTact
    study. The real mismatch is the other way round and is already measured in
@@ -30,7 +30,7 @@ TWO EXPLANATIONS I PUBLISHED HERE AND THEN HAD TO WITHDRAW
 WHAT THE MEASUREMENT ACTUALLY SAYS (24 strong presses, 4 episodes, both sides)
 
     reconstruction                  leak    leak p95   LUT coverage
-    LUT, Mini CNC 2026 (shipped)   0.0721    0.1374        0.782
+    LUT, cnc_mini_26 (shipped)   0.0721    0.1374        0.782
     LUT, GlowTact self-made pad    0.1037    0.2255        0.035
     LUT, Sparsh                    0.0210    0.1037        0.760
     calibration-free (this file)   0.0713    0.1351          --
@@ -89,7 +89,7 @@ import numpy as np
 # Determined on SPHERE presses, not on React. A sphere pressed into the gel
 # must reconstruct as a circular dome, so the second moment of the depth peak
 # has axis ratio 1; anything else is the channel-to-LED map being wrong. Over
-# 30 sphere presses from `mini_cnc26/round` (3-12 N):
+# 30 sphere presses from `cnc_mini_26/round` (3-12 N):
 #
 #     (R,G,B) azimuth     axis ratio   flat-gel leak
 #     (210, 330,  90)         1.266         0.0344     <- this one

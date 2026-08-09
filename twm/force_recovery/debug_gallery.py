@@ -294,3 +294,62 @@ def cmd_gallery():
 if __name__ == "__main__":
     {"features": cmd_features, "gallery": cmd_gallery}[
         sys.argv[1] if len(sys.argv) > 1 else "features"]()
+
+
+# ── loaders for the two datasets the rebuilt site adds ─────────────────────
+# Both return the same (rows, get) contract as load_glowtact/load_cnc/
+# load_feats: `rows` is a list of dicts with at least {group, f} and `get(fr)`
+# returns (img, ref) as float32 crops. Written here so `site2_figures` has one
+# place to reach every dataset, rather than each figure knowing five layouts.
+
+def load_sparsh(n: int = 60):
+    """Sparsh / Meta gel pads, via the batch loader the metrics already use."""
+    from .sparsh_data import BATCHES, load_frames
+
+    rows = []
+    per = max(n // max(len(BATCHES), 1), 2)
+    for probe, b in BATCHES[:8]:
+        try:
+            fr, _ref_global = load_frames(probe, b, n=per)
+        except Exception:
+            continue
+        for r in fr[:per]:
+            r = dict(r)
+            r["group"] = f"{probe}{b}"
+            r["f"] = float(r.get("f", r.get("fz", 0.0)))
+            rows.append(r)
+    if not rows:
+        raise LookupError("no Sparsh batches could be loaded")
+
+    def get(fr):
+        return (crop(np.asarray(fr["img"], np.float32)),
+                crop(np.asarray(fr["ref"], np.float32)))
+    return rows, get
+
+
+def load_faf(n: int = 60):
+    """FeelAnyForce captures, from the extracted PNG tree."""
+    from PIL import Image
+
+    from .faf_extract import IMG_DIR
+    caps = sorted(d for d in IMG_DIR.iterdir() if d.is_dir())
+    if not caps:
+        raise LookupError(f"no FeelAnyForce captures under {IMG_DIR}")
+    rows, refs = [], {}
+    per = max(n // max(len(caps), 1), 1)
+    for c in caps:
+        pngs = sorted(c.glob("*.png"))
+        if len(pngs) < 3:
+            continue
+        refs[c.name] = crop(np.asarray(
+            Image.open(pngs[0]).convert("RGB"))).astype(np.float32)
+        for p in pngs[1:1 + per]:
+            rows.append({"path": p, "group": c.name, "f": None})
+    if not rows:
+        raise LookupError("FeelAnyForce captures held no usable frames")
+
+    def get(fr):
+        img = crop(np.asarray(
+            Image.open(fr["path"]).convert("RGB"))).astype(np.float32)
+        return img, refs[fr["group"]]
+    return rows, get

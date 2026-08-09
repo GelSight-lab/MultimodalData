@@ -1106,7 +1106,7 @@ def figures(n=8):
             (EP.diff_rgb(img, bg), None,
              "difference  dI = frame − ref  (×3, colour)", None),
             (gt, "viridis", f"GT depth (mesh) max {gt.max():.2f} mm", vmax),
-            (da, "viridis", f"ours, Mini CNC 2026 LUT  max {da.max():.2f}",
+            (da, "viridis", f"ours, cnc_mini_26 LUT  max {da.max():.2f}",
              vmax),
             (db, "viridis", f"ours, sim-refit LUT max {db.max():.2f}", vmax),
             (EP.mesh(db) if EP.available()

@@ -1,4 +1,4 @@
-"""Calibration-free features over every mini_cnc26 press, same schema as the LUT.
+"""Calibration-free features over every cnc_mini_26 press, same schema as the LUT.
 
 THIS ATTEMPT DID NOT PRODUCE A COMPARABLE ROW, AND THE REASON IS THE RESULT
 
@@ -62,7 +62,7 @@ from PIL import Image
 
 from . import calib_free as CF
 from .debug_gallery import MM_PER_PIXEL, crop
-from .lut_calibration import CAL_OUT, MINI_CNC26, PAT
+from .lut_calibration import CAL_OUT, CNC_MINI_26, PAT
 from .run_episode import OUT_ROOT
 
 CACHE = OUT_ROOT / "feature_cache"
@@ -99,7 +99,7 @@ def _feats(depth: np.ndarray, dI: np.ndarray) -> dict:
 def press_rows() -> list[dict]:
     rows = []
     for fam in FAMILIES:
-        d = MINI_CNC26 / fam
+        d = CNC_MINI_26 / fam
         if not d.is_dir():
             continue
         for p in sorted(d.glob("*.jpg")):
@@ -118,7 +118,7 @@ _REF: dict = {}
 def _ref(fam: str) -> np.ndarray:
     if fam not in _REF:
         _REF[fam] = crop(np.asarray(
-            Image.open(MINI_CNC26 / fam / "initial.jpg").convert("RGB"))
+            Image.open(CNC_MINI_26 / fam / "initial.jpg").convert("RGB"))
         ).astype(np.float32)
     return _REF[fam]
 

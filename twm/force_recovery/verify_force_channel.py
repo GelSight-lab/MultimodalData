@@ -1,7 +1,7 @@
 """Is the published force channel good? Compare it against an independent one.
 
 The React dataset ships 480,080 estimated newtons produced by ONE
-reconstruction — a colour lookup table built on `mini_cnc26`, a GelSight Mini
+reconstruction — a colour lookup table built on `cnc_mini_26`, a GelSight Mini
 whose rest-gel hue sits 79-87 degrees from React's pads. Ground-truth force
 does not exist for React, so "is the channel good" cannot be answered directly.
 
@@ -53,7 +53,7 @@ import numpy as np
 from . import calib_free as CF
 from . import react_calib as RC
 from .debug_gallery import MM_PER_PIXEL, crop, stages
-from .lut_calibration import MINI_CNC26, PAT
+from .lut_calibration import CNC_MINI_26, PAT
 from .run_episode import OUT_ROOT
 
 CACHE = OUT_ROOT / "feature_cache"
@@ -89,10 +89,10 @@ def build_calibfree_cache() -> None:
     """React's newton fit, on calibration-free features. Same frames as the LUT."""
     from PIL import Image
 
-    ref = crop(np.asarray(Image.open(MINI_CNC26 / "round" / "initial.jpg")
+    ref = crop(np.asarray(Image.open(CNC_MINI_26 / "round" / "initial.jpg")
                           .convert("RGB"))).astype(np.float32)
     rows = []
-    files = sorted((MINI_CNC26 / "round").glob("*.jpg"))
+    files = sorted((CNC_MINI_26 / "round").glob("*.jpg"))
     for i, p in enumerate(files):
         m = PAT.search(p.name)
         if not m:

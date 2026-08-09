@@ -21,8 +21,8 @@ from .depth_force import DepthForceEstimator
 from .feature_cache import features_from_indent, indent_map
 from .run_episode import OUT_ROOT
 
-# GelSight Mini CNC presses (2026); see lut_calibration.MINI_CNC26.
-ROOT = OUT_ROOT / "glowtact" / "mini_cnc26"
+# GelSight Mini CNC presses (2026); see lut_calibration.CNC_MINI_26.
+ROOT = OUT_ROOT / "glowtact" / "cnc_mini_26"
 PAT = re.compile(r"^(?P<obj>.+?)\|(?P<idx>\d+)pos\|(?P<x>[-\d.]+), "
                  r"(?P<y>[-\d.]+), (?P<z>[-\d.]+) f\|(?P<f>[\d.]+)\.jpg$")
 
