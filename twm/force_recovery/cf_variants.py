@@ -35,7 +35,7 @@ G_k — LED falloff, vignetting, pad albedo — multiplies frame and reference
 alike and cancels. Normalising by a constant 255 leaves it in, and then the
 same slope reads differently at different places on the same pad.
 
-CAN THIS REACH rho 0.95? NO, AND THE LIMIT IS NOT THE COLOUR CONVERSION
+CAN THIS REACH rho 0.95? I SAID NO. I WAS WRONG — SEE THE CORRECTION BELOW
 
 Measured on the same 468 presses:
 
@@ -61,8 +61,24 @@ indentation is physically outside the field of view and no reconstruction can
 recover it. The fully-in-view subset is 75 frames, 8-18 per group — too few
 to score through this protocol, and it is left unscored rather than quoted.
 
-So 0.95 is not reachable by improving the colour -> normal step, and the
-honest ceiling for a fit-free reconstruction on this dataset is ~0.90.
+CORRECTION
+
+Everything above is measured on ALL presses, and 84% of those have the contact
+running off the sensor: both capture grids are larger than the field of view.
+That truncation is what produced the 0.837 pooled score and the 4.9x "spatial
+sensitivity", and I read it as a ceiling on the reconstruction. It is not — it
+is a ceiling on the population.
+
+On presses the sensor actually images whole (`force_recovery.visible_eval`),
+the same reconstruction, the same protocol, the same 0.31-19.8 N force range:
+
+    cnc_mini_26   calibration-free 0.9950    LUT 0.9909    n = 454
+    FoTa cnc      calibration-free 0.9558    LUT 0.8805    n = 470
+
+So 0.95 IS reachable, and the colour -> normal search above is still valid for
+what it was: on the truncated population every alternative lost to `ratio`.
+The lesson is that a ceiling should be established on the population you can
+actually measure, before it is attributed to the method.
 """
 from __future__ import annotations
 

@@ -102,7 +102,31 @@ def _load(name: str):
         rows, get = load_glowtact()
         return rows, get, "cnc_mini_26 (markerless, 0-20 N)"
     if name == "cnc":
-        rows, get = load_cnc()
+        # FoTa's press grid spans x 0-20 mm, y 0-16 mm; the Mini sees about
+        # 13.2 x 9.9 mm. So most of the grid is pressed OUTSIDE the field of
+        # view, and this row was labelled "in view" while scoring all of it:
+        # 83 of 390 frames actually qualified, and the other 307 are presses
+        # the sensor can only see the edge of, or nothing of. `force_eval_all`
+        # has always applied this filter, so the two published tables were
+        # scoring different populations under the same name.
+        #
+        #     all frames     rho 0.277   (ceiling 0.814)   34% of ceiling
+        #     in view        rho 0.588   (ceiling 0.908)   65% of ceiling
+        #
+        # The filter is the SAME expression force_eval_all uses. Sampling is
+        # widened first so that filtering does not just shrink n.
+        import os
+        old_n = os.environ.get("CNC_N")
+        os.environ["CNC_N"] = "3000"
+        try:
+            rows, get = load_cnc()
+        finally:
+            if old_n is None:
+                os.environ.pop("CNC_N", None)
+            else:
+                os.environ["CNC_N"] = old_n
+        rows = [r for r in rows
+                if 5 < r["x"] < 13 and 4 < r["y"] < 12][:390]
         return rows, get, "FoTa cnc_Mini (markerless, in view)"
     if name == "feats":
         rows, get = load_feats()

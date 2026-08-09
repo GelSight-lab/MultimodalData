@@ -90,6 +90,13 @@ WHAT ACTUALLY IMPROVED IT, AND WHAT DID NOT (n = 468 / 390 / 390, force rho)
     calibration-free, now                     0.8379      0.3986     0.6389
     the LUT it is measured against            0.6143      0.3012     0.7577
 
+Those are ALL presses, 84% of which run off the edge of the sensor because
+both capture grids are bigger than the field of view. On presses imaged whole
+(`visible_eval`), same protocol, same force range:
+
+    calibration-free                          0.9950      0.9558     0.4700
+    the LUT it is measured against            0.9909      0.8805     0.6327
+
 The boundary condition was the reconstruction bug: the integrator pinned the
 frame border to height zero, which is false for every contact reaching the
 sensor edge — 409 of 468 and 294 of 390 frames here. FEATS is unchanged
