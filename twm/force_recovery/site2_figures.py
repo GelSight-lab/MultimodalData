@@ -88,7 +88,7 @@ def figure(name: str, n: int = 8, seed: int = 0) -> dict:
         cells = [
             (np.clip(img, 0, 255).astype(np.uint8), None,
              f"raw  {tag}[{fr.get('group', '?')}]"),
-            (EP.diff_rgb(img, ref), None, "difference  dI = frame − ref"),
+            (EP.diff_rgb(img, ref), None, EP.diff_caption()),
             (lut, "inferno", f"LUT depth  max {lut.max():.2f} mm"),
             (cfn, "inferno", "calibration-free depth (relative)"),
             (EP.mesh(lut), None, "LUT mesh"),

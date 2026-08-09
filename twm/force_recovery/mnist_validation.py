@@ -1104,7 +1104,7 @@ def figures(n=8):
         cells = [
             (img, None, "sim image (Taxim)", None),
             (EP.diff_rgb(img, bg), None,
-             "difference  dI = frame − ref  (×3, colour)", None),
+             EP.diff_caption(), None),
             (gt, "viridis", f"GT depth (mesh) max {gt.max():.2f} mm", vmax),
             (da, "viridis", f"ours, cnc_mini_26 LUT  max {da.max():.2f}",
              vmax),

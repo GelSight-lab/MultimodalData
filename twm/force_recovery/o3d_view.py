@@ -85,27 +85,38 @@ def remove_halo_pedestal(depth_mm: np.ndarray, contact_frac: float = 0.25
     return np.maximum(depth_mm - base, 0.0)
 
 
-def crop_to_contact(depth_mm: np.ndarray, frac: float = 0.12,
-                    margin_px: int = 26) -> np.ndarray:
-    """Trim the depth map to the contact plus a margin of flat gel.
-
-    Without this the mesh shows a 13.3 mm plate carrying a 2 mm imprint, so the
-    surface reads as a speck on an empty slab. Published GelSight figures frame
-    the contact, keeping enough flat gel around it to read as a plane. Returns
-    the input unchanged when there is no measurable contact.
-    """
-    d = np.clip(depth_mm, 0.0, None)
-    pk = float(d.max())
-    if pk <= 1e-6:
-        return depth_mm
-    ys, xs = np.nonzero(d > frac * pk)
-    if len(ys) < 30:
-        return depth_mm
-    y0 = max(int(ys.min()) - margin_px, 0)
-    y1 = min(int(ys.max()) + margin_px + 1, d.shape[0])
-    x0 = max(int(xs.min()) - margin_px, 0)
-    x1 = min(int(xs.max()) + margin_px + 1, d.shape[1])
-    return depth_mm[y0:y1, x0:x1]
+# WHY THERE IS NO LONGER A CONTACT CROP
+#
+# Until now `mesh_view` cropped the depth map to the contact bbox + 26 px and
+# then trimmed the render to its content. Both were framing conveniences and
+# together they did two things nobody wanted:
+#
+#   * they CUT the surface. Measured on cnc_mini_26, 4 of 4 sampled presses had
+#     their contact within 26 px of the sensor frame, so the crop rectangle was
+#     truncated by the frame and the imprint ran off the edge of the rendered
+#     patch. That is what "the mesh looks cropped" was.
+#   * they made every row a different zoom. The crop was per-frame (168x240,
+#     157x165, 172x214 ...) and the content trim rescaled each render to fill
+#     its tile, so two meshes in the same figure column were at two different
+#     millimetre scales while looking like a controlled comparison.
+#
+# The replacement is one fixed camera over the WHOLE depth field. Rendering the
+# full pad was rejected once on the grounds that a small imprint reads as a
+# speck; measured contact bbox spans 0.30-0.97 of the frame on four of the five
+# force datasets and 0.06-0.24 on Sparsh's lightest presses — a small contact
+# rendering small is the truth, and it is now comparable across rows.
+#
+# FULL_FRAME_ZOOM was chosen by sweep, not by eye (width fill / worst border
+# occupancy, 432x324, three presses):
+#
+#     zoom  0.66  0.58  0.52  0.48  0.44  0.40
+#     fill  0.62  0.72  0.82  0.90  1.00  1.00
+#     edge  0.000 0.000 0.000 0.000 0.037 1.000   <- 0.44 already clips
+#
+# 0.47 verified on all five datasets, both reconstructions: fill 0.89-0.94,
+# border occupancy 0.000, and fill constant across frames (0.76-0.77 h) which
+# is the scale consistency the old path lacked.
+FULL_FRAME_ZOOM = 0.47
 
 
 def build_depth_mesh(depth_mm: np.ndarray, mm_per_px: float,
@@ -166,10 +177,21 @@ def render_mesh(mesh, width: int = 900, height: int = 700, bg: float = 1.0,
     opt.light_on = False              # baked shading only
     opt.mesh_show_back_face = True
     ctr = vis.get_view_control()
-    ctr.set_lookat(mesh.get_center())
+    # Aim at the UNDEFORMED gel plane, not the mesh centroid. The centroid's z
+    # rides up with press depth (measured 0.011 mm on a 0.20 mm press, 0.566 mm
+    # on a 2.05 mm one), and under a perspective camera that walks the target
+    # toward the lens and shrinks the pad: fill 0.935 -> 0.884 across five
+    # frames. Framing then encoded how hard the press was, which is exactly the
+    # quantity the figure is comparing.
+    lo, hi = mesh.get_min_bound(), mesh.get_max_bound()
+    ctr.set_lookat(np.array([(lo[0] + hi[0]) / 2, (lo[1] + hi[1]) / 2, lo[2]]))
     ctr.set_front(list(front))
     ctr.set_up(list(up))
-    ctr.set_zoom(zoom)
+    # Open3D fits the scene to the view's SHORTER side, so the same zoom fills
+    # a different fraction of the width at a different aspect: 0.47 gives 0.92
+    # at 4:3 but clips at 620x500 (1.24). Scale it so the width fill is the
+    # invariant, and FULL_FRAME_ZOOM keeps meaning what it was measured to mean.
+    ctr.set_zoom(zoom * (4.0 / 3.0) / (width / height))
     vis.poll_events()
     vis.update_renderer()
     buf = np.asarray(vis.capture_screen_float_buffer(do_render=True))
@@ -177,29 +199,31 @@ def render_mesh(mesh, width: int = 900, height: int = 700, bg: float = 1.0,
     return (np.clip(buf, 0, 1) * 255).astype(np.uint8)
 
 
-def crop_to_content(rgb: np.ndarray, bg_tol: float = 0.02, pad: int = 8
-                    ) -> np.ndarray:
-    """Trim the uniform background border an Open3D render leaves around the
-    mesh.
+def content_box(rgb: np.ndarray, bg_tol: float = 0.02, pad: int = 8
+                ) -> tuple[int, int, int, int, float]:
+    """Where the surface sits in a render. MEASUREMENT ONLY — never a crop.
 
-    Open3D fits the camera to the scene bounding SPHERE, so a flat wide pad
-    renders with a large empty margin — embedded in a figure panel the mesh
-    ends up occupying a fraction of the tile. Cropping to the non-background
-    bounding box makes the surface fill its panel without changing the camera
-    (which would also change the perspective between frames of a clip).
+    This used to be `crop_to_content`, applied to every mesh before it went in
+    a figure. It removed no geometry, but it rescaled each render to its own
+    content, which is why two meshes in one column ended up at two scales. The
+    fixed `FULL_FRAME_ZOOM` camera makes the trim unnecessary, so what is left
+    is the box itself, used by the regression test to assert that the surface
+    fills its tile and touches no border.
     """
     lum = rgb.mean(axis=2) / 255.0
     bg = float(np.median(np.concatenate(
         [lum[0], lum[-1], lum[:, 0], lum[:, -1]])))
     mask = np.abs(lum - bg) > bg_tol
     if not mask.any():
-        return rgb
+        return (0, 0, 0, 0, 0.0)
     ys, xs = np.nonzero(mask)
-    y0 = max(int(ys.min()) - pad, 0)
-    y1 = min(int(ys.max()) + pad + 1, rgb.shape[0])
-    x0 = max(int(xs.min()) - pad, 0)
-    x1 = min(int(xs.max()) + pad + 1, rgb.shape[1])
-    return rgb[y0:y1, x0:x1]
+    border = max(mask[0].mean(), mask[-1].mean(),
+                 mask[:, 0].mean(), mask[:, -1].mean())
+    return (max(int(ys.min()) - pad, 0),
+            min(int(ys.max()) + pad + 1, rgb.shape[0]),
+            max(int(xs.min()) - pad, 0),
+            min(int(xs.max()) + pad + 1, rgb.shape[1]),
+            float(border))
 
 
 def render_depth_mesh(depth_mm: np.ndarray, mm_per_px: float, **kw
@@ -210,18 +234,18 @@ def render_depth_mesh(depth_mm: np.ndarray, mm_per_px: float, **kw
     return render_mesh(build_depth_mesh(depth_mm, mm_per_px, **build_kw), **kw)
 
 
-MESH_KW = dict(smooth_px=3, z_scale=1.6, front=(0.0, 0.32, 0.95), zoom=0.66)
+MESH_KW = dict(smooth_px=3, z_scale=1.6, front=(0.0, 0.32, 0.95),
+               zoom=FULL_FRAME_ZOOM)
 
 
 def mesh_view_rgb(depth_mm: np.ndarray, width: int = 620, height: int = 500,
                   stride: int = 1) -> np.ndarray:
-    """Depth (already pedestal-corrected) -> cropped Open3D mesh render.
+    """Depth (already pedestal-corrected) -> full-frame Open3D mesh render.
 
     Kept here rather than in showcase.py so analysis scripts can render a mesh
-    without importing the site-building module.
+    without importing the site-building module. Nothing is cropped, at either
+    end (see FULL_FRAME_ZOOM).
     """
-    # crop_to_contact first, for the same reason showcase does it: a 2 mm
-    # imprint on a 13.3 mm plate reads as a speck otherwise.
-    return crop_to_content(render_depth_mesh(
-        crop_to_contact(np.clip(depth_mm, 0.0, None).astype(np.float32)),
-        MM_PER_PIXEL, width=width, height=height, stride=stride, **MESH_KW))
+    return render_depth_mesh(
+        np.clip(depth_mm, 0.0, None).astype(np.float32),
+        MM_PER_PIXEL, width=width, height=height, stride=stride, **MESH_KW)

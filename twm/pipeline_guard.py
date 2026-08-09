@@ -140,6 +140,9 @@ def check_force_path_clean() -> list[str]:
     if not fe.exists():
         return bad
     tree = ast.parse(fe.read_text())
+    # crop_to_contact was deleted (o3d_view.FULL_FRAME_ZOOM): it cut surfaces
+    # whose contact reached the sensor frame. The name stays listed so that
+    # re-introducing it in the force path is still caught.
     cosmetic = {"stages_depth", "remove_halo_pedestal", "crop_to_contact"}
     for node in ast.walk(tree):
         if not (isinstance(node, ast.Call)
@@ -324,9 +327,58 @@ def check_single_mesh_law() -> list[str]:
     return bad
 
 
+def check_no_typed_diff_gain() -> list[str]:
+    """A difference-image caption may not restate the gain — derive it.
+
+    Six figures across five modules carried "(×3, colour)" in their titles.
+    DIFF_GAIN became 1.0 and all six kept claiming ×3, on the live site, for as
+    long as nobody re-read a caption. `visualize.diff_caption()` builds the
+    caption from the constant; typing the number is how they diverged.
+    """
+    bad = []
+    for p in _py_files():
+        if p.name in ("visualize.py", "pipeline_guard.py"):
+            continue
+        for i, line in enumerate(p.read_text().splitlines(), 1):
+            # Must be a DIFFERENCE caption: "4x4 pose matrix" and
+            # "640x480 RGB" are not gains, and a measured ratio (x0.65) is a
+            # result. Require dI/diff inside the same string literal, ahead of
+            # the multiplier.
+            if re.search(r"[\"'][^\"']*(?:dI|diff)[^\"']*×\s*\d", line):
+                bad.append(f"{p.relative_to(ROOT)}:{i}: a gain typed into a "
+                           f"caption — use visualize.diff_caption()")
+    return bad
+
+
+def check_mesh_never_cropped() -> list[str]:
+    """No crop in the mesh render path, at either end.
+
+    `crop_to_contact` cut every surface whose contact reached the sensor frame
+    (4 of 4 sampled cnc_mini_26 presses), and the paired content trim rescaled
+    each render to its own bbox, so two meshes in one comparison column sat at
+    two different millimetre scales. Both are gone; this keeps them gone.
+    """
+    bad = []
+    for p in _py_files():
+        # test_mesh_uncropped greps the sources for this very name, so it
+        # contains it by construction.
+        if p.name in ("pipeline_guard.py", "test_mesh_uncropped.py"):
+            continue
+        for i, line in enumerate(p.read_text().splitlines(), 1):
+            s = line.strip()
+            if s.startswith("#") or s.startswith("*"):
+                continue
+            if re.search(r"\bcrop_to_(contact|content)\s*\(", s):
+                bad.append(f"{p.relative_to(ROOT)}:{i}: crop back in the mesh "
+                           f"render path — see o3d_view.FULL_FRAME_ZOOM")
+    return bad
+
+
 CHECKS = {
     "single calibration-epoch definition": check_single_calib_epoch,
     "single mesh render law": check_single_mesh_law,
+    "mesh renders are never cropped": check_mesh_never_cropped,
+    "difference captions derive the gain": check_no_typed_diff_gain,
     "difference images drawn in colour": check_difference_images_are_colour,
     "single repair/publish policy": check_single_repair_policy,
     "no silent fallback in resolvers": check_no_silent_fallback,

@@ -59,8 +59,7 @@ from .debug_gallery import (OUT as DEBUG_OUT, feat_vec, load_cnc, load_feats,
                             stages)
 from .lut_calibration import MM_PER_PIXEL, crop
 from .marker_removal import marker_mask, stages_depth
-from .o3d_view import (crop_to_contact, crop_to_content, has_display,
-                       remove_halo_pedestal, render_depth_mesh)
+from .o3d_view import has_display, remove_halo_pedestal, render_depth_mesh
 from . import visualize as V
 from .run_episode import DATA_ROOT, LEGACY_SHIFT, OUT_ROOT, STAGE_ROOT
 
@@ -130,39 +129,29 @@ def mesh_view(depth: np.ndarray, width: int = 700, height: int = 560,
     broad base under the imprint and the shape reads as a mound.
     """
     dp = remove_halo_pedestal(np.clip(depth, 0.0, None).astype(np.float32))
-    # Frame the contact, not the whole pad: a 2 mm imprint on a 13.3 mm plate
-    # renders as a speck otherwise.
-    dp = crop_to_contact(dp)
-    rgb = render_depth_mesh(dp, MM_PER_PIXEL, stride=stride, bg=bg,
-                            width=width, height=height, **MESH_KW)
-    # Open3D fits the camera to the scene bounding sphere, so a flat wide pad
-    # renders with a large empty margin and the mesh ends up filling only
-    # ~15% of its figure panel. Trim to the rendered content.
-    return crop_to_content(rgb)
+    # The WHOLE pad, at the fixed FULL_FRAME_ZOOM camera. No contact crop and
+    # no content trim: both cut surfaces whose contact reached the sensor
+    # frame, and both made the millimetre scale differ from row to row inside
+    # one comparison figure (o3d_view.FULL_FRAME_ZOOM has the measurements).
+    return render_depth_mesh(dp, MM_PER_PIXEL, stride=stride, bg=bg,
+                             width=width, height=height, **MESH_KW)
 
 
 def mesh_tile(depth: np.ndarray, w: int = 320, h: int = 240, stride: int = 2,
               bg: float = 0.05, oversample: float = 1.35) -> np.ndarray:
-    """Video-sized mesh tile: render larger, then centre-crop.
+    """Tile-sized mesh: render at the tile's aspect, downsample, never crop.
 
-    The camera looks at the mesh centre, so a centre crop is exactly a zoom
-    about the imprint — it enlarges the geometry without touching the verified
-    view direction. Only the empty margin around the gel plane is lost.
+    Rendering `oversample` larger and resizing is anti-aliasing only. The tile
+    aspect is the render aspect, so the fit is a pure scale — no letterbox
+    padding that varies per frame, and no crop. Every tile therefore shows the
+    same footprint of gel at the same millimetre scale, which is the point:
+    the meshes in one figure column are comparable.
     """
     import cv2
 
     rgb = mesh_view(depth, width=int(w * oversample),
                     height=int(h * oversample), stride=stride, bg=bg)
-    # mesh_view already trims to content, so the tile is produced by fitting
-    # that crop into the tile (letterboxed on the background colour) rather
-    # than by a fixed centre crop, which would now cut the geometry itself.
-    sc = min(w / rgb.shape[1], h / rgb.shape[0])
-    rs = cv2.resize(rgb, (max(int(rgb.shape[1] * sc), 1),
-                          max(int(rgb.shape[0] * sc), 1)))
-    tile = np.full((h, w, 3), int(round(bg * 255)), np.uint8)
-    y0, x0 = (h - rs.shape[0]) // 2, (w - rs.shape[1]) // 2
-    tile[y0:y0 + rs.shape[0], x0:x0 + rs.shape[1]] = rs
-    return tile
+    return cv2.resize(rgb, (w, h), interpolation=cv2.INTER_AREA)
 
 
 # ------------------------------------------------------------------ panels
@@ -215,7 +204,7 @@ def _panel(img: np.ndarray, depth: np.ndarray, f_pred: float,
         # panel right of it show the inpainted (dot-free) chain while the raw
         # panel still shows the dots.
         add(V.diff_rgb(st["dI"], 0.0),
-            f"difference image  dI = img − ref  (×3){depth_note}")
+            V.diff_caption("difference image  dI = img − ref") + depth_note)
         add(st["valid"], "valid mask  |dI| > 8", cmap="gray")
         add(st["gmag"], "|LUT surface gradient|", cmap="magma")
     add(d, f"LUT depth [mm]{depth_note}", cmap="inferno", colorbar=True)
@@ -523,7 +512,7 @@ def react_showcase(task: str = "motherboard", date: str = "2026-05-10",
         for c, (data, cmap, title) in enumerate((
                 (np.clip(img, 0, 255).astype(np.uint8), None,
                  f"row {row}  F={force[row]:.2f} N"),
-                (diff, None, "difference  dI = frame − ref  (×3, colour)"),
+                (diff, None, V.diff_caption()),
                 (st["depth"], "inferno",
                  f"LUT depth (max {st['depth'].max():.2f} mm)"),
                 (mesh_view(st["depth"]), None,

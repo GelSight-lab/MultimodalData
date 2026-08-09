@@ -48,6 +48,7 @@ from .lut_calibration import (BINS, CAL_OUT, DI_RANGE, GLOWTACT, MM_PER_PIXEL,
                               PAT, crop)
 from .o3d_view import has_display, remove_halo_pedestal, mesh_view_rgb
 from .run_episode import OUT_ROOT
+from .visualize import diff_caption
 
 OUT = OUT_ROOT / "recon_study"
 VALID_THR = 8.0           # knob: valid-mask threshold on |dI|
@@ -282,7 +283,7 @@ def build(which="glowtact"):
         add(1, np.clip(img, 0, 255).astype(np.uint8), "1 raw")
         add(2, np.clip(s["ref"], 0, 255).astype(np.uint8), "2 reference")
         add(3, np.clip(st["dI"] * 3 + 128, 0, 255).astype(np.uint8),
-            "3  dI = img − ref  (×3)")
+            f"3  {diff_caption('dI = img − ref')}")
         add(4, st["absdI"], "4  max|dI|", "viridis", True)
         add(5, st["valid"], f"5  valid mask  |dI|>{VALID_THR:g}", "gray")
         add(6, st["observed"], "6  LUT bin seen?\n(dark = invented)",
@@ -369,7 +370,7 @@ th{color:#ffd9a0;font-weight:600}code{background:#1b2334;padding:1px 5px;border-
 <h1>3D reconstruction workbench — every stage, 20 samples</h1>
 <p>Not a results figure: this is the full chain with every tunable quantity
 exposed, so a defect can be attributed to a stage. Columns:
-<b>1</b> raw · <b>2</b> reference · <b>3</b> dI = img−ref (×3) ·
+<b>1</b> raw · <b>2</b> reference · <b>3</b> dI = img−ref ·
 <b>4</b> max|dI| · <b>5</b> valid mask · <b>6</b> LUT bin observed? ·
 <b>7</b> gx · <b>8</b> gy · <b>9</b> |grad| · <b>10</b> div(g) = Poisson RHS ·
 <b>11</b> depth · <b>12</b> depth halo-removed · <b>13</b> radial profile vs

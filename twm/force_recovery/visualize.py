@@ -56,6 +56,19 @@ def diff_rgb(img: np.ndarray, ref: np.ndarray, gain: float = DIFF_GAIN):
     return np.clip(d + 128.0, 0, 255).astype(np.uint8)
 
 
+def diff_caption(prefix: str = "difference  dI = frame − ref",
+                 gain: float = DIFF_GAIN) -> str:
+    """The caption for a difference image, DERIVED from the gain.
+
+    Six figures across five modules had "(×3, colour)" typed into their titles.
+    DIFF_GAIN went to 1.0 and every one of them kept claiming ×3 — the figure
+    said one thing and the pixels did another, on the live site. A caption that
+    restates a constant is a copy of that constant, so it belongs next to it.
+    """
+    return f"{prefix}  (colour)" if abs(gain - 1.0) < 1e-9 \
+        else f"{prefix}  (×{gain:g}, colour)"
+
+
 plt.rcParams.update({
     "figure.dpi": 130, "font.size": 9, "axes.grid": True,
     "grid.alpha": 0.25, "axes.spines.top": False, "axes.spines.right": False,

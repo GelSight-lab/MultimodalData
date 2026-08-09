@@ -307,9 +307,58 @@ BUILDERS = {"index.html": page_index, "method.html": page_method,
             "workbench.html": page_workbench}
 
 
+# Where each figure is produced, and the command that produces it. The site
+# used to have NO asset step at all: every PNG was hand-copied into
+# `assets/`, which is how `recon_compare.png` sat on the live site for weeks
+# with a caption claiming a ×3 gain the code had stopped applying and a title
+# rendered as tofu boxes. An asset nobody can regenerate is a claim nobody can
+# check.
+ASSET_SOURCES = {
+    "depth_validation_panel.png": (OUT_ROOT / "site" / "assets",
+                                   "force_recovery.showcase react"),
+    "feats_marker_removal.png": (OUT_ROOT / "site" / "assets",
+                                 "force_recovery.marker_removal figure"),
+    "mnist_examples.png": (OUT_ROOT / "mnist_validation",
+                           "force_recovery.mnist_validation figures"),
+    "recon_compare.png": (ASSETS, "force_recovery.react_leak_figure"),
+}
+# A figure drawn before the laws that draw it is a figure of the old laws.
+# These are the modules a reader is looking at when they look at a panel.
+RENDER_LAWS = ("o3d_view.py", "showcase.py", "visualize.py", "eval_panel.py")
+
+
+def collect_assets() -> list[str]:
+    """Copy every declared figure in, and refuse the stale ones."""
+    import shutil
+
+    here = Path(__file__).resolve().parent
+    law_mtime = max((here / n).stat().st_mtime for n in RENDER_LAWS)
+    ASSETS.mkdir(parents=True, exist_ok=True)
+    problems = []
+    for name, (src_dir, cmd) in ASSET_SOURCES.items():
+        src = src_dir / name
+        if not src.exists():
+            problems.append(f"{name}: not produced — run `python -m {cmd}`")
+            continue
+        if src.resolve() != (ASSETS / name).resolve():
+            shutil.copy2(src, ASSETS / name)
+        age = law_mtime - (ASSETS / name).stat().st_mtime
+        if age > 0:
+            problems.append(
+                f"{name}: {age/60:.0f} min older than the render laws "
+                f"({', '.join(RENDER_LAWS)}) — re-run `python -m {cmd}` under "
+                f"xvfb-run, or the page shows the previous convention")
+    for p in sorted(ASSETS.glob("panel_*.png")):
+        if law_mtime - p.stat().st_mtime > 0:
+            problems.append(f"{p.name}: older than the render laws — re-run "
+                            f"`python -m force_recovery.site2_figures`")
+    return problems
+
+
 def build() -> list[str]:
     SITE.mkdir(parents=True, exist_ok=True)
     problems, total = [], 0
+    problems += collect_assets()
     for name, fn in BUILDERS.items():
         html = fn()
         w = words(html)
@@ -319,6 +368,11 @@ def build() -> list[str]:
         print(f"  {name:16s} {w:4d} / {cap} words{flag}")
         if w > cap:
             problems.append(f"{name}: {w} words over the {cap} budget")
+        for a in re.findall(r'src="assets/([^"]+)"', html):
+            if not (ASSETS / a).exists():
+                problems.append(f"{name}: references assets/{a}, which does "
+                                f"not exist — the page would ship a broken "
+                                f"image")
         (SITE / name).write_text(html)
     print(f"  {'TOTAL':16s} {total:4d} words")
     return problems

@@ -243,7 +243,7 @@ def cmd_figure(n_rows: int = 3) -> Path:
             (np.clip(img, 0, 255).astype(np.uint8),
              f"raw  [{frames[i]['group']}]  F = {fs[i]:.1f} N", None),
             (EP.diff_rgb(img, ref),
-             "difference  dI = frame − ref  (×3, colour)", None),
+             EP.diff_caption(), None),
             (np.clip(ov, 0, 255).astype(np.uint8),
              f"markers detected ({info['n']} dots, {info['coverage']*100:.0f}%"
              " of frame)", None),

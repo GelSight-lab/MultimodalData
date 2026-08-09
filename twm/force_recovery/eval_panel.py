@@ -32,9 +32,10 @@ from __future__ import annotations
 import numpy as np
 
 from .o3d_view import has_display
-from .visualize import diff_rgb
+from .visualize import diff_caption, diff_rgb
 
-__all__ = ["diff_rgb", "depth_heat", "mesh", "available", "panel_row",
+__all__ = ["diff_rgb", "diff_caption", "depth_heat", "mesh", "available",
+           "panel_row",
            "COLUMNS"]
 
 # What every evaluation figure shows, in this order. Named so a figure states
@@ -84,7 +85,7 @@ def panel_row(ax_row, img, ref, depth, titles=None, mm_note: str = "") -> None:
     """
     t = dict(zip(COLUMNS, titles or (
         "input frame",
-        "difference  dI = frame − ref  (×3, colour)",
+        diff_caption(),
         f"depth [mm]{mm_note}",
         "3D reconstruction (Open3D mesh)")))
     cells = [

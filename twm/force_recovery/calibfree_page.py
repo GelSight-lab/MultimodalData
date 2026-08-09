@@ -218,12 +218,17 @@ def build() -> Path:
 
 
 def main() -> int:
-    src = Path("/home/yxma/MultimodalData/twm/_recover") / FIG
+    # Was: copy the PNG out of `_recover/`, a hand-made file with no producer.
+    # It went stale twice unnoticed (a ×3 caption the code no longer applied, a
+    # title of tofu boxes). `react_leak_figure` regenerates it from the current
+    # laws; this page takes what that produces or fails.
+    from .react_leak_figure import OUT as FIG_SRC
     ASSETS.mkdir(parents=True, exist_ok=True)
-    if src.exists():
-        (ASSETS / FIG).write_bytes(src.read_bytes())
-    else:
-        raise SystemExit(f"missing figure {src}")
+    if not FIG_SRC.exists():
+        raise SystemExit(f"missing {FIG_SRC} — run "
+                         f"`xvfb-run -a python -m force_recovery."
+                         f"react_leak_figure`")
+    (ASSETS / FIG).write_bytes(FIG_SRC.read_bytes())
     p = build()
     print(f"-> {p} ({len(p.read_text().splitlines())} lines)")
     return 0
