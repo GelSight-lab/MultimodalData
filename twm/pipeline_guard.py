@@ -305,8 +305,28 @@ def check_difference_images_are_colour() -> list[str]:
     return bad
 
 
+def check_single_mesh_law() -> list[str]:
+    """One camera, one z-exaggeration, one mesh renderer — in `o3d_view`.
+
+    `MESH_KW` (smooth_px, z_scale, front, zoom) was defined identically in
+    `o3d_view` and `showcase`. Identical today; one edit from two different
+    surfaces of the same depth map on two pages of the same site, with nothing
+    to say which one the reader is looking at.
+    """
+    bad = []
+    for p in _py_files():
+        if p.name in ("o3d_view.py", "pipeline_guard.py"):
+            continue
+        for i, line in enumerate(p.read_text().splitlines(), 1):
+            if re.match(r"\s*MESH_KW\s*=\s*dict", line):
+                bad.append(f"{p.relative_to(ROOT)}:{i}: redeclares the mesh "
+                           f"render law — import MESH_KW from o3d_view")
+    return bad
+
+
 CHECKS = {
     "single calibration-epoch definition": check_single_calib_epoch,
+    "single mesh render law": check_single_mesh_law,
     "difference images drawn in colour": check_difference_images_are_colour,
     "single repair/publish policy": check_single_repair_policy,
     "no silent fallback in resolvers": check_no_silent_fallback,

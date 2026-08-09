@@ -115,7 +115,10 @@ def _glowtact_calib():
 # ------------------------------------------------------------------ 3D view
 # Verified on GlowTact star/triangle/quad presses: this camera and z_scale make
 # the indenter geometry readable; a shallower front or z_scale=1 flattens it.
-MESH_KW = dict(smooth_px=3, z_scale=1.6, front=(0.0, 0.32, 0.95), zoom=0.66)
+# The camera and z-exaggeration live in `o3d_view`, imported rather than
+# restated. Two identical copies of a render law is one edit away from two
+# different meshes of the same depth map on two pages of the same site.
+from .o3d_view import MESH_KW  # noqa: E402
 
 
 def mesh_view(depth: np.ndarray, width: int = 700, height: int = 560,

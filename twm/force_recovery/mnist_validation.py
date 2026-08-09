@@ -1070,33 +1070,58 @@ def glowtact_grad_control(n=10):
 
 # ------------------------------------------------------------------ figures
 def figures(n=8):
+    """Six columns, in the site's one convention — see `eval_panel`.
+
+    The figure used to show five: sim image, GT depth, two LUT depths, error.
+    Two things were missing and both mattered. There was no DIFFERENCE image,
+    so a reader could not see what the reconstruction was reading; and there
+    was no MESH, so a depth map that is the wrong SHAPE looked the same as one
+    that is right — which is precisely the failure this validation exists to
+    catch, and precisely what a heat map hides.
+
+    The reference is Taxim's no-contact render, recomputed here rather than
+    stored, because it is exact by construction (`background`).
+    """
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
+
+    from . import eval_panel as EP
+
     files = sorted((OUT / "examples").glob("ex_*.npz"))[:n]
-    fig, axes = plt.subplots(len(files), 5,
-                             figsize=(15, 2.6 * len(files)))
+    if not files:
+        raise SystemExit(f"no examples under {OUT/'examples'}")
+    bg = crop(background((SIM_H, SIM_W)))
+    ncol = 6
+    fig, axes = plt.subplots(len(files), ncol,
+                             figsize=(3.0 * ncol, 2.5 * len(files)))
+    axes = np.atleast_2d(axes)
     for i, f in enumerate(files):
         z = np.load(f)
         gt, da, db = z["gt"], z["depth_a"], z["depth_b"]
         vmax = max(float(gt.max()), 1e-3)
-        panels = [
-            (z["img"], "sim image (Taxim)", None),
-            (gt, f"GT depth (mesh) max {gt.max():.2f} mm", vmax),
-            (da, f"ours, GlowTact LUT  max {da.max():.2f}", vmax),
-            (db, f"ours, sim-refit LUT max {db.max():.2f}", vmax),
-            (db - gt, "error (sim-refit - GT)", None)]
-        for j, (a, t, vm) in enumerate(panels):
+        img = z["img"]
+        cells = [
+            (img, None, "sim image (Taxim)", None),
+            (EP.diff_rgb(img, bg), None,
+             "difference  dI = frame − ref  (×3, colour)", None),
+            (gt, "viridis", f"GT depth (mesh) max {gt.max():.2f} mm", vmax),
+            (da, "viridis", f"ours, Mini CNC 2026 LUT  max {da.max():.2f}",
+             vmax),
+            (db, "viridis", f"ours, sim-refit LUT max {db.max():.2f}", vmax),
+            (EP.mesh(db) if EP.available()
+             else np.zeros((240, 320, 3), np.uint8), None,
+             "3D reconstruction (Open3D mesh)"
+             if EP.available() else "mesh — no display", None),
+        ]
+        for j, (a, cmap, t, vm) in enumerate(cells):
             ax = axes[i, j]
-            if j == 0:
-                ax.imshow(a)
-            elif j == 4:
-                ax.imshow(a, cmap="RdBu_r", vmin=-vmax, vmax=vmax)
+            if vm is not None:
+                ax.imshow(a, cmap=cmap, vmin=0, vmax=vm)
             else:
-                ax.imshow(a, cmap="viridis", vmin=0, vmax=vm)
+                ax.imshow(a, cmap=cmap)
             ax.set_title(t, fontsize=8)
             ax.axis("off")
-        axes[i, 0].set_ylabel(f"digit {int(z['label'])}")
     fig.suptitle("SimTactileMNIST per-pixel validation: exact mesh GT vs our "
                  "reconstruction (mm). Every touch is a 2.25 mm press whose "
                  "contact leaves the field of view.", fontsize=11)

@@ -223,7 +223,9 @@ def cmd_figure(n_rows: int = 3) -> Path:
         chunk = order[t * len(order) // n_rows:(t + 1) * len(order) // n_rows]
         sel.append(min(chunk, key=lambda s: abs(s[3] - med))[0])
 
-    fig, ax = plt.subplots(n_rows, 7, figsize=(21.5, 3.05 * n_rows))
+    # 8 columns: the difference image was missing, and it is the only
+    # panel that shows what the reconstruction is actually reading.
+    fig, ax = plt.subplots(n_rows, 8, figsize=(24.5, 3.05 * n_rows))
     ax = np.atleast_2d(ax)
     rows = []
     for r, i in enumerate(sel):
@@ -236,9 +238,12 @@ def cmd_figure(n_rows: int = 3) -> Path:
         vmax = max(before["depth"].max(), after["depth"].max(), 0.05)
         ov = img.copy()
         ov[mask] = [255, 60, 60]
+        from . import eval_panel as EP
         panels = [
             (np.clip(img, 0, 255).astype(np.uint8),
              f"raw  [{frames[i]['group']}]  F = {fs[i]:.1f} N", None),
+            (EP.diff_rgb(img, ref),
+             "difference  dI = frame − ref  (×3, colour)", None),
             (np.clip(ov, 0, 255).astype(np.uint8),
              f"markers detected ({info['n']} dots, {info['coverage']*100:.0f}%"
              " of frame)", None),
