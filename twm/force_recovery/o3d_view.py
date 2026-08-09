@@ -43,14 +43,34 @@ def has_display() -> bool:
 
 def gradient_shade(z: np.ndarray, contrast: float = 0.30,
                    smooth_px: int = 0) -> np.ndarray:
-    """9DTact relief shading: normalised (dx+dy) mapped into a grey band."""
+    """9DTact relief shading: normalised (dx+dy) mapped into a grey band.
+
+    The percentiles are taken over the CONTACT, not the whole frame, and that
+    is the difference between a legible surface and a black lump. A small
+    press occupies a few percent of the pad; scaled to the whole frame, the
+    2/98 band is set by the noise of the flat gel, and the imprint's own
+    relief lands far outside it. Measured on a quad_small press covering 6.3%
+    of the frame:
+
+        band from whole frame   0.0207 (LUT) / 0.1317 (calibration-free)
+        band from the contact   0.0835        / 0.7266
+        contact pixels clipped to pure black or white:  46% / 48%
+
+    Half the imprint saturated is why a square indenter rendered as a round
+    dark blob with no facets — the geometry was in the depth map and the
+    shading threw it away.
+    """
     import cv2
 
     dy, dx = np.gradient(z.astype(np.float64))
     shade = dx + dy
     if smooth_px >= 3:
         shade = cv2.GaussianBlur(shade, (smooth_px, smooth_px), 0)
-    lo, hi = np.percentile(shade, [2, 98])
+    zz = np.asarray(z, np.float64)
+    peak = float(zz.max())
+    on = zz > 0.05 * peak if peak > 1e-9 else np.zeros_like(zz, bool)
+    lo, hi = (np.percentile(shade[on], [2, 98]) if on.sum() >= 200
+              else np.percentile(shade, [2, 98]))
     if hi - lo > 1e-9:
         shade = np.clip((shade - lo) / (hi - lo), 0, 1)
     else:
@@ -191,6 +211,12 @@ def render_mesh(mesh, width: int = 900, height: int = 700, bg: float = 1.0,
     # a different fraction of the width at a different aspect: 0.47 gives 0.92
     # at 4:3 but clips at 620x500 (1.24). Scale it so the width fill is the
     # invariant, and FULL_FRAME_ZOOM keeps meaning what it was measured to mean.
+    #
+    # NOT compensated for the scene's z extent. That was tried, on the theory
+    # that tall surfaces were being shrunk because Open3D sizes the view by
+    # max(x, y, z*z_scale). Measured: a no-op, because the pad is 20 x 15 mm
+    # and the tallest surface is 6.8 mm * 1.6 = 10.9 mm, so xy dominates
+    # always. Fill spread was 0.032 with and without it.
     ctr.set_zoom(zoom * (4.0 / 3.0) / (width / height))
     vis.poll_events()
     vis.update_renderer()
