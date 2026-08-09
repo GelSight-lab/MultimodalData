@@ -93,7 +93,18 @@ def evaluate(X, f, groups, seeds=SEEDS) -> dict:
         ts, ps, _ = _one_seed(X, f, groups, s, shuffle=True)
         sh.append(float(spearmanr(ps, ts).statistic))
     pg = {k: float(np.median(v)) for k, v in per.items() if v}
+    # How many groups the protocol could actually FIT on. `_one_seed` skips a
+    # group with fewer than 8 frames in its fit half, silently, so a row could
+    # report a clean rho computed on two of its six indenters. That is not
+    # hypothetical: rebuilding the caches on the current reconstruction grew
+    # the thresholded contact area (r_eff median 73 -> 107 px), the scope
+    # filter is written against that radius, and cnc_mini_26 fell to 134
+    # frames with ONE star press left. The number is reported with the
+    # population it came from.
+    sizes = {g: int((groups == g).sum()) for g in set(groups)}
+    scored = sum(1 for g, n in sizes.items() if n // 2 >= 8)
     return {"rho": float(np.median(rr)), "mae": float(np.median(mm)),
+            "n_groups_scored": scored, "group_sizes": sizes,
             "rho_min": float(np.min(rr)), "rho_max": float(np.max(rr)),
             "rho_sd": float(np.std(rr)), "shuffle_rho": float(np.median(sh)),
             "n_eval": int(n_eval), "n_groups": len(set(groups)),
@@ -142,10 +153,17 @@ def ds_cnc_mini_26(cache: str = "lut_full.json") -> dict:
     u = 1.0 / np.clip(_basis(x, y) @ w[:6], 0.15, 3.0)
     X = np.column_stack([V * u, V2 * u ** 2, D * u,
                          np.sqrt(np.clip(A, 0, None)) * D * u, A])
-    r_eff = np.sqrt(np.clip(A, 0, None) / np.pi)
-    sc = ((cx - r_eff > 24) & (cx + r_eff < 296) & (cy - r_eff > 20)
-          & (cy + r_eff < 220) & (z <= 4.2)
-          & (x > 3.5) & (x < 14.5) & (y > 3.0) & (y < 13.5))
+    # Scope: is the press inside the field of view, and the gel not bottomed
+    # out. Decided from the COMMANDED position, which the rig set and no
+    # reconstruction can move. The previous test derived an effective contact
+    # radius from the thresholded area and compared it to the frame margins;
+    # area is an output of the reconstruction, so improving the reconstruction
+    # shrank the population from ~400 presses to 134 and left the star family
+    # with a single press, while the docstring promised the filter was what
+    # made two reconstructions comparable. Same window `visible_eval` uses.
+    from .visible_eval import FOV_MM
+    lo_x, hi_x, lo_y, hi_y = FOV_MM
+    sc = ((x > lo_x) & (x < hi_x) & (y > lo_y) & (y < hi_y) & (z <= 4.2))
     return evaluate(X[sc], f[sc], grp[sc])
 
 

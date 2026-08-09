@@ -396,8 +396,41 @@ def check_single_poisson_law() -> list[str]:
     return bad
 
 
+def check_scope_filter_independent() -> list[str]:
+    """A scope filter may not be computed from the reconstruction it scopes.
+
+    `ds_cnc_mini_26` derives an effective contact radius from the thresholded
+    AREA and compares it to the frame margins, to ask "is the contact fully in
+    view". Area is an output of the reconstruction, so improving the
+    reconstruction moved the filter: r_eff median 73 -> 107 px, the row fell
+    from ~400 frames to 134, and one indenter family was left with a single
+    press. Two reconstructions scored through it are not comparable, which is
+    the one thing its own docstring promises.
+
+    Whether a press is in view is a fact about the RIG (commanded position)
+    and the raw image, both of which `visible_eval` decides without any
+    reconstruction.
+    """
+    bad = []
+    fe = ROOT / "force_recovery" / "force_eval_all.py"
+    if not fe.exists():
+        return bad
+    src = fe.read_text()
+    for i, line in enumerate(src.splitlines(), 1):
+        s = line.strip()
+        if s.startswith("#"):
+            continue
+        if "r_eff" in s and ("cx" in s or "cy" in s):
+            bad.append(f"force_eval_all.py:{i}: scope test built from a "
+                       f"reconstruction-derived radius — use "
+                       f"visible_eval.in_fov / visible", )
+    return bad
+
+
 CHECKS = {
     "single calibration-epoch definition": check_single_calib_epoch,
+    "scope filter independent of the reconstruction":
+        check_scope_filter_independent,
     "single Poisson boundary law": check_single_poisson_law,
     "single mesh render law": check_single_mesh_law,
     "mesh renders are never cropped": check_mesh_never_cropped,
