@@ -55,6 +55,12 @@ reaches 0.899, short of 0.95. The ceiling of 0.967 is what the ground truth
 itself supports: force and commanded depth agree at rho 0.956-0.981 per
 family, no better.
 
+There is a second, harder limit underneath: 84% of these presses have their
+contact CORE (depth > 0.2 of peak) running off the frame, so part of the
+indentation is physically outside the field of view and no reconstruction can
+recover it. The fully-in-view subset is 75 frames, 8-18 per group — too few
+to score through this protocol, and it is left unscored rather than quoted.
+
 So 0.95 is not reachable by improving the colour -> normal step, and the
 honest ceiling for a fit-free reconstruction on this dataset is ~0.90.
 """
