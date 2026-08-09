@@ -84,7 +84,11 @@ WHAT ACTUALLY IMPROVED IT, AND WHAT DID NOT (n = 468 / 390 / 390, force rho)
 
     change                                cnc_mini_26   FoTa cnc     FEATS
     boundary condition (see poisson.py)     +0.0380     +0.1479     0.0000
+    normalise by the reference, not 255     +0.0391     +0.0770    +0.0235
     per-frame LED gain self-calibration     -0.0063     -0.0274    -0.3265
+
+    calibration-free, now                     0.8379      0.3986     0.6389
+    the LUT it is measured against            0.6143      0.3012     0.7577
 
 The boundary condition was the reconstruction bug: the integrator pinned the
 frame border to height zero, which is false for every contact reaching the
@@ -208,7 +212,8 @@ def channel_gains(dI: np.ndarray, azimuth_deg=LED_AZIMUTH_DEG,
 
 
 def gradients(dI: np.ndarray, azimuth_deg=LED_AZIMUTH_DEG,
-              remove_dc: bool = True, gains: bool = False
+              remove_dc: bool = True, gains: bool = False,
+              ref_img: np.ndarray | None = None
               ) -> tuple[np.ndarray, np.ndarray]:
     """Surface gradient from the signed RGB difference image.
 
@@ -222,7 +227,18 @@ def gradients(dI: np.ndarray, azimuth_deg=LED_AZIMUTH_DEG,
     M = led_matrix(azimuth_deg)                       # (3, 2)
     A = np.linalg.pinv(M)                             # (2, 3)
     a = channel_gains(dI, azimuth_deg) if gains else np.ones(3)
-    s = (dI.reshape(-1, 3) / 255.0 / a) @ A.T         # (N, 2), sine-like
+    # dI / I_ref, not dI / 255. The imaging model is
+    #     I_k = albedo * G_k(p) * (n . l_k) + ambient
+    # so the pixel gain G_k(p) — LED falloff across the pad, vignetting, and
+    # the pad's own albedo — multiplies BOTH the frame and the reference, and
+    # dividing by the reference cancels it. Differencing against a constant
+    # 255 leaves it in, which makes the same slope read differently at
+    # different places on the same pad. Worth +0.038 rho on cnc_mini_26 and
+    # +0.019 on FoTa; it is the only one of eight candidate colour -> normal
+    # changes that survived (see cf_variants).
+    sig = (dI / np.maximum(np.asarray(ref_img, np.float64), 8.0)
+           if ref_img is not None else dI / 255.0)
+    s = (sig.reshape(-1, 3) / a) @ A.T                # (N, 2), sine-like
     s = s.reshape(dI.shape[0], dI.shape[1], 2)
     s = np.clip(s, -0.99, 0.99)
     g = s / np.sqrt(1.0 - s ** 2)                     # sine -> tangent
@@ -291,7 +307,7 @@ def reconstruct(img: np.ndarray, ref: np.ndarray,
 
     dI = img.astype(np.float32) - ref.astype(np.float32)
     valid = contact_mask(dI)
-    gx, gy = gradients(dI, azimuth_deg, gains=gains)
+    gx, gy = gradients(dI, azimuth_deg, gains=gains, ref_img=ref)
     gx = np.where(valid, gx, 0.0)
     gy = np.where(valid, gy, 0.0)
     if solver == "auto":
