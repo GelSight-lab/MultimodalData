@@ -18,7 +18,7 @@ GEOMETRY, VERIFIED NOT ASSUMED (see `verify`)
     (poses are logged after the per-step object perturbation, sigma 1 mm/2.9 deg);
     with that offset the peak penetration is constant at 2.2490 +- 0.0023 mm
     over 145 touches, with the +0/+1 offsets it scatters by >1 mm.
-  * the gel frame origin sits GEL_THICKNESS_MM above the undeformed gel surface
+  * the gel frame origin sits SIM_GEL_THICKNESS_MM above the undeformed gel surface
     and the simulator lowers the sensor until the closest object point is
     GEL_DATUM_MM below the origin => every sim touch is a 2.25 mm press.
   * image row increases along -y of the gel frame, column along +x.
@@ -111,9 +111,14 @@ MESH_PQ_TEST = OUT / "meshes/data/printed_test-00000-of-00001.parquet"
 SENSOR_MM = np.array([18.88, 14.16])       # GelSight Mini sensing area
 SIM_W, SIM_H = 320, 240                    # native sim frame
 W_P, H_P = 455, 341                        # 1 px == MM_PER_PIXEL (0.05% off)
-GEL_THICKNESS_MM = 4.25                    # tactile_mnist constant
+# The SIMULATOR's gel, not the Mini's. Numerically equal to
+# lut_calibration.GEL_THICKNESS_MM today and deliberately NOT imported from
+# it: one is a property of tactile_mnist's synthetic sensor and the other of
+# the physical GelSight Mini, and if either upstream changes, silently
+# following the other would be a bug that reads as a coincidence.
+SIM_GEL_THICKNESS_MM = 4.25                # tactile_mnist constant
 GEL_DATUM_MM = 2.0                         # verified from the data (see above)
-PRESS_MM = GEL_THICKNESS_MM - GEL_DATUM_MM  # 2.25 mm, constant for every touch
+PRESS_MM = SIM_GEL_THICKNESS_MM - GEL_DATUM_MM  # 2.25 mm, constant for every touch
 N_TOUCHES = 420
 RNG = np.random.default_rng(0)
 
@@ -221,7 +226,7 @@ def gt_height_map(V, F, obj_pos, obj_quat, gel_pos, gel_quat,
 
     Orthographic ray cast of the mesh along the gel -z axis. Value is the
     distance of the object below the undeformed gel surface, negated:
-    hm = (gel_z - z_surface)*1000 - GEL_THICKNESS_MM.
+    hm = (gel_z - z_surface)*1000 - SIM_GEL_THICKNESS_MM.
     """
     import open3d as o3d
     Vc = (V @ quat_to_R(obj_quat).T) + obj_pos
@@ -237,7 +242,7 @@ def gt_height_map(V, F, obj_pos, obj_quat, gel_pos, gel_quat,
     t_hit = sc.cast_rays(o3d.core.Tensor(rays))["t_hit"].numpy()
     hit = np.isfinite(t_hit)
     z_surf = np.where(hit, org[..., 2] - t_hit, -1e3)
-    hm = (np.asarray(gel_pos)[2] - z_surf) * 1000.0 - GEL_THICKNESS_MM
+    hm = (np.asarray(gel_pos)[2] - z_surf) * 1000.0 - SIM_GEL_THICKNESS_MM
     return np.clip(hm, None, 50.0).astype(np.float32)
 
 

@@ -102,8 +102,10 @@ EXPORT_ROOT = Path("/media/yxma/Disk1/twm/release_force")
 # implied by the estimator's own indentation depths (median 15.4 N/mm).
 
 # GelSight Mini elastomer thickness; the hard physical ceiling a penetration
-# interpreted as gel compression may not exceed.
-GEL_THICKNESS_MM = 4.25
+# interpreted as gel compression may not exceed. Defined in lut_calibration,
+# beside the other sensor geometry, and imported so the reconstruction and the
+# exporter cannot disagree about how thick the gel is.
+from .lut_calibration import GEL_THICKNESS_MM  # noqa: E402
 
 SIDES = ("left", "right")
 POSE_DIM = 7

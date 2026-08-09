@@ -34,7 +34,8 @@ from PIL import Image
 
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 from force_recovery.lut_calibration import (  # noqa: E402
-    crop, GLOWTACT, PAT, BINS, DI_RANGE, CAL_OUT, MM_PER_PIXEL, W, H)
+    crop, GLOWTACT, PAT, BINS, DI_RANGE, CAL_OUT, GEL_THICKNESS_MM,
+    MM_PER_PIXEL, W, H)
 
 OUT = Path("/media/yxma/Disk1/twm/force_recovery/site_assets/debug_gallery")
 CNC = Path("/media/yxma/Disk1/twm/force_recovery/fota_cnc/cnc/cnc_Mini")
@@ -72,6 +73,24 @@ def stages(img: np.ndarray, ref: np.ndarray) -> dict:
     if depth[valid].size and np.median(depth[valid]) < 0:
         depth = -depth
     d = np.maximum(depth, 0.0)
+    # THE GEL IS 4.25 mm THICK AND THE INDENTER CANNOT COMPRESS MORE THAN THAT
+    #
+    # On a contact the sensor images WHOLE this bound never binds (0 of 46
+    # sampled frames reach it). It binds on contacts cut by the frame edge,
+    # where the visible flank says "the surface is descending" and the depth at
+    # which it stops is outside the image — so the free boundary integrates a
+    # ramp with nothing to stop it: peaks to 9.26 mm with a constant anchor,
+    # 6.54 with a plane, 5.25 with the quadratic actually used. Better
+    # detrending only mitigates; the depth of a contact you can see half of is
+    # not identifiable, and no boundary condition makes it so.
+    #
+    # So the bound is applied as what it is — physics, not a fit — and the
+    # frame is flagged rather than silently trusted. Measured on 300 presses:
+    # peak p95 5.12 -> 4.25 mm, 15% over the gel -> 0%, and force rho
+    # 0.5348 -> 0.5622 (dropping those frames entirely gives 0.5225, so the
+    # bounded value carries more than their absence).
+    over = float((d > GEL_THICKNESS_MM).mean())
+    d = np.minimum(d, GEL_THICKNESS_MM)
     m = d > 0.05
     px_mm2 = MM_PER_PIXEL ** 2
     feats = {
@@ -86,7 +105,8 @@ def stages(img: np.ndarray, ref: np.ndarray) -> dict:
     # drift from this one.
     return {"dI": dI, "gx": g[..., 0], "gy": g[..., 1],
             "gmag": np.hypot(g[..., 0], g[..., 1]), "valid": valid,
-            "depth": d, "feats": feats, "lut_coverage": cov}
+            "depth": d, "feats": feats, "lut_coverage": cov,
+            "over_gel_frac": over}
 
 
 def feat_vec(f):

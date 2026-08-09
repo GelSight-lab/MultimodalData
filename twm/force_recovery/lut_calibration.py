@@ -37,6 +37,12 @@ from .run_episode import OUT_ROOT
 # reconstruction as cross-sensor transfer from a GlowTact pad. It is not.
 CNC_MINI_26 = OUT_ROOT / "glowtact" / "cnc_mini_26"
 GLOWTACT = CNC_MINI_26          # deprecated alias, do not use in new code
+# GelSight Mini elastomer thickness. A depth interpreted as gel compression
+# may not exceed it: the indenter has nothing left to compress. Lives here,
+# beside MM_PER_PIXEL, because it is sensor geometry and three modules need
+# it; `export_force_columns` imports rather than restating it.
+GEL_THICKNESS_MM = 4.25
+
 CAL_OUT = OUT_ROOT / "lut_calibration"
 
 # same view as the rest of the pipeline: 1/7 border crop -> 320x240
