@@ -105,7 +105,7 @@ def _load():
     return rows, a
 
 
-def fit(report: bool = True):
+def fit(report: bool = True, holdout: bool = False):
     """Fit the newton scale; returns predict(stages_dict) -> N.
 
     Held out by PRESS POSITION, not at random: neighbouring frames of one press
@@ -149,6 +149,13 @@ def fit(report: bool = True):
 
     wl, *_ = np.linalg.lstsq(X[tr], f[tr], rcond=None)
     iso = IsotonicRegression(out_of_bounds="clip").fit(X[tr] @ wl, f[tr])
+    # The held-out arrays are returned on request so a diagnostic can slice
+    # them (in-view vs clipped, say) WITHOUT re-implementing the fit. A
+    # diagnostic that rebuilds the model it is diagnosing measures its own
+    # copy.
+    held = {"pred": iso.predict(X[te] @ wl), "f": f[te],
+            "clip": _clip_fraction(a("area"), cx, cy)[te],
+            "cx": cx[te], "cy": cy[te]}
     if report:
         p = iso.predict(X[te] @ wl)
         rho = spearmanr(p, f[te]).statistic
@@ -179,7 +186,7 @@ def fit(report: bool = True):
         v = _with_clip(v[None, :], [ft["area"]], [pcx], [pcy])[0]
         return float(max(0.0, iso.predict([float(v @ wl)])[0]))
 
-    return predict
+    return (predict, held) if holdout else predict
 
 
 if __name__ == "__main__":

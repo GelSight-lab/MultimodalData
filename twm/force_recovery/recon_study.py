@@ -56,10 +56,11 @@ N_SAMPLES = 20
 
 
 def _poisson(gx, gy):
-    sys.path.insert(0, str(Path.home() / "gelsight_heightmap_reconstruction"
-                           / "python_version"))
-    from fast_poisson import fast_poisson
-    return fast_poisson(gx, gy)
+    # The clamped solver, named. This workbench exists to compare knobs, so it
+    # keeps the retired boundary condition explicitly rather than inheriting
+    # whatever the production path currently uses.
+    from .poisson import poisson_dirichlet
+    return poisson_dirichlet(gx, gy)
 
 
 def stages_full(img, ref, lut, cnt, inpaint_markers: bool = False):

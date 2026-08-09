@@ -374,8 +374,31 @@ def check_mesh_never_cropped() -> list[str]:
     return bad
 
 
+def check_single_poisson_law() -> list[str]:
+    """One place decides the integration boundary condition: force_recovery.poisson.
+
+    Seven modules imported the raw DST solver directly. It pins the frame
+    border to height zero, which is wrong for any contact reaching the sensor
+    edge — 294-409 of ~400 frames on the force datasets — and costs 15.4% of
+    peak against an analytic surface. `mnist_validation` had that written in a
+    comment for months while every caller kept the clamp, because there was no
+    single place to change and nothing to notice it.
+    """
+    bad = []
+    for p in _py_files():
+        if p.name in ("poisson.py", "pipeline_guard.py"):
+            continue
+        for i, line in enumerate(p.read_text().splitlines(), 1):
+            if re.search(r"^\s*from\s+fast_poisson\s+import", line):
+                bad.append(f"{p.relative_to(ROOT)}:{i}: imports the raw DST "
+                           f"solver — go through force_recovery.poisson so the "
+                           f"boundary condition has one definition")
+    return bad
+
+
 CHECKS = {
     "single calibration-epoch definition": check_single_calib_epoch,
+    "single Poisson boundary law": check_single_poisson_law,
     "single mesh render law": check_single_mesh_law,
     "mesh renders are never cropped": check_mesh_never_cropped,
     "difference captions derive the gain": check_no_typed_diff_gain,

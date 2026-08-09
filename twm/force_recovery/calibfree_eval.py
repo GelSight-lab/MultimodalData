@@ -37,6 +37,11 @@ from .force_eval_all import CACHE, evaluate
 # peak, which is scale-free and identical for both.
 DEPTH_FLOOR_FRAC = 0.05
 
+# Every arm scored on identical frames. `*_dirichlet` / `lut_neumann` exist so
+# the boundary condition can be attributed on its own.
+METHODS = ("lut", "lut_native", "calibfree", "calibfree_dirichlet",
+           "lut_neumann", "calibfree_gains")
+
 
 def _feats_from_depth(d: np.ndarray) -> dict:
     m = d > DEPTH_FLOOR_FRAC * max(d.max(), 1e-9)
@@ -64,6 +69,28 @@ def features(img: np.ndarray, ref: np.ndarray, method: str) -> dict:
         return dict(stages(img, ref)["feats"])
     if method == "calibfree":
         return _feats_from_depth(CF.reconstruct(img, ref)["depth"])
+    if method == "calibfree_gains":
+        # Per-frame LED gain self-calibration (calib_free.channel_gains).
+        return _feats_from_depth(
+            CF.reconstruct(img, ref, gains=True)["depth"])
+    if method == "calibfree_dirichlet":
+        # The retired boundary condition, kept as an A/B arm. Only the solver
+        # differs from `calibfree`, so any rho difference is the boundary and
+        # nothing else. See force_recovery.poisson: the DST solver pins the
+        # frame border to zero, which is false whenever a contact reaches it.
+        return _feats_from_depth(
+            CF.reconstruct(img, ref, solver="dirichlet")["depth"])
+    if method == "lut_neumann":
+        from .poisson import poisson_neumann
+        st = stages(img, ref)
+        gx = np.where(st["valid"], st["gx"], 0.0)
+        gy = np.where(st["valid"], st["gy"], 0.0)
+        d = poisson_neumann(gx, gy)
+        if st["valid"].any() and np.median(d[st["valid"]]) < 0:
+            d = -d
+        if (~st["valid"]).sum() > 100:
+            d = d - np.median(d[~st["valid"]])
+        return _feats_from_depth(np.maximum(d, 0.0))
     raise KeyError(method)
 
 
@@ -91,16 +118,30 @@ def build_cache(name: str, limit: int = 0) -> dict:
     for i, fr in enumerate(rows):
         img, ref = get(fr)
         rec = {"f": float(fr["f"]), "group": str(fr["group"])}
-        for meth in ("lut", "lut_native", "calibfree"):
+        for meth in METHODS:
             rec[meth] = features(img, ref, meth)
+        # Does the contact reach the frame border? That is the population the
+        # boundary condition can possibly affect; averaged over a dataset of
+        # centred CNC presses a real edge effect would be diluted to nothing.
+        v = CF.contact_mask(img.astype("float32") - ref.astype("float32"))
+        rec["edge"] = bool(v[0].any() or v[-1].any()
+                           or v[:, 0].any() or v[:, -1].any())
         out["rows"].append(rec)
         if (i + 1) % 50 == 0:
             print(f"    {name}: {i+1}/{len(rows)}", flush=True)
     return out
 
 
-def score(cache: dict, method: str, seeds: int = 5) -> dict:
+def score(cache: dict, method: str, seeds: int = 5,
+          subset: str = "all") -> dict:
     rows = cache["rows"]
+    if subset == "edge":
+        rows = [r for r in rows if r.get("edge")]
+    elif subset == "interior":
+        rows = [r for r in rows if not r.get("edge")]
+    if len(rows) < 24:
+        return {"rho": float("nan"), "mae": float("nan"),
+                "shuffle_rho": float("nan"), "n": len(rows)}
     X = np.array([[r[method][k] for k in ("vol", "vol2", "maxd", "area", "h1")]
                   for r in rows], float)
     f = np.array([r["f"] for r in rows], float)
@@ -123,8 +164,12 @@ def main() -> int:
         cache = build_cache(name, args.limit)
         row = {"dataset": name, "label": cache["label"],
                "n": len(cache["rows"])}
-        for meth in ("lut", "lut_native", "calibfree"):
+        for meth in METHODS:
             row[meth] = score(cache, meth)
+        row["n_edge"] = sum(bool(r.get("edge")) for r in cache["rows"])
+        row["edge_subset"] = {m: score(cache, m, subset="edge")
+                              for m in ("calibfree", "calibfree_dirichlet",
+                                        "lut", "lut_neumann")}
         table.append(row)
         print(f"   n={row['n']}  LUT(rel)={row['lut']['rho']:.4f}  "
               f"LUT(native)={row['lut_native']['rho']:.4f}  "

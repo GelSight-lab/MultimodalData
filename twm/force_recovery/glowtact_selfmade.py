@@ -135,10 +135,8 @@ def load_img(p: Path) -> np.ndarray:
 
 # ---------------------------------------------------------------- pipeline
 def _poisson(gx, gy):
-    sys.path.insert(0, str(Path.home() / "gelsight_heightmap_reconstruction"
-                           / "python_version"))
-    from fast_poisson import fast_poisson
-    return fast_poisson(gx, gy)
+    from .poisson import poisson_dirichlet
+    return poisson_dirichlet(gx, gy)
 
 
 def stages_lut(img, ref, lut, cnt) -> dict:

@@ -79,6 +79,28 @@ alternatives against the flat-gel constraint instead of asserting one.
 
 Scale is NOT recovered. This returns depth in arbitrary units up to one global
 factor; a force calibration fixes that factor exactly as it does for the LUT.
+
+WHAT ACTUALLY IMPROVED IT, AND WHAT DID NOT (n = 468 / 390 / 390, force rho)
+
+    change                                cnc_mini_26   FoTa cnc     FEATS
+    boundary condition (see poisson.py)     +0.0380     +0.1479     0.0000
+    per-frame LED gain self-calibration     -0.0063     -0.0274    -0.3265
+
+The boundary condition was the reconstruction bug: the integrator pinned the
+frame border to height zero, which is false for every contact reaching the
+sensor edge — 409 of 468 and 294 of 390 frames here. FEATS is unchanged
+because the rule leaves a marker gel on the clamped solver, having no flat gel
+to anchor a free boundary on.
+
+The LED gains were my idea and they lose everywhere. `channel_gains` estimates
+a per-channel scale from the frame itself, on the reasoning that three LEDs
+are not equally bright and an unmodelled gain rotates the recovered gradient.
+The estimates come out wildly frame-dependent (0.36-1.81 across four presses
+of the same probe), which is the tell: a physical LED gain is a constant, so
+what the fit absorbs is scene-dependent model error — and putting that in the
+reconstruction makes force worse, catastrophically so on the marker gel. Kept
+behind `gains=False` with these numbers, because the idea is the obvious next
+one to try and the next person deserves the result rather than the impulse.
 """
 from __future__ import annotations
 
@@ -149,8 +171,45 @@ def contact_mask(dI: np.ndarray) -> np.ndarray:
     return m.astype(bool)
 
 
+def channel_gains(dI: np.ndarray, azimuth_deg=LED_AZIMUTH_DEG,
+                  iters: int = 3) -> np.ndarray:
+    """Per-channel LED gain, estimated FROM THE FRAME ITSELF. (3,), mean 1.
+
+    The model `dI_k = gx cos(t_k) + gy sin(t_k)` assumes the three LEDs are
+    equally bright and the three channels equally sensitive. They are not: a
+    GelSight's LEDs are separate parts, and the camera's colour response is
+    not flat. An unmodelled per-channel gain does not cancel — it tilts the
+    3x2 solve toward the brightest channel, which rotates the recovered
+    gradient direction.
+
+    This stays calibration-FREE because nothing outside the frame is used: no
+    rig, no sphere presses, no stored table. Alternate between solving for the
+    gradient and rescaling each channel to best fit its own prediction, over
+    the contact pixels only. The overall scale of the gains is unidentifiable
+    (it trades against the gradient's own scale, which is already not
+    recovered), so they are normalised to mean 1.
+    """
+    M = led_matrix(azimuth_deg)
+    m = contact_mask(dI)
+    if m.sum() < 200:
+        return np.ones(3)
+    d = dI[m] / 255.0                                   # (N, 3)
+    a = np.ones(3)
+    for _ in range(iters):
+        g = (d / a) @ np.linalg.pinv(M).T               # (N, 2)
+        pred = g @ M.T                                  # (N, 3)
+        denom = (pred ** 2).sum(axis=0)
+        a_new = np.where(denom > 1e-12, (d * pred).sum(axis=0) / denom, a)
+        a_new = np.abs(a_new)
+        if not np.all(a_new > 1e-6):
+            return np.ones(3)
+        a = a_new / a_new.mean()
+    return a
+
+
 def gradients(dI: np.ndarray, azimuth_deg=LED_AZIMUTH_DEG,
-              remove_dc: bool = True) -> tuple[np.ndarray, np.ndarray]:
+              remove_dc: bool = True, gains: bool = False
+              ) -> tuple[np.ndarray, np.ndarray]:
     """Surface gradient from the signed RGB difference image.
 
     `dI` is signed on purpose. Taking |dI| throws away which side of the
@@ -162,7 +221,8 @@ def gradients(dI: np.ndarray, azimuth_deg=LED_AZIMUTH_DEG,
 
     M = led_matrix(azimuth_deg)                       # (3, 2)
     A = np.linalg.pinv(M)                             # (2, 3)
-    s = (dI.reshape(-1, 3) / 255.0) @ A.T             # (N, 2), sine-like
+    a = channel_gains(dI, azimuth_deg) if gains else np.ones(3)
+    s = (dI.reshape(-1, 3) / 255.0 / a) @ A.T         # (N, 2), sine-like
     s = s.reshape(dI.shape[0], dI.shape[1], 2)
     s = np.clip(s, -0.99, 0.99)
     g = s / np.sqrt(1.0 - s ** 2)                     # sine -> tangent
@@ -180,9 +240,43 @@ def gradients(dI: np.ndarray, azimuth_deg=LED_AZIMUTH_DEG,
     return g[..., 0], g[..., 1]
 
 
+def normals(gx: np.ndarray, gy: np.ndarray) -> np.ndarray:
+    """Unit surface normals from the gradient field, (H, W, 3).
+
+    n = (-gx, -gy, 1)/|.| — the quantity the photometric solve actually
+    estimates. Depth is an INTEGRAL of this, so a normal map shows what was
+    measured before any boundary condition or integration could distort it,
+    which is the right place to look when a surface is suspected of being an
+    artefact of the solver.
+    """
+    n = np.stack([-np.asarray(gx, np.float64), -np.asarray(gy, np.float64),
+                  np.ones_like(gx, np.float64)], axis=-1)
+    return n / np.linalg.norm(n, axis=-1, keepdims=True)
+
+
+def normal_rgb(gx: np.ndarray, gy: np.ndarray, gain: float = 1.0) -> np.ndarray:
+    """Normal map in the usual (n+1)/2 encoding, uint8 — flat gel is mauve.
+
+    `gain` multiplies the GRADIENTS before the normal is formed, for display
+    only. React's gradients are genuinely small (|grad z| p99 = 0.07-0.17), so
+    at gain 1 the map is a flat mauve field and shows nothing. A caller that
+    passes a gain must print it — `display_gain()` picks one from the data so
+    the number is derived rather than dialled until it looks good.
+    """
+    return np.clip((normals(np.asarray(gx) * gain, np.asarray(gy) * gain)
+                    + 1.0) * 127.5, 0, 255).astype(np.uint8)
+
+
+def display_gain(gx: np.ndarray, gy: np.ndarray, target: float = 0.45) -> float:
+    """Gain putting the 99th percentile gradient at `target` in the encoding."""
+    p99 = float(np.percentile(np.hypot(gx, gy), 99))
+    return 1.0 if p99 <= 1e-9 else max(1.0, round(target / p99, 1))
+
+
 def reconstruct(img: np.ndarray, ref: np.ndarray,
                 azimuth_deg=LED_AZIMUTH_DEG, scale: float = 1.0,
-                normalize: bool = False) -> dict:
+                normalize: bool = False, solver: str = "auto",
+                gains: bool = False) -> dict:
     """Surface height with no per-sensor calibration — SHAPE, not millimetres.
 
     `normalize=True` divides by the frame's own peak, giving 0..1. That is the
@@ -193,24 +287,26 @@ def reconstruct(img: np.ndarray, ref: np.ndarray,
 
     See RETURNS_MILLIMETRES.
     """
-    import sys
-    from pathlib import Path
-    sys.path.insert(0, str(Path.home() / "gelsight_heightmap_reconstruction"
-                           / "python_version"))
-    from fast_poisson import fast_poisson
+    from .poisson import integrate, poisson_dirichlet, poisson_neumann
 
     dI = img.astype(np.float32) - ref.astype(np.float32)
     valid = contact_mask(dI)
-    gx, gy = gradients(dI, azimuth_deg)
+    gx, gy = gradients(dI, azimuth_deg, gains=gains)
     gx = np.where(valid, gx, 0.0)
     gy = np.where(valid, gy, 0.0)
-    depth = fast_poisson(gx, gy)
+    if solver == "auto":
+        depth, used = integrate(gx, gy, valid, ref=ref)
+    elif solver == "neumann":
+        depth, used = poisson_neumann(gx, gy), "neumann"
+    else:
+        depth, used = poisson_dirichlet(gx, gy), "dirichlet"
     if valid.any() and np.median(depth[valid]) < 0:
         depth = -depth
     d = np.maximum(depth, 0.0) * scale
     if normalize:
         d = d / max(float(d.max()), 1e-12)
     return {"dI": dI, "valid": valid, "gx": gx, "gy": gy, "depth": d,
+            "normals": normals(gx, gy), "solver": used,
             "units": "relative (peak = 1)" if normalize
                      else "arbitrary (scale not recovered)"}
 

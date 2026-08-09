@@ -78,7 +78,7 @@ class FusionReconstructor:
 
     # ---- fusion --------------------------------------------------------
     def reconstruct(self, img: np.ndarray, ref: np.ndarray) -> np.ndarray:
-        from fast_poisson import fast_poisson
+        from .poisson import poisson_dirichlet as fast_poisson
 
         img = img.astype(np.float32)
         dI = img - ref

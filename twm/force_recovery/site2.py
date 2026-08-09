@@ -323,8 +323,21 @@ ASSET_SOURCES = {
     "recon_compare.png": (ASSETS, "force_recovery.react_leak_figure"),
 }
 # A figure drawn before the laws that draw it is a figure of the old laws.
-# These are the modules a reader is looking at when they look at a panel.
-RENDER_LAWS = ("o3d_view.py", "showcase.py", "visualize.py", "eval_panel.py")
+# These are the modules a reader is looking at when they look at a panel —
+# including the RECONSTRUCTION, which is what a depth map and a mesh actually
+# show. The first version of this list had only the drawing modules, so
+# changing the Poisson boundary condition (which changed every depth map on
+# the site) would have sailed straight through it.
+RENDER_LAWS = ("o3d_view.py", "showcase.py", "visualize.py", "eval_panel.py",
+               "poisson.py", "calib_free.py", "debug_gallery.py")
+
+# The same rule for NUMBERS. A page that pairs a freshly rendered figure with a
+# metric computed by the previous reconstruction is worse than one that is
+# uniformly old: it looks current and is internally inconsistent. Every
+# artifact the pages read must postdate the reconstruction.
+NUMBER_ARTIFACTS = ("force_matrix.json", "calibfree_vs_lut.json",
+                    "results_metrics.json", "force_agreement.json")
+RECON_LAWS = ("poisson.py", "calib_free.py", "debug_gallery.py")
 
 
 def collect_assets() -> list[str]:
@@ -348,6 +361,17 @@ def collect_assets() -> list[str]:
                 f"{name}: {age/60:.0f} min older than the render laws "
                 f"({', '.join(RENDER_LAWS)}) — re-run `python -m {cmd}` under "
                 f"xvfb-run, or the page shows the previous convention")
+    recon_mtime = max((here / n).stat().st_mtime for n in RECON_LAWS)
+    for name in NUMBER_ARTIFACTS:
+        f = CACHE / name
+        if not f.exists():
+            problems.append(f"{name}: missing")
+        elif recon_mtime - f.stat().st_mtime > 0:
+            problems.append(
+                f"{name}: computed BEFORE the current reconstruction "
+                f"({(recon_mtime - f.stat().st_mtime)/60:.0f} min older than "
+                f"{'/'.join(RECON_LAWS)}) — recompute it, or the page pairs a "
+                f"new figure with an old number")
     for p in sorted(ASSETS.glob("panel_*.png")):
         if law_mtime - p.stat().st_mtime > 0:
             problems.append(f"{p.name}: older than the render laws — re-run "

@@ -50,10 +50,6 @@ LUT, CNT = _cal["lut"], _cal["count"]
 # ---------------------------------------------------------------- pipeline
 def stages(img: np.ndarray, ref: np.ndarray) -> dict:
     """All intermediate stages from raw to depth + features."""
-    sys.path.insert(0, str(Path.home() / "gelsight_heightmap_reconstruction"
-                           / "python_version"))
-    from fast_poisson import fast_poisson
-
     dI = img - ref
     q = np.clip((dI + DI_RANGE) / (2 * DI_RANGE) * (BINS - 1),
                 0, BINS - 1).astype(np.int32)
@@ -64,7 +60,15 @@ def stages(img: np.ndarray, ref: np.ndarray) -> dict:
     valid = cv2.morphologyEx(valid.astype(np.uint8), cv2.MORPH_OPEN,
                              np.ones((3, 3), np.uint8)).astype(bool)
     g[~valid] = 0.0
-    depth = fast_poisson(g[..., 0], g[..., 1])
+    # Boundary condition chosen from the data, not assumed (force_recovery.
+    # poisson.integrate). The DST solver this used to call unconditionally
+    # pins the frame border to zero, which is false for any contact that
+    # reaches the sensor edge — and on these datasets 294-409 of every ~400
+    # frames do. Measured effect on force rho: cnc_mini_26 +0.116,
+    # FoTa cnc +0.146; FEATS is left on the clamped solver by the rule because
+    # its marker lattice leaves no flat gel to anchor a free boundary on.
+    from .poisson import integrate
+    depth, _bc = integrate(g[..., 0], g[..., 1], valid, ref=ref)
     if depth[valid].size and np.median(depth[valid]) < 0:
         depth = -depth
     d = np.maximum(depth, 0.0)
@@ -76,7 +80,12 @@ def stages(img: np.ndarray, ref: np.ndarray) -> dict:
     }
     feats["h1"] = np.sqrt(feats["area"]) * feats["maxd"]
     cov = float(observed[valid].mean()) if valid.any() else 0.0
-    return {"dI": dI, "gmag": np.hypot(g[..., 0], g[..., 1]), "valid": valid,
+    # gx/gy are returned, not just their magnitude: the gradient field is what
+    # the LUT actually predicts, and re-integrating it under a different
+    # boundary condition must use THESE arrays, not a second lookup that could
+    # drift from this one.
+    return {"dI": dI, "gx": g[..., 0], "gy": g[..., 1],
+            "gmag": np.hypot(g[..., 0], g[..., 1]), "valid": valid,
             "depth": d, "feats": feats, "lut_coverage": cov}
 
 

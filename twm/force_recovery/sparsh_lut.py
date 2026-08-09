@@ -285,9 +285,7 @@ def stages_lut(img, ref, lut, cnt, mmpp: float = MMPP) -> dict:
     Verified bit-identical to debug_gallery.stages when handed the GlowTact
     table and its MM_PER_PIXEL, so the head-to-head compares only the table.
     """
-    sys.path.insert(0, str(Path.home() / "gelsight_heightmap_reconstruction"
-                           / "python_version"))
-    from fast_poisson import fast_poisson
+    from .poisson import poisson_dirichlet as fast_poisson
 
     dI = img - ref
     q = np.clip((dI + DI_RANGE) / (2 * DI_RANGE) * (BINS - 1),

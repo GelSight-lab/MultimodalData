@@ -114,10 +114,8 @@ SEEDS = 5
 
 
 def _fast_poisson():
-    sys.path.insert(0, str(Path.home() / "gelsight_heightmap_reconstruction"
-                           / "python_version"))
-    from fast_poisson import fast_poisson
-    return fast_poisson
+    from .poisson import poisson_dirichlet
+    return poisson_dirichlet
 
 
 # ------------------------------------------------------------------ controls

@@ -231,10 +231,7 @@ def reconstruct(dI: np.ndarray, lut: np.ndarray,
     # gradient field it returns only 39% of the true amplitude (a silent
     # attenuation that also capped the MLP pipeline); Dong's fast_poisson
     # reproduces the field at 100.7%.
-    sys.path.insert(0, str(Path.home()
-                           / "gelsight_heightmap_reconstruction"
-                           / "python_version"))
-    from fast_poisson import fast_poisson
+    from .poisson import poisson_dirichlet as fast_poisson
 
     if f01 is not None:
         dI = dI * f01
