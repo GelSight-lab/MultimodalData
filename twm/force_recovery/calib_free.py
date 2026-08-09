@@ -328,8 +328,13 @@ def reconstruct(img: np.ndarray, ref: np.ndarray,
     d = np.maximum(depth, 0.0) * scale
     if normalize:
         d = d / max(float(d.max()), 1e-12)
+    from .poisson import contact_truncated
     return {"dI": dI, "valid": valid, "gx": gx, "gy": gy, "depth": d,
             "normals": normals(gx, gy), "solver": used,
+            # True when the contact reaches the frame edge: the free boundary
+            # has extrapolated a surface it could not see, and 14.5% of such
+            # frames come out deeper than the gel is thick. See poisson.py.
+            "truncated": contact_truncated(valid),
             "units": "relative (peak = 1)" if normalize
                      else "arbitrary (scale not recovered)"}
 

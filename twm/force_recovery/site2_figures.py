@@ -56,7 +56,26 @@ def _load(name: str):
     return fn()
 
 
-def figure(name: str, n: int = 8, seed: int = 0) -> dict:
+# Labels in both languages. The Chinese set is rendered with a font whose
+# glyph coverage is verified (`cjk_font.use_cjk`) rather than assumed — the
+# previous Chinese figure on this site shipped as a row of tofu boxes.
+LABELS = {
+    "en": {"raw": "raw", "diff": None,
+           "lut_d": "LUT depth  max {:.2f} mm",
+           "cf_d": "calibration-free depth (relative)",
+           "lut_m": "LUT mesh", "cf_m": "calibration-free mesh (relative z)",
+           "suptitle": "{label}  ·  {gel}  ·  {n} samples",
+           "markerless": "markerless", "MARKER": "MARKER"},
+    "zh": {"raw": "原图", "diff": "差分图  dI = 当前帧 − 参考帧（彩色）",
+           "lut_d": "LUT 标定深度  峰值 {:.2f} mm",
+           "cf_d": "免标定深度（相对值）",
+           "lut_m": "LUT 标定网格", "cf_m": "免标定网格（相对高度）",
+           "suptitle": "{label}  ·  {gel}  ·  {n} 个样本",
+           "markerless": "无标记点胶层", "MARKER": "有标记点胶层"},
+}
+
+
+def figure(name: str, n: int = 8, seed: int = 0, lang: str = "en") -> dict:
     """One dataset's LUT-vs-calibration-free panel. Returns a manifest entry."""
     import matplotlib
     matplotlib.use("Agg")
@@ -67,6 +86,11 @@ def figure(name: str, n: int = 8, seed: int = 0) -> dict:
     from .debug_gallery import stages
 
     spec = DATASETS[name]
+    L = LABELS[lang]
+    if lang != "en":
+        from .cjk_font import use_cjk
+        use_cjk([v for v in L.values() if isinstance(v, str)]
+                + [spec["label"]])
     try:
         rows, get = _load(name)
     except Exception as exc:                                # noqa: BLE001
@@ -87,23 +111,24 @@ def figure(name: str, n: int = 8, seed: int = 0) -> dict:
         tag = f"F={f_n:.1f} N  " if f_n is not None else ""
         cells = [
             (np.clip(img, 0, 255).astype(np.uint8), None,
-             f"raw  {tag}[{fr.get('group', '?')}]"),
-            (EP.diff_rgb(img, ref), None, EP.diff_caption()),
-            (lut, "inferno", f"LUT depth  max {lut.max():.2f} mm"),
-            (cfn, "inferno", "calibration-free depth (relative)"),
-            (EP.mesh(lut), None, "LUT mesh"),
-            (EP.mesh(cf, relative=True), None,
-             "calibration-free mesh (relative z)"),
+             f"{L['raw']}  {tag}[{fr.get('group', '?')}]"),
+            (EP.diff_rgb(img, ref), None, L["diff"] or EP.diff_caption()),
+            (lut, "inferno", L["lut_d"].format(lut.max())),
+            (cfn, "inferno", L["cf_d"]),
+            (EP.mesh(lut), None, L["lut_m"]),
+            (EP.mesh(cf, relative=True), None, L["cf_m"]),
         ]
         for a, (d, cm, t) in zip(ax[i], cells):
             a.imshow(d, cmap=cm)
             a.set_title(t, fontsize=8)
             a.axis("off")
-    fig.suptitle(f"{spec['label']}  ·  {spec['gel']}  ·  {len(sel)} samples",
-                 fontsize=11)
+    fig.suptitle(L["suptitle"].format(label=spec["label"],
+                                      gel=L.get(spec["gel"], spec["gel"]),
+                                      n=len(sel)), fontsize=11)
     fig.tight_layout(rect=(0, 0, 1, 0.985))
     ASSETS.mkdir(parents=True, exist_ok=True)
-    p = ASSETS / f"panel_{name}.png"
+    p = ASSETS / (f"panel_{name}.png" if lang == "en"
+                  else f"panel_{name}_{lang}.png")
     fig.savefig(p, dpi=100)
     plt.close(fig)
     print(f"  {name}: {len(sel)} samples -> {p.name} "
@@ -116,11 +141,13 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--datasets", nargs="*", default=list(DATASETS))
     ap.add_argument("--samples", type=int, default=8)
+    ap.add_argument("--lang", default="en", choices=sorted(LABELS))
     args = ap.parse_args()
 
-    out = [figure(d, args.samples) for d in args.datasets]
+    out = [figure(d, args.samples, lang=args.lang) for d in args.datasets]
     MANIFEST.parent.mkdir(parents=True, exist_ok=True)
-    MANIFEST.write_text(json.dumps(out, indent=1))
+    if args.lang == "en":
+        MANIFEST.write_text(json.dumps(out, indent=1))
     ok = sum(r["available"] for r in out)
     print(f"\n[site2] {ok}/{len(out)} datasets rendered -> {MANIFEST}")
     for r in out:

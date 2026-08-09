@@ -155,6 +155,34 @@ def detrend_flat(z: np.ndarray, flat: np.ndarray, order: int = 1
     return z - sum(ci * fi for ci, fi in zip(c, full))
 
 
+# WHAT THE FREE BOUNDARY COSTS, AND WHERE
+#
+# Measured on 468 cnc_mini_26 presses, peak depth against the 4.25 mm gel:
+#
+#                              p50    p95     max    over gel thickness
+#     Dirichlet (retired)     1.27   2.96    4.03          0.0%
+#     Neumann + detrend       2.74   5.00    6.79         13.0%
+#       contact imaged whole    --   2.79      --          0.0%   (n =  46)
+#       contact truncated       --   5.15      --         14.5%   (n = 422)
+#
+# The free boundary produces depths the gel cannot physically have, and it does
+# so ONLY where the contact runs off the frame — there it must extrapolate a
+# surface it never saw. The clamped solver never exceeds the gel, but it buys
+# that by asserting height 0 at the border, which is false for exactly those
+# frames; it is not more correct, it is wrong in a direction that happens to
+# look safe.
+#
+# Neither is fixed by clipping the output at 4.25 mm: that would hide an
+# extrapolation behind a plausible number. The reconstruction reports the
+# condition instead (`truncated` in calib_free.reconstruct), so a consumer can
+# refuse the frame. On frames imaged whole the free boundary is both physical
+# and better (rho 0.995 vs 0.991 through the LUT).
+def contact_truncated(valid: np.ndarray) -> bool:
+    """Does the contact reach the frame border? Then depth there is extrapolated."""
+    v = np.asarray(valid, bool)
+    return bool(v[0].any() or v[-1].any() or v[:, 0].any() or v[:, -1].any())
+
+
 def integrate(gx: np.ndarray, gy: np.ndarray, valid: np.ndarray,
               ref: np.ndarray | None = None) -> tuple:
     """Gradients -> height, choosing the boundary condition FROM THE DATA.
