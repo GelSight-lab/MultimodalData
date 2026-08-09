@@ -95,7 +95,7 @@ thing to fool yourself about: inpainting the same <i>area</i> of randomly
 placed fake markers gives &rho; 0.7697 — no gain, so this is not smoothing.
 The detector finds 63/63 dots with 0 rejects on the FEATS reference and stays
 at 63 for every threshold from 3 to 16 grey levels, but exactly 0 blobs on the
-GlowTact and cnc references, so it is marker-specific. It is also not a
+Mini CNC 2026 and cnc references, so it is marker-specific. It is also not a
 complete fix: the dots shear with the gel (median 1.7 px, &gt;8 px on 8% of
 frames) and a static reference mask leaves the displaced ones in place. Full
 study: <code>python -m force_recovery.marker_study all</code>.</p>
@@ -127,7 +127,7 @@ SEC_MARKER_ZH = r'''<h2>有 marker 的 gel：多一步，以及它不是为了�
 <p class="footnote">对照实验，因为&ldquo;修补有用&rdquo;是很容易自欺的结论：
 把同样<i>面积</i>的随机假 marker 修补掉得到 &rho; 0.7697——没有增益，所以这不是平滑效应。
 检测器在 FEATS 参考帧上得到 63/63 个点、0 个误检，阈值从 3 到 16 灰阶都保持 63；
-而在 GlowTact 与 cnc 参考帧上恰好是 0 个，所以它是 marker 专用的。
+而在 Mini CNC 2026 与 cnc 参考帧上恰好是 0 个，所以它是 marker 专用的。
 它也不是完全的修复：点会随 gel 剪切移动（中位 1.7 px，8% 的帧超过 8 px），
 静态参考掩码会漏掉位移后的点。完整研究：
 <code>python -m force_recovery.marker_study all</code>。</p>
@@ -237,18 +237,18 @@ Cuts single-frame spikes from 4–8% to ≈0.</p>
 <h2>Photometric overhaul — classic per-sensor calibration (v2)</h2>
 <div class="card">
 <p style="margin-top:0">Ground-truth depth supervision (commanded press depth in
-GlowTact) exposed that the generic depth MLP recovers only ~25% of true
+Mini CNC 2026) exposed that the generic depth MLP recovers only ~25% of true
 indentation and saturates (peak-depth ρ = 0.39) — and, deeper, that the
 <b>gsrobotics SDK's Poisson solver returns 39% of the amplitude even on a
 perfect synthetic gradient field</b> (line-integral proved the gradients were
 correct at 105%). Rebuilt on the classic Dong/Yuan calibration: difference
-image → per-sensor RGB lookup table, self-calibrated from GlowTact's
+image → per-sensor RGB lookup table, self-calibrated from Mini CNC 2026's
 spherical presses via the exact relation a² = d(2R−d) (R = 3.35 mm, no
 external data) → exact Poisson (Dong's fast_poisson, 100.7% on the same
 benchmark) → sphere-supervised spatial gain field → Drake-style stiffening
 foundation p = k₁δ + k₂δ² with imprint-derived shape conditioning.</p>
 <table>
-<tr><th>stage (held-out, GlowTact 0–20 N)</th><th>ρ</th><th>MAE</th></tr>
+<tr><th>stage (held-out, Mini CNC 2026 0–20 N)</th><th>ρ</th><th>MAE</th></tr>
 <tr><td>MLP + linear Winkler (v1)</td><td>0.63</td><td>4.4 N</td></tr>
 <tr><td>LUT + solver fix + gain field + nonlinear foundation</td><td>0.80</td><td>2.75 N</td></tr>
 <tr><td>+ imprint shape self-conditioning</td><td><b>0.82</b></td><td><b>2.46 N</b></td></tr>
@@ -265,11 +265,11 @@ supervised network reaches 2.1 N on the same range). A new sensor needs one
 <h2>Validation (LUT-v2 pipeline)</h2>
 <div class="card">
 <p style="margin-top:0">The LUT-v2 pipeline is validated on <b>four force-labeled
-datasets</b> (FEATS, FoTa cnc_Mini, GlowTact, Sparsh) and cross-checked against
+datasets</b> (FEATS, FoTa cnc_Mini, Mini CNC 2026, Sparsh) and cross-checked against
 two neural estimators on identical frames — every predicted-vs-ground-truth
 scatter, per dataset, lives on the
 <a href="results.html"><b>results page</b></a>. Short version: physics
-0.77-0.99 everywhere (GlowTact 0.99, cnc_Mini in-view 0.95, Sparsh in-view
+0.77-0.99 everywhere (Mini CNC 2026 0.99, cnc_Mini in-view 0.95, Sparsh in-view
 0.97, FEATS 0.77), each reported beside a within-group label-shuffle control
 that lands between &minus;0.00 and 0.26; each network 0.90+ in its own gel
 domain and collapsing outside it.</p>
@@ -286,7 +286,7 @@ mean: <b>the pipeline holds no hardness or elastic-modulus constant anywhere</b>
 Nothing in the code knows a gel's Shore hardness or Young's modulus. Stiffness
 enters only implicitly — absorbed into the per-group least-squares weights and
 the isotonic calibration stacked on them — and those are refit <b>per dataset
-and per indenter/probe group</b>: every cnc_Mini probe, every GlowTact indenter
+and per indenter/probe group</b>: every cnc_Mini probe, every Mini CNC 2026 indenter
 family, every FEATS capture group gets its own fit, half the group fitting and
 half held out.</p>
 <p>The only physical constants shared across datasets are the sphere-calibrated
@@ -390,7 +390,7 @@ not the physics form</td></tr>
 </table>
 <p>The one real structural finding: <b>a single monotone volume feature
 generalises to unseen indenter shapes better than the five-feature model</b>,
-while five features stay better once the shape is calibrated. On GlowTact
+while five features stay better once the shape is calibrated. On Mini CNC 2026
 leave-one-indenter-out — the model never sees the held-out shape — this repairs
 exactly the two weak spots we reported earlier:</p>
 <table>
@@ -445,8 +445,8 @@ ZH = [
      '<td>在 球&rarr;平 上看似决定性（MAE 0.426 &rarr; 0.150 N，胜过 MLP 的 0.297）——\n但 <i>F = g(体积)</i> 达到 <b>0.0736 N</b></td>\n<td><b>否决</b>——增益来自&ldquo;用一个单调特征而非五个&rdquo;，\n不是那个物理形式</td></tr>'),
     ('<tr><td><b>Match model complexity to the transfer regime</b></td>\n<td>see below</td><td><b>adopted</b></td></tr>',
      '<tr><td><b>让模型复杂度匹配迁移场景</b></td>\n<td>见下</td><td><b>采纳</b></td></tr>'),
-    ('<p>The one real structural finding: <b>a single monotone volume feature\ngeneralises to unseen indenter shapes better than the five-feature model</b>,\nwhile five features stay better once the shape is calibrated. On GlowTact\nleave-one-indenter-out — the model never sees the held-out shape — this repairs\nexactly the two weak spots we reported earlier:</p>',
-     '<p>唯一真正的结构性发现：<b>单一单调的体积特征在未见过的压头形状上比五特征模型\n泛化得更好</b>，而一旦该形状已被标定，五特征仍然更优。在 GlowTact 留一压头交叉验证中\n（模型从未见过被留出的形状），这恰好修复了我们此前报告的两个短板：</p>'),
+    ('<p>The one real structural finding: <b>a single monotone volume feature\ngeneralises to unseen indenter shapes better than the five-feature model</b>,\nwhile five features stay better once the shape is calibrated. On Mini CNC 2026\nleave-one-indenter-out — the model never sees the held-out shape — this repairs\nexactly the two weak spots we reported earlier:</p>',
+     '<p>唯一真正的结构性发现：<b>单一单调的体积特征在未见过的压头形状上比五特征模型\n泛化得更好</b>，而一旦该形状已被标定，五特征仍然更优。在 Mini CNC 2026 留一压头交叉验证中\n（模型从未见过被留出的形状），这恰好修复了我们此前报告的两个短板：</p>'),
     ('<tr><th>held-out indenter</th><th>5-feature &rho;</th><th>volume-only &rho;</th></tr>',
      '<tr><th>留出的压头</th><th>五特征 &rho;</th><th>仅体积 &rho;</th></tr>'),
     ('<p class="footnote">Every held-out indenter now lands at &rho; &ge; 0.986\n<i>without the model ever seeing that shape</i> — a stronger claim than the\nper-indenter calibrated numbers on the results page, which are fitted within\neach family. The cost is absolute newtons: five features still win MAE when\nthe shape is known (Sparsh cross-pad 0.0372 vs 0.0443 N), so the rule is\nvolume-only for unseen shapes, five features once calibrated. A learned\n<i>g</i> inside the physics law collapses entirely (&rho; &minus;0.249):\nisotonic clips monotonically outside the training range, a network\nextrapolates freely.</p>',
@@ -457,8 +457,8 @@ ZH = [
      '<h2>验证(LUT-v2 管线)</h2>'),
     ('<a class="pill" href="results.html">↖ results matrix</a>\n<a class="pill" href="index.html">overview</a>',
      '<a class="pill" href="results_zh.html">↖ 评测结果</a>\n<a class="pill" href="index.html">总览(英文)</a>'),
-    ('<p style="margin-top:0">The LUT-v2 pipeline is validated on <b>four force-labeled\ndatasets</b> (FEATS, FoTa cnc_Mini, GlowTact, Sparsh) and cross-checked against\ntwo neural estimators on identical frames — every predicted-vs-ground-truth\nscatter, per dataset, lives on the\n<a href="results.html"><b>results page</b></a>. Short version: physics\n0.77-0.99 everywhere (GlowTact 0.99, cnc_Mini in-view 0.95, Sparsh in-view\n0.97, FEATS 0.77), each reported beside a within-group label-shuffle control\nthat lands between &minus;0.00 and 0.26; each network 0.90+ in its own gel\ndomain and collapsing outside it.</p>',
-     '<p style="margin-top:0">LUT-v2 管线在<b>四个带力标注的数据集</b>(FEATS、FoTa cnc_Mini、GlowTact、Sparsh)上验证,并与两个神经网络估计器同帧对比——每个数据集的预测 vs 真值散点图都在<a href="results_zh.html"><b>评测结果页</b></a>。一句话版:物理方法在所有域 0.77–0.99(GlowTact 0.99、cnc_Mini 视野内 0.95、Sparsh 视野内 0.97、FEATS 0.77),每个数字旁边都给出组内标签打乱对照(落在 &minus;0.00 到 0.26 之间);每个网络在自己的 gel 域 0.90+,出域即塌。</p>'),
+    ('<p style="margin-top:0">The LUT-v2 pipeline is validated on <b>four force-labeled\ndatasets</b> (FEATS, FoTa cnc_Mini, Mini CNC 2026, Sparsh) and cross-checked against\ntwo neural estimators on identical frames — every predicted-vs-ground-truth\nscatter, per dataset, lives on the\n<a href="results.html"><b>results page</b></a>. Short version: physics\n0.77-0.99 everywhere (Mini CNC 2026 0.99, cnc_Mini in-view 0.95, Sparsh in-view\n0.97, FEATS 0.77), each reported beside a within-group label-shuffle control\nthat lands between &minus;0.00 and 0.26; each network 0.90+ in its own gel\ndomain and collapsing outside it.</p>',
+     '<p style="margin-top:0">LUT-v2 管线在<b>四个带力标注的数据集</b>(FEATS、FoTa cnc_Mini、Mini CNC 2026、Sparsh)上验证,并与两个神经网络估计器同帧对比——每个数据集的预测 vs 真值散点图都在<a href="results_zh.html"><b>评测结果页</b></a>。一句话版:物理方法在所有域 0.77–0.99(Mini CNC 2026 0.99、cnc_Mini 视野内 0.95、Sparsh 视野内 0.97、FEATS 0.77),每个数字旁边都给出组内标签打乱对照(落在 &minus;0.00 到 0.26 之间);每个网络在自己的 gel 域 0.90+,出域即塌。</p>'),
     ('<html lang="en">',
      '<html lang="zh-CN">'),
     ('<title>Method in One Page — React Force Recovery</title>',
@@ -501,8 +501,8 @@ ZH = [
      '<p>后处理:只在 <i>fresh</i> 触觉帧上做 3 点中值(逐行滤波会把重复行里的坏值数三次)。\n单帧尖峰从 4–8% 降到 ≈0。</p>'),
     ('<h2>Per-dataset calibration</h2>',
      '<h2>逐数据集标定</h2>'),
-    ('<p style="margin-top:0">Worth stating plainly, because it bounds what those ρ\nmean: <b>the pipeline holds no hardness or elastic-modulus constant anywhere</b>.\nNothing in the code knows a gel\'s Shore hardness or Young\'s modulus. Stiffness\nenters only implicitly — absorbed into the per-group least-squares weights and\nthe isotonic calibration stacked on them — and those are refit <b>per dataset\nand per indenter/probe group</b>: every cnc_Mini probe, every GlowTact indenter\nfamily, every FEATS capture group gets its own fit, half the group fitting and\nhalf held out.</p>',
-     '<p style="margin-top:0">这一点值得直说,因为它界定了上面那些 ρ 的含义:<b>管线里没有任何硬度或弹性模量常数</b>。代码不知道任何 gel 的邵氏硬度或杨氏模量。刚度只是隐式进入——被逐组最小二乘的权重、以及叠在其上的保序(isotonic)标定吸收掉了——而这些都是<b>逐数据集、逐压头/探头组</b>重新拟合的:每个 cnc_Mini 探头、每个 GlowTact 压头族、每个 FEATS 采集组各自拟合,组内一半拟合、一半留出。</p>'),
+    ('<p style="margin-top:0">Worth stating plainly, because it bounds what those ρ\nmean: <b>the pipeline holds no hardness or elastic-modulus constant anywhere</b>.\nNothing in the code knows a gel\'s Shore hardness or Young\'s modulus. Stiffness\nenters only implicitly — absorbed into the per-group least-squares weights and\nthe isotonic calibration stacked on them — and those are refit <b>per dataset\nand per indenter/probe group</b>: every cnc_Mini probe, every Mini CNC 2026 indenter\nfamily, every FEATS capture group gets its own fit, half the group fitting and\nhalf held out.</p>',
+     '<p style="margin-top:0">这一点值得直说,因为它界定了上面那些 ρ 的含义:<b>管线里没有任何硬度或弹性模量常数</b>。代码不知道任何 gel 的邵氏硬度或杨氏模量。刚度只是隐式进入——被逐组最小二乘的权重、以及叠在其上的保序(isotonic)标定吸收掉了——而这些都是<b>逐数据集、逐压头/探头组</b>重新拟合的:每个 cnc_Mini 探头、每个 Mini CNC 2026 压头族、每个 FEATS 采集组各自拟合,组内一半拟合、一半留出。</p>'),
     ('<p>The only physical constants shared across datasets are the sphere-calibrated\nRGB lookup table and <code>MM_PER_PIXEL</code>. Everything downstream of depth\nis refit. The reported ρ are therefore <b>per-group rank correlations</b> —\nevidence that the geometry recovered from the image is monotone in force\n<i>within</i> a group. They do <b>not</b> demonstrate a transferable\nabsolute-newton model across gels; the one pooled multi-object fit we tried was\nmuch worse (ρ 0.47), which is why the sphere, with known geometry, is the\ncalibration object.</p>',
      '<p>跨数据集共享的物理常数只有两个:球面标定出的 RGB 查找表,以及 <code>MM_PER_PIXEL</code>。深度之后的一切都会重新拟合。因此报告的 ρ 是<b>逐组的秩相关</b>——它说明从图像恢复的几何在组<i>内</i>与力单调相关,但<b>不</b>说明存在一个可跨 gel 迁移的绝对牛顿值模型;我们唯一试过的多物体混合拟合差得多(ρ 0.47),这正是选用几何已知的球体作标定物的原因。</p>'),
     ('<p>The reconstruction underneath is not the noise source it appears to be, and\nthat is measured, not assumed: high-frequency content in the <b>depth</b> field\nis <b>0.3%</b> of peak depth (6.5 µm on a 1.9 mm press), while in the\n<b>gradient</b> field it is <b>22.2%</b> — LUT bin quantisation, with 9.8% of\ncontact pixels landing in bins the sphere calibration never observed\n(nearest-filled). Poisson integration is a low-pass, so the LUT noise is gone\nby the time depth exists; the speckle visible in gradient-domain debug panels\nnever reaches the force features.</p>',

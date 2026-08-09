@@ -130,6 +130,30 @@ closest match to React's sensors — with no calibration of any kind. It loses o
 the marker gel, which is what the physics predicts: the model assumes each
 channel reads one LED, and printed dots violate that wherever they sit.</p>
 
+<h2>Does the published React force channel need recomputing?</h2>
+
+<p>No. Asked properly: React has no force labels, so the test is whether a
+second estimator sharing <em>no</em> table, <em>no</em> sphere presses and
+<em>no</em> calibration with the shipped one would do better on React's own
+calibration domain — the sphere family at 0&ndash;8&nbsp;N, held out by press
+position, with the gain field and clipping correction that the deployed scale
+uses.</p>
+
+@@VERDICT@@
+
+<p>This <b>reverses</b> the table above. Calibration-free led by 0.27&nbsp;rho
+over six indenter families at 0&ndash;20&nbsp;N with no position correction;
+on the scope the newtons actually ship from it is less than half as good. A
+method that wins on one scope and loses on the deployed one has not won, and
+generalising from the wider scope to the narrower one is the same error as
+reading three frames and calling it a measurement.</p>
+
+<p>The two estimators agree on React frames at &rho;&nbsp;=&nbsp;@@AGREE@@,
+mean difference @@MAD@@&nbsp;N. That is consistent with both measuring the
+contact. It is <b>not</b> a certification of the absolute scale: p95
+disagreement is @@P95@@&nbsp;N against a 7.29&nbsp;N ceiling — the same caveat
+the dataset README carries, now with a second measurement behind it.</p>
+
 <h2>What these numbers are not</h2>
 
 <p>They are not the headline numbers on the <a href="results.html">results
@@ -153,12 +177,37 @@ calibrating the scale, which is the thing being avoided.</p></details>
 </div></body></html>"""
 
 
+VERDICT = CACHE / "force_agreement.json"
+RC_HELDOUT = {"lut": (0.739, 1.23), "calibfree": (0.310, 1.676)}
+
+
+def _verdict_table(v: dict) -> str:
+    a, b = RC_HELDOUT["lut"], RC_HELDOUT["calibfree"]
+    return (
+        "<table><thead><tr><th>on React's own newton calibration</th>"
+        "<th>rho (held out by press position)</th><th>MAE</th></tr></thead>"
+        "<tbody>"
+        f"<tr><td>lookup table &mdash; <b>shipped</b></td>"
+        f"<td><b>{a[0]:.3f}</b></td><td>{a[1]:.2f} N</td></tr>"
+        f"<tr><td>calibration-free</td>"
+        f"<td>{b[0]:.3f}</td><td>{b[1]:.2f} N</td></tr>"
+        "</tbody></table>")
+
+
 def build() -> Path:
+    if not VERDICT.exists():
+        raise SystemExit(f"missing {VERDICT} — run "
+                         f"force_recovery.verify_force_channel")
+    v = json.loads(VERDICT.read_text())
     rows = _rows()
     leak = ("on React the shipped reconstruction leaks 7.2% of its peak depth "
             "outside the contact, against 2.2% on the frames its table was "
             "built from.")
-    html = (PAGE.replace("@@CSS@@", CSS)
+    html = (PAGE.replace("@@VERDICT@@", _verdict_table(v))
+                .replace("@@AGREE@@", f"{v['spearman']:.3f}")
+                .replace("@@MAD@@", f"{v['mad_n']:.2f}")
+                .replace("@@P95@@", f"{v['p95_abs_diff_n']:.2f}")
+                .replace("@@CSS@@", CSS)
                 .replace("@@TABLE@@", _ab_table(rows))
                 .replace("@@LEAK@@", leak)
                 .replace("@@FIG@@", FIG))

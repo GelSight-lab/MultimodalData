@@ -94,7 +94,7 @@ def dataset_figures() -> dict:
                  "near-domain (markerless)"),
             ]},
         "glowtact": {
-            "title": "Markerless gel (GlowTact, 0-20 N): supervision buys the "
+            "title": "Markerless gel (Mini CNC 2026, 0-20 N): supervision buys the "
                      "object-dependent gain physics cannot know",
             "panels": [
                 ("Ours (physics)", _load_ours_glowtact, ORANGE, "transfer"),
@@ -415,7 +415,7 @@ model instead — it <b>loses</b> 0.037 ρ, which is why it did not ship there.<
 <p class="footnote">A within-group shuffle is the right control here, not a
 global one: on FeelAnyForce the pooled ρ survived <i>global</i> shuffling at
 0.442 vs 0.455, which is how we caught that its frame join had never been
-demonstrated. Reading the table: cnc and GlowTact sit ~0.9 above their
+demonstrated. Reading the table: cnc and Mini CNC 2026 sit ~0.9 above their
 controls; FEATS sits 0.78 above a control that is flat at 0.00.</p>
 
 <h3 style="margin-bottom:6px">FeelAnyForce, recovered</h3>
@@ -491,7 +491,7 @@ SEC_FORCE_ZH = r'''<h2>每个数字都配上足以否定它的对照</h2>
 只是把 marker 修补后的特征喂给力模型——ρ <b>下降</b> 0.037，这就是它没有进入力路径的原因。</p>
 <p class="footnote">这里正确的对照是组内打乱，而不是全局打乱：在 FeelAnyForce 上，
 混合后的 ρ 在<i>全局</i>打乱下仍有 0.442（对比 0.455），我们正是这样发现它的帧对齐从未被验证。
-读表方式：cnc 与 GlowTact 高出各自对照约 0.9；FEATS 高出 0.78，而它的对照平在 0.00。</p>
+读表方式：cnc 与 Mini CNC 2026 高出各自对照约 0.9；FEATS 高出 0.78，而它的对照平在 0.00。</p>
 
 <h3 style="margin-bottom:6px">FeelAnyForce：已恢复</h3>
 <p class="footnote" style="margin-top:0">此前排除它，是因为帧&harr;标签的对齐无法被证实。
@@ -550,7 +550,7 @@ GelSight Wedge's Fig. 10 hole interpolation) removes it: lattice power at the
 120 frames above 1 N, Wilcoxon p = 2.6e-19. The detector is marker-specific,
 not a blob finder — 63/63 dots and 0 rejects on this reference, stable for
 every threshold from 3 to 16 grey levels, and exactly <b>0</b> blobs on the
-markerless GlowTact and cnc references, where the step is a bit-exact no-op.</p>
+markerless Mini CNC 2026 and cnc references, where the step is a bit-exact no-op.</p>
 <p class="footnote">Two things it does <b>not</b> do. It does not help force:
 on identical frames and splits ρ goes 0.7747 → 0.7371 and every paired median
 delta is negative, so the force features still come from the untouched
@@ -573,7 +573,7 @@ SEC_MARKER_ZH = r'''<h3>去掉 marker 点：几何上的胜利，不是力上的
 Wedge 图 10 中孔洞插值的图像域版本），凹坑就消失了：31.9 px 点距对应频率上的功率从
 <b>1.523 降到 0.890</b>（×0.65），在 1 N 以上的 120 帧中有 <b>91%</b> 变低，
 Wilcoxon p = 2.6e-19。检测器是 marker 专用的，不是通用斑点检测器——在该参考帧上 63/63 个点、
-0 个误检，阈值从 3 到 16 灰阶都稳定；而在无 marker 的 GlowTact 与 cnc 参考帧上恰好检出
+0 个误检，阈值从 3 到 16 灰阶都稳定；而在无 marker 的 Mini CNC 2026 与 cnc 参考帧上恰好检出
 <b>0</b> 个，此时该步骤是逐比特的空操作。</p>
 <p class="footnote">它<b>做不到</b>两件事。第一，它对力没有帮助：在相同帧、相同划分下
 ρ 从 0.7747 降到 0.7371，且每个配对中位差都是负的，所以力特征仍然来自未改动的管线。
@@ -769,7 +769,7 @@ each row, and differences between panels are differences between methods.</p>
 <td class="best">@@N_FEATS@@ · in-domain</td><td class="dead">@@A_FEATS@@</td></tr>
 <tr><td>FoTa cnc_Mini (markerless)</td><td>@@O_CNC@@ (in view)</td>
 <td class="dead">@@N_CNC@@</td><td class="best">@@A_CNC@@</td></tr>
-<tr><td>GlowTact (markerless)</td><td>@@O_GLOW@@</td>
+<tr><td>Mini CNC 2026 (markerless)</td><td>@@O_GLOW@@</td>
 <td class="dead">@@N_GLOW@@</td><td class="best">@@A_GLOW@@</td></tr>
 <tr><td>Sparsh / Meta (markerless, 10 gel pads)</td>
 <td>@@O_SPARSH@@ (in view, self-calibrated table)</td>
@@ -803,8 +803,8 @@ near the pad border — the press grid is larger than the field of view (see
 <a href="debug_pipeline.html">pipeline debug</a>). Strictly in view our ρ is
 @@O_CNC@@ (MAE @@M_CNC@@ N); FeelAnyForce reaches 0.92 non-edge.</p></div>
 
-<h2>GlowTact — markerless gel, cleaned</h2>
-<div class="card"><img src="assets/results_glowtact.png" alt="GlowTact panels">
+<h2>Mini CNC 2026 — markerless gel, cleaned</h2>
+<div class="card"><img src="assets/results_glowtact.png" alt="Mini CNC 2026 panels">
 <p class="footnote">Friendliest ground truth (centred presses, 10 free frames,
 0–20 N). Per-indenter, calibrated within each family under the physical scope
 (contact fully in view, gel not bottomed out), ρ is 0.975–0.992 across all six
@@ -815,7 +815,7 @@ scale — see <a href="method.html">per-dataset calibration</a>.</p></div>
 <h2>Sparsh (Meta) — a fourth dataset, and where the method breaks</h2>
 <div class="card"><img src="assets/results_sparsh.png" alt="Sparsh results">
 <p class="footnote">10 gel pads (6 sphere, 2 flat, 2 sharp), force in newtons.
-Our GlowTact table applied to this foreign sensor reaches &rho;=0.878 on
+Our Mini CNC 2026 table applied to this foreign sensor reaches &rho;=0.878 on
 in-view frames. Rebuilding the table from <b>Sparsh's own sphere presses</b>
 — 708 frames, radius fitted at R=2.44 mm from a&sup2;=d(2R&minus;d) — takes it
 to <b>&rho;=0.968, MAE 0.042 N</b>, against a labels-shuffled-within-pad
@@ -829,7 +829,7 @@ analytic spherical cap (residual RMS 0.179 &rarr; <b>0.0545 mm</b>). Measured
 before any integration, the LUT gradient sits <b>93.3&deg;</b> from the analytic
 sphere gradient — chance is 90&deg; — and self-calibration brings it to
 <b>4.5&deg;</b> (within 30&deg;: 15% &rarr; 99%). Reverse control: the Sparsh
-table fails on GlowTact frames too, so this is a per-sensor property, not a
+table fails on Mini CNC 2026 frames too, so this is a per-sensor property, not a
 bad table.</p>
 <p class="footnote"><b>What this costs and where it still fails.</b> The price
 is one set of sphere presses with logged depth on the target sensor: this is
@@ -882,8 +882,8 @@ Tactile MNIST (TUDa-RL) · Sparsh (facebook/gelsight-force-estimation)</footer>
 ZH = [
     ('<h2>Sparsh (Meta) — a fourth dataset, and where the method breaks</h2>',
      '<h2>Sparsh (Meta) — 第四个数据集，以及方法的边界</h2>'),
-    ('<p class="footnote">10 gel pads (6 sphere, 2 flat, 2 sharp), force in newtons.\nOur GlowTact table applied to this foreign sensor reaches &rho;=0.878 on\nin-view frames. Rebuilding the table from <b>Sparsh\'s own sphere presses</b>\n— 708 frames, radius fitted at R=2.44 mm from a&sup2;=d(2R&minus;d) — takes it\nto <b>&rho;=0.968, MAE 0.042 N</b>, against a labels-shuffled-within-pad\ncontrol of 0.23. Fitting on one pad and applying it <b>unchanged</b> to another\ncosts nothing measurable (0.96&ndash;0.98 everywhere): one table, six gel pads.</p>\n<img src="assets/sparsh_dome.png" alt="dome before and after">\n<p class="footnote">Why the table matters more than the fit: with the wrong\nsensor\'s table a sphere press integrates to a <b>bilobed shape with a central\ndip</b>; with the self-calibrated table it is a single dome matching the\nanalytic spherical cap (residual RMS 0.179 &rarr; <b>0.0545 mm</b>). Measured\nbefore any integration, the LUT gradient sits <b>93.3&deg;</b> from the analytic\nsphere gradient — chance is 90&deg; — and self-calibration brings it to\n<b>4.5&deg;</b> (within 30&deg;: 15% &rarr; 99%). Reverse control: the Sparsh\ntable fails on GlowTact frames too, so this is a per-sensor property, not a\nbad table.</p>',
-     '<p class="footnote">10 块 gel pad（6 球、2 平、2 尖），力为牛顿。我们用 GlowTact\n标定的表应用到这个外来传感器，视野内 &rho;=0.878。改用 <b>Sparsh 自己的球压帧</b>\n重建查找表（708 帧，由 a&sup2;=d(2R&minus;d) 拟合出 R=2.44 mm）后达到\n<b>&rho;=0.968，MAE 0.042 N</b>，对照组（pad 内打乱标签）为 0.23。\n在一块 pad 上拟合后<b>原样</b>应用到另一块没有可测代价（各处 0.96&ndash;0.98）：\n一张表，六块 gel pad。</p>\n<img src="assets/sparsh_dome.png" alt="重建前后对比">\n<p class="footnote">为什么"表"比"拟合"更关键：用错传感器的表，球压积分出的是\n<b>双瓣+中心凹陷</b>；用自标定的表则是与解析球冠吻合的单一圆顶\n（残差 RMS 0.179 &rarr; <b>0.0545 mm</b>）。在任何积分之前测量：LUT 梯度与解析球面\n梯度夹角为 <b>93.3&deg;</b>（随机水平是 90&deg;），自标定后降到 <b>4.5&deg;</b>\n（30&deg; 以内占比 15% &rarr; 99%）。反向对照：Sparsh 的表在 GlowTact 帧上同样失败，\n所以这是逐传感器属性，而非"我们的表不好"。</p>'),
+    ('<p class="footnote">10 gel pads (6 sphere, 2 flat, 2 sharp), force in newtons.\nOur Mini CNC 2026 table applied to this foreign sensor reaches &rho;=0.878 on\nin-view frames. Rebuilding the table from <b>Sparsh\'s own sphere presses</b>\n— 708 frames, radius fitted at R=2.44 mm from a&sup2;=d(2R&minus;d) — takes it\nto <b>&rho;=0.968, MAE 0.042 N</b>, against a labels-shuffled-within-pad\ncontrol of 0.23. Fitting on one pad and applying it <b>unchanged</b> to another\ncosts nothing measurable (0.96&ndash;0.98 everywhere): one table, six gel pads.</p>\n<img src="assets/sparsh_dome.png" alt="dome before and after">\n<p class="footnote">Why the table matters more than the fit: with the wrong\nsensor\'s table a sphere press integrates to a <b>bilobed shape with a central\ndip</b>; with the self-calibrated table it is a single dome matching the\nanalytic spherical cap (residual RMS 0.179 &rarr; <b>0.0545 mm</b>). Measured\nbefore any integration, the LUT gradient sits <b>93.3&deg;</b> from the analytic\nsphere gradient — chance is 90&deg; — and self-calibration brings it to\n<b>4.5&deg;</b> (within 30&deg;: 15% &rarr; 99%). Reverse control: the Sparsh\ntable fails on Mini CNC 2026 frames too, so this is a per-sensor property, not a\nbad table.</p>',
+     '<p class="footnote">10 块 gel pad（6 球、2 平、2 尖），力为牛顿。我们用 Mini CNC 2026\n标定的表应用到这个外来传感器，视野内 &rho;=0.878。改用 <b>Sparsh 自己的球压帧</b>\n重建查找表（708 帧，由 a&sup2;=d(2R&minus;d) 拟合出 R=2.44 mm）后达到\n<b>&rho;=0.968，MAE 0.042 N</b>，对照组（pad 内打乱标签）为 0.23。\n在一块 pad 上拟合后<b>原样</b>应用到另一块没有可测代价（各处 0.96&ndash;0.98）：\n一张表，六块 gel pad。</p>\n<img src="assets/sparsh_dome.png" alt="重建前后对比">\n<p class="footnote">为什么"表"比"拟合"更关键：用错传感器的表，球压积分出的是\n<b>双瓣+中心凹陷</b>；用自标定的表则是与解析球冠吻合的单一圆顶\n（残差 RMS 0.179 &rarr; <b>0.0545 mm</b>）。在任何积分之前测量：LUT 梯度与解析球面\n梯度夹角为 <b>93.3&deg;</b>（随机水平是 90&deg;），自标定后降到 <b>4.5&deg;</b>\n（30&deg; 以内占比 15% &rarr; 99%）。反向对照：Sparsh 的表在 Mini CNC 2026 帧上同样失败，\n所以这是逐传感器属性，而非"我们的表不好"。</p>'),
     ('<p class="footnote"><b>What this costs and where it still fails.</b> The price\nis one set of sphere presses with logged depth on the target sensor: this is\n<b>calibrate once per sensor</b>, not zero-shot. Rank order transfers across\nindenter shapes but <i>absolute newtons do not</i> — a sphere-fitted model\napplied to a flat punch degrades to MAE 0.37&ndash;0.40 N, and it got\n<i>worse</i> with the correct table, because true geometry widens the real\nfeature-scale gap between a sphere and a punch. The sharp indenter is\nunsupported (in-view &rho; 0.58). Shear stays out of reach by construction —\nthe top shear decile keeps 1.6&times; the residual whichever table is used.\nFrames are restricted to a visible contact disc: 36% of presses show none and\n11% are clipped, and the clipped subset carries the <i>highest</i> median force\nyet scores worse, so this is visibility, not force-range filtering. Three\ndataset defects had to be fixed first: flat/sharp trajectories ship 5 more\nframe indices than forces (silently drifting the labels, &rho;&asymp;0 until\npaired within each trajectory), sharp/batch_2 is stored BGR while the other\nnine are RGB, and flat/batch_2 ships only 3 of 4 image files.</p>',
      '<p class="footnote"><b>代价与仍然失败之处。</b>代价是在目标传感器上采一组带深度记录的\n球压：这是<b>每个传感器标定一次</b>，不是零样本。秩序可以跨压头形状迁移，但\n<i>绝对牛顿不行</i>——球拟合的模型用到平头上 MAE 退化到 0.37&ndash;0.40 N，而且\n用正确的表反而<i>更差</i>，因为真实几何拉大了球与平头之间本就存在的特征尺度差异。\n尖头不受支持（视野内 &rho; 0.58）。剪切在结构上无法覆盖——无论用哪张表，\n剪切最高十分位的残差都保持 1.6 倍。帧被限制为接触圆盘可见：36% 的按压检测不到圆盘、\n11% 被裁切，而被裁切子集的力中位数<i>最高</i>却得分更差，说明这是可见性问题而非力程筛选。\n另外还先修了三个数据集缺陷：flat/sharp 的轨迹里帧索引比力多 5 个（标签会静默错位，\n逐轨迹配对前 &rho;&asymp;0）、sharp/batch_2 以 BGR 存储而其余九个是 RGB、\nflat/batch_2 只有 3 个图像文件。</p>'),
     ("Pipeline debug page</b></a>: raw\nimage &rarr; force step by step on all three datasets, and the cnc\nfield-of-view ablation (in-view &rho;=@@O_CNC@@).",
@@ -917,7 +917,7 @@ each row, and differences between panels are differences between methods.</p>"""
     ("<td>FoTa cnc_Mini (markerless)</td>",
      "<td>FoTa cnc_Mini(无点)</td>"),
     ("(in view)</td>", "(视野内)</td>"),
-    ("<td>GlowTact (markerless)</td>", "<td>GlowTact(无点)</td>"),
+    ("<td>Mini CNC 2026 (markerless)</td>", "<td>Mini CNC 2026(无点)</td>"),
     ("""<p>The pattern is narrower than we first wrote it. <b>FEATS collapses outside
 its own gel domain</b> (0.96 → 0.04–0.07), and the physics pipeline does work on
 every dataset here (@@RANGE@@) without ever seeing training data. But
@@ -948,7 +948,7 @@ near the pad border — the press grid is larger than the field of view (see
 @@O_CNC@@ (MAE @@M_CNC@@ N); FeelAnyForce reaches 0.92 non-edge.</p>""",
      """<p class="footnote">条件苛刻:只有 4 帧无接触,62% 的按压贴边。我们严格视野内 ρ=@@O_CNC@@(MAE @@M_CNC@@ N,见管线调试页);
 FeelAnyForce 非边缘达 0.92。</p>"""),
-    ("<h2>GlowTact — markerless gel, cleaned</h2>", "<h2>GlowTact——无点 gel,清洗过</h2>"),
+    ("<h2>Mini CNC 2026 — markerless gel, cleaned</h2>", "<h2>Mini CNC 2026——无点 gel,清洗过</h2>"),
     ("""<p class="footnote">Friendliest ground truth (centred presses, 10 free frames,
 0–20 N). Per-indenter, calibrated within each family under the physical scope
 (contact fully in view, gel not bottomed out), ρ is 0.975–0.992 across all six

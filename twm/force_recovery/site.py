@@ -109,7 +109,7 @@ def _force_row(key: str) -> dict:
 def build(m1: list[dict], m2: list[dict], assets: dict[str, str],
           ext: dict | None = None) -> Path:
     """assets: name -> relative path of copied figure/video files."""
-    fm = {k: _force_row(k) for k in ("GlowTact", "FoTa", "FEATS", "Sparsh")}
+    fm = {k: _force_row(k) for k in ("Mini CNC", "FoTa", "FEATS", "Sparsh")}
     m1_snr = [r["snr"] for r in m1]
     m1_rho = [r["spearman_vs_intensity"] for r in m1]
     inv_all = max(r["invariance_max_offset_m"] for r in m2)
@@ -213,8 +213,8 @@ details and the Taxim caveat on the
 <td>{fm['FEATS']['shuffle_rho']:+.2f}</td><td><b>0.96</b> in-domain</td><td>0.43</td></tr>
 <tr><td>FoTa cnc_Mini (markerless)</td><td>{fm['FoTa']['rho']:.2f} (in view)</td>
 <td>{fm['FoTa']['shuffle_rho']:+.2f}</td><td>0.07</td><td><b>0.83</b></td></tr>
-<tr><td>GlowTact (markerless)</td><td><b>{fm['GlowTact']['rho']:.2f}</b></td>
-<td>{fm['GlowTact']['shuffle_rho']:+.2f}</td><td>0.04</td><td>0.90</td></tr>
+<tr><td>Mini CNC 2026 (markerless)</td><td><b>{fm['Mini CNC']['rho']:.2f}</b></td>
+<td>{fm['Mini CNC']['shuffle_rho']:+.2f}</td><td>0.04</td><td>0.90</td></tr>
 <tr><td>Sparsh / Meta (markerless, 10 pads)</td>
 <td><b>{fm['Sparsh']['rho']:.2f}</b> *</td>
 <td>{fm['Sparsh']['shuffle_rho']:+.2f}</td>
@@ -229,7 +229,7 @@ force labels shuffled <i>within</i> each group. Predicted-vs-ground-truth
 scatters, per dataset, on the
 <a href="results.html"><b>results page</b></a>.</p>
 <p class="footnote" style="margin-bottom:0">* Sparsh is a <b>foreign sensor</b>.
-Our GlowTact table reaches 0.878 there; rebuilding the table from Sparsh's own
+Our Mini CNC 2026 table reaches 0.878 there; rebuilding the table from Sparsh's own
 sphere presses gives <b>0.968 (MAE 0.042 N)</b> and turns a bilobed
 reconstruction into a true dome. That is <b>calibrate once per sensor</b>, not
 zero-shot — and absolute newtons still do not transfer across indenter shapes.
