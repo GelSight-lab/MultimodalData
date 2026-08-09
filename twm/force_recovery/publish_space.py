@@ -5,7 +5,9 @@ from pathlib import Path
 
 from huggingface_hub import HfApi
 
-SITE = Path("/media/yxma/Disk1/twm/force_recovery/site")
+# The rebuilt five-page site. The twelve-page one is kept on disk at
+# ../site until this has been read in anger.
+SITE = Path("/media/yxma/Disk1/twm/force_recovery/site2")
 SPACE_ID = "yxma/react-force-recovery"
 
 
@@ -26,10 +28,9 @@ def check_fresh_and_labelled() -> list[str]:
     """
     import re
     src = Path(__file__).parent
-    gens = {"index.html": "site.py", "results.html": "results_page.py",
-            "results_zh.html": "results_page.py",
-            "method.html": "method_page.py", "method_zh.html": "method_page.py",
-            "reconstruction.html": "calibfree_page.py"}
+    gens = {n: "site2.py" for n in ("index.html", "method.html",
+                                   "results.html", "gallery.html",
+                                   "workbench.html")}
     bad = []
     for page, gen in gens.items():
         pg, gn = SITE / page, src / gen
