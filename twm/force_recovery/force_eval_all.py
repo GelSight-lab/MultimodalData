@@ -105,10 +105,10 @@ def _basis(x, y):
 
 
 # ------------------------------------------------------------------ datasets
-def ds_mini_cnc26() -> dict:
+def ds_mini_cnc26(cache: str = "lut_full.json") -> dict:
     """GelSight Mini CNC presses (2026): 6 indenter families, 0-20 N.
 
-    NAMING. This was called `ds_mini_cnc26` and its row read "GlowTact", which
+    NAMING. This was called `ds_glowtact` and its row read "GlowTact", which
     is wrong and was wrong everywhere it was published. The GlowTact release
     ships one press protocol recorded on TWO sensors; this is the **GelSight
     Mini** arm (manifest: controlled_source ".../GelSight_Mini_clean_final"),
@@ -123,7 +123,11 @@ def ds_mini_cnc26() -> dict:
     Scope is physical, not cherry-picked: contact fully inside the frame and
     the gel not bottomed out (z <= 4.2 mm).
     """
-    rows = json.loads((CACHE / "lut_full.json").read_text())
+    # `cache` selects the RECONSTRUCTION and nothing else. Both files carry
+    # the identical schema over the identical presses, so the gain field, the
+    # scope filter and the scoring below are byte-for-byte the same work —
+    # which is the only way the two rows on the results page are comparable.
+    rows = json.loads((CACHE / cache).read_text())
     rows = [r for r in rows if r["f"] > 0.15
             and np.isfinite(r.get("cx", np.nan))]
     a = lambda k: np.array([r[k] for r in rows])            # noqa: E731

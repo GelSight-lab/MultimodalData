@@ -135,6 +135,7 @@ tactile-estimated normal force, and DexForce-style force-informed action targets
 <span class="pill">dataset: yxma/React</span>
 <a class="pill" href="method.html" style="text-decoration:none;color:#ffd9a0;border:1px solid rgba(255,255,255,.3)">→ method design</a>
 <a class="pill" href="results.html" style="text-decoration:none;color:#ffd9a0;border:1px solid rgba(255,255,255,.3)">→ results matrix</a>
+<a class="pill" href="reconstruction.html" style="text-decoration:none;color:#ffd9a0;border:1px solid rgba(255,255,255,.3)">→ how force is estimated</a>
 <a class="pill" href="actions.html" style="text-decoration:none;color:#ffd9a0;border:1px solid rgba(255,255,255,.3)">→ action processing deep-dive</a>
 <a class="pill" href="recon_workbench.html" style="text-decoration:none;color:#ffd9a0;border:1px solid rgba(255,255,255,.3)">→ 3D reconstruction workbench</a></div>
 </div></header>
