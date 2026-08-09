@@ -177,6 +177,24 @@ def ds_feats(inpaint: bool = False) -> dict:
     show the cost of the step it did NOT adopt for force, on identical
     frames and identical splits.
 
+    WHAT THE COST ACTUALLY IS. "Inpainting is worse for force" is how this has
+    been summarised, and the per-group numbers say something sharper: every
+    group ties or improves, and only the POOLED number falls.
+
+        group      plain   inpainted
+        cuboid     0.852     0.858
+        sphere     0.629     0.666
+        unknown    0.794     0.799
+        ellipse    0.217     0.217
+        POOLED     0.775     0.737
+
+    So inpainting does not damage within-group ranking — it damages
+    cross-group comparability, shifting each group's predictions relative to
+    the others. That is still a reason to keep it out of the force path, since
+    force is pooled across groups, but it is a different reason from the one
+    the one-line summary implies, and a reader who adopts the step for a
+    single-object application should know it costs them nothing there.
+
     `debug_gallery.RNG` is module-level and every loader draws from it, so
     the frame sample depends on which datasets ran earlier in the process.
     Reseeding here makes this evaluation order-independent, makes the two
@@ -282,13 +300,18 @@ def main() -> dict:
     for name, fn in ROWS:
         print(f"== {name}", flush=True)
         out["datasets"][name] = fn()
-    print("\n-- marker-inpainted FEATS features (NOT adopted for force)",
+    # A CONTROL, not a fifth dataset — the same 186 FEATS frames and the same
+    # splits, differing only in whether the marker dots are inpainted before
+    # differencing. Read as a dataset row it looks like FEATS appears twice,
+    # which is how it was read. The label now says so.
+    print("\n-- control: the SAME FEATS frames with marker dots inpainted",
           flush=True)
-    out["datasets"]["FEATS (marker gel, dots inpainted — rejected for force)"] \
-        = ds_feats(inpaint=True)
+    out["datasets"]["  ↳ control: same frames, dots inpainted "
+                    "(depth path; not used for force)"] = ds_feats(inpaint=True)
 
     print(f"\n{'dataset':52s} {'n':>6s} {'rho':>7s} {'[min,max]':>15s} "
           f"{'MAE [N]':>9s} {'shuffle':>8s}")
+    # Rows beginning with the hook are controls paired to the row above them.
     for k, v in out["datasets"].items():
         print(f"{k:52s} {v['n_eval']:6d} {v['rho']:7.4f} "
               f"[{v['rho_min']:.3f},{v['rho_max']:.3f}]".ljust(85)

@@ -1004,8 +1004,20 @@ def force_table() -> str:
             "<th>within-group shuffle</th></tr>")
     body = ""
     for k, v in d.items():
-        cls = "dead" if "rejected" in k else "best"
-        body += (f"<tr><td>{k}</td><td>{v['n_eval']}</td>"
+        # A row starting with the hook is a CONTROL paired to the row above,
+        # not another dataset. Without the visual nesting the table reads as
+        # "FEATS appears twice", which is exactly how a reader read it — the
+        # explanatory paragraph sits BELOW the table, and a table is scanned
+        # before it is read.
+        ctrl = k.strip().startswith("↳") or "control" in k or "rejected" in k
+        cls = "dead" if ctrl else "best"
+        label = (f"<span style='opacity:.75'>{k.strip()}</span>" if ctrl
+                 else k)
+        tr = "<tr style=\"opacity:.8\">" if ctrl else "<tr>"
+        pad = 28 if ctrl else 0
+        body += (f"{tr}"
+                 f"<td style='padding-left:{pad}px'>{label}</td>"
+                 f"<td>{v['n_eval']}</td>"
                  f"<td class='{cls}'>"
                  f"<b>{v['rho']:.3f}</b></td>"
                  f"<td>{v['rho_min']:.3f}&ndash;{v['rho_max']:.3f}</td>"
