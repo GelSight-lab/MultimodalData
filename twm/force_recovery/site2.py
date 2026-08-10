@@ -29,7 +29,7 @@ CACHE = OUT_ROOT / "feature_cache"
 
 # Words of prose allowed per page, tags and code stripped. Enforced.
 WORD_BUDGET = {"index.html": 400, "method.html": 600, "results.html": 400,
-               "gallery.html": 150, "workbench.html": 250}
+               "sensors.html": 350, "gallery.html": 150, "workbench.html": 250}
 
 CSS = """
 :root{--bg:#0b1020;--fg:#e8eefb;--dim:#8ea0c2;--line:#1e2a45;--card:#111a2e;
@@ -85,11 +85,14 @@ padding:14px 16px;overflow-x:auto;font-size:var(--s1);max-width:100%}
 .tablewrap{overflow-x:auto;-webkit-overflow-scrolling:touch}
 .tablewrap table{min-width:640px}
 img{max-width:100%;height:auto}
+/* Subscripts default to a fraction of the parent and rendered at 11.7px —
+   off the --s0..--s5 scale the audit counts. Pinned to the smallest step. */
+sub,sup{font-size:var(--s0);line-height:0}
 """
 
 PAGES = [("index.html", "overview"), ("method.html", "method"),
-         ("results.html", "results"), ("gallery.html", "gallery"),
-         ("workbench.html", "3D workbench")]
+         ("results.html", "results"), ("sensors.html", "sensors"),
+         ("gallery.html", "gallery"), ("workbench.html", "3D workbench")]
 
 
 def _nav(current: str) -> str:
@@ -236,22 +239,8 @@ reconstruction can know. The last column is the two reconstructions agreeing
 with each other, which is evidence neither invents the shape — not that either
 is right.</p>
 
-<p><b>Sparsh was the row that mattered, and it is fixed.</b> Its two
-reconstructions disagreed at −0.13, against 0.69–0.83 everywhere else, and both
-rendered a round sphere press wrongly in orthogonal directions. Cause: its
-frames reach us with R and B exchanged, and the calibration-free solve reads
-each channel as one LED direction, so the swap rotates the whole gradient
-field. Measured, not guessed — for a sphere the gradient points radially out,
-so each channel's difference dipole IS that channel's LED azimuth, and swapped
-they land within 1° of ours.</p>
-
-<figure><img src="assets/sparsh_channel_fix.png" alt="Sparsh channel-order fix">
-<figcaption>Same frames before and after, at every stage. Sphere axis ratio
-3.62 → 1.53 (1.0 is a circle), agreement with the LUT −0.125 → +0.920,
-flat-gel leak 0.0272 → 0.0071. Force ρ barely moves — 0.909 → 0.894
-calibration-free — while the LUT gains 0.822 → 0.894. <b>A force number could
-not see a geometry this wrong</b>, which is the whole reason this stage is
-scored separately.</figcaption></figure>
+<p class="dim">One row needed a fix before it could be read at all — see
+<a href="sensors.html">sensors</a>.</p>
 
 {rows}
 
@@ -379,7 +368,57 @@ panel.</figcaption></figure>
     return _shell("workbench.html", "3D workbench", body)
 
 
+def page_sensors() -> str:
+    d = {r["dataset"]: r for r in _artifact("depth_eval.json")}
+    body = f"""
+<h1>A second sensor is not a second dataset</h1>
+<p>The calibration-free solve reads each <b>colour channel</b> as one LED
+direction — <code>dI<sub>k</sub>/I<sub>ref</sub> ≈ g<sub>x</sub>cos θ<sub>k</sub>
++ g<sub>y</sub>sin θ<sub>k</sub></code>. So a channel permutation does not tint
+an image, it <b>rotates the whole recovered gradient field</b>.</p>
+
+<p>Sparsh's frames reach us with R and B exchanged. It was found by scoring the
+depth stage on its own: its two reconstructions of the same contact correlated
+at <b>−0.13</b>, against 0.69–0.83 on every other dataset, and both rendered a
+round sphere press wrongly in orthogonal directions.</p>
+
+<h2>Measured, not searched</h2>
+<p>For a sphere the surface gradient points radially outward, so the dipole
+direction of each channel's difference <em>is</em> that channel's LED azimuth.
+Thirty sphere presses per sensor:</p>
+
+<div class="tablewrap"><table><thead><tr><th></th><th>rest hue</th>
+<th>R</th><th>G</th><th>B</th></tr></thead><tbody>
+<tr><td>our Mini</td><td>172.1°</td><td>259.2°</td><td>5.1°</td><td>51.1°</td></tr>
+<tr><td>Sparsh, as-is</td><td>42.1°</td><td>75.7°</td><td>4.3°</td><td>259.8°</td></tr>
+<tr><td>Sparsh, R↔B</td><td>197.9°</td><td><b>259.8°</b></td><td><b>4.3°</b></td><td>75.7°</td></tr>
+</tbody></table></div>
+<p class="dim">Swapped, R and G land within 1° of ours. A different gel tint
+cannot align LED azimuths; a channel-order difference does exactly that.</p>
+
+<figure><img src="assets/sparsh_channel_fix.png" alt="Sparsh channel fix">
+<figcaption>The same frames before and after, at every stage. Sphere axis ratio
+3.62&nbsp;→&nbsp;1.53 (1.0 is a circle), agreement with the LUT
+−0.125&nbsp;→&nbsp;+0.920, flat-gel leak 0.0272&nbsp;→&nbsp;0.0071. Across the
+dataset, agreement −0.082&nbsp;→&nbsp;{d['sparsh']['shape_agreement']:+.3f}.
+</figcaption></figure>
+
+<h2>Why the force numbers never showed it</h2>
+<p>Force ρ on Sparsh was <b>0.909 before</b> the fix and 0.894 after; the LUT
+gained 0.822&nbsp;→&nbsp;0.894. Contact size tracks force whatever the shape
+does, so a ρ cannot see a geometry this wrong. That is the argument for scoring
+image→depth separately from depth→newtons.</p>
+
+<p class="dim">A correction of ours: a six-permutation search first put Sparsh's
+best at (90,330,210) and that was written up as “LED wiring differs per
+sensor”. It is the same fact said uselessly — (90,330,210) is (210,330,90) with
+R and B exchanged. The azimuths never differed.</p>
+"""
+    return _shell("sensors.html", "Sensors", body)
+
+
 BUILDERS = {"index.html": page_index, "method.html": page_method,
+            "sensors.html": page_sensors,
             "results.html": page_results, "gallery.html": page_gallery,
             "workbench.html": page_workbench}
 
