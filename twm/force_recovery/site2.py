@@ -261,8 +261,10 @@ which is on the <a href="method.html">method</a> page.</p>
 <figure><img src="assets/pred_vs_gt.png" alt="predicted vs ground-truth force">
 <figcaption>Held-out prediction against ground truth on presses the sensor
 images whole, both reconstructions, shared axes per row. Each panel carries its
-within-group shuffle control — the same protocol with the force labels permuted
-inside each group, i.e. what the score reads when the features carry nothing.
+within-group shuffle control. That is an ABSOLUTE ρ, not a change in ρ: it is
+what this protocol scores when the force labels are permuted inside each group,
+i.e. when the features carry nothing. The margin ρ − shuffle is what the
+reconstruction is actually worth, and it is printed beside it.
 FeelAnyForce is absent because its control reads +0.63: with 42 captures the
 protocol reproduces the between-capture ordering whether or not the
 frame-to-force pairing survives, so a scatter of it would be convincing and

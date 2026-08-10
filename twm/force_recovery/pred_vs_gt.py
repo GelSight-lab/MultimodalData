@@ -9,12 +9,16 @@ half fit / half evaluate, a five-feature least squares is calibrated by
 isotonic regression on the fit half, and only the evaluate half is plotted.
 Seed 0 of the same five the tables report.
 
-Each panel carries its rho, its MAE, and its WITHIN-GROUP SHUFFLE control —
-the identical protocol with the force labels permuted inside each group. That
-control is what the panel is worth: it is the score the protocol returns when
-the features carry nothing, so a rho of 0.8 beside a shuffle of 0.6 is not a
-measurement of the reconstruction. FeelAnyForce is excluded here for exactly
-that reason (+0.63) and the exclusion is drawn, not omitted.
+Each panel carries its rho, its MAE, its WITHIN-GROUP SHUFFLE control and the
+MARGIN between them.
+
+The shuffle is an ABSOLUTE rho, not a change in rho. It is the score this
+protocol returns when the force labels are permuted inside each group — the
+features carrying nothing — and the first version of this figure printed it as
+"+0.226", which reads as an increase. It is a floor, and rho minus that floor
+is what the reconstruction is worth. FeelAnyForce is excluded because its
+floor is 0.82 against a rho of 0.95: a margin of 0.13, and a scatter that
+would look convincing.
 
     xvfb-run -a python -m force_recovery.pred_vs_gt [--per-group 40]
 """
@@ -92,7 +96,7 @@ def main() -> int:
     args = ap.parse_args()
 
     labels = [lbl for _, lbl in PLOT] + [lbl for _, lbl in ARMS]
-    use_cjk(labels + ["真值力", "预测力", "组内打乱对照", "帧", "组"])
+    use_cjk(labels + ["真值力", "预测力", "打乱标签后", "净额", "帧", "组"])
 
     data = {}
     for name, label in PLOT:
@@ -128,14 +132,22 @@ def main() -> int:
             if j == 0:
                 a.set_ylabel("预测力 [N]")
             a.set_title(f"{label}\n{arm_label}", fontsize=10)
+            # NOT "+0.226". The shuffle is an ABSOLUTE rho — the score this
+            # protocol returns when the labels are permuted within each group
+            # — and printing it with a leading + made it read as a change in
+            # rho, which is what a reader asked. Shown as a value, with the
+            # margin that is the thing actually being claimed.
             a.text(0.04, 0.96,
                    f"ρ = {d[arm]['rho']:.4f}\nMAE = {d[arm]['mae']:.3f} N\n"
-                   f"组内打乱对照 = {d[arm]['shuffle']:+.3f}\n"
+                   f"打乱标签后 ρ = {d[arm]['shuffle']:.3f}\n"
+                   f"净额 = {d[arm]['rho'] - d[arm]['shuffle']:.3f}\n"
                    f"n = {len(t)} 帧 / {d['groups']} 组",
                    transform=a.transAxes, va="top", fontsize=8.5,
                    bbox=dict(facecolor="white", alpha=0.75, edgecolor="none"))
     fig.suptitle("留出预测 vs 真值力 · 完整成像的按压 · 虚线为 y = x\n"
-                 "同一行共享坐标轴,两栏只差重建方法", fontsize=11)
+                 "同一行共享坐标轴,两栏只差重建方法 · "
+                 "「打乱标签后 ρ」是特征无信息时该协议自身的得分,净额才是重建的贡献",
+                 fontsize=10.5)
     OUT_PNG.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(OUT_PNG, dpi=110)
     plt.close(fig)
