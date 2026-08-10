@@ -258,15 +258,26 @@ stripped protocol with no position gain field, so its column is not comparable
 to the LUT's headline value — it is comparable to the LUT under the same strip,
 which is on the <a href="method.html">method</a> page.</p>
 
-<h2>Is the published React force channel sound?</h2>
-<p>React has no labels, so the test is whether a second estimator sharing no
-calibration does better on React's own calibration domain. It does not:
-0.739 against {ag.get('cf_heldout', 0.310):.3f} held out by press position. The
-two agree at ρ&nbsp;=&nbsp;{ag['spearman']:.3f} over {ag['n']:,} frames, mean
-difference {ag['mad_n']:.2f}&nbsp;N. That is consistent with both measuring
-contact and is not a certification of absolute scale — p95 disagreement is
-{ag['p95_abs_diff_n']:.2f}&nbsp;N against a 7.29&nbsp;N ceiling.</p>
-<p><b>No recompute.</b> The published newtons stand.</p>
+<figure><img src="assets/pred_vs_gt.png" alt="predicted vs ground-truth force">
+<figcaption>Held-out prediction against ground truth on presses the sensor
+images whole, both reconstructions, shared axes per row. Each panel carries its
+within-group shuffle control — the same protocol with the force labels permuted
+inside each group, i.e. what the score reads when the features carry nothing.
+FeelAnyForce is absent because its control reads +0.63: with 42 captures the
+protocol reproduces the between-capture ordering whether or not the
+frame-to-force pairing survives, so a scatter of it would be convincing and
+meaningless.</figcaption></figure>
+
+<h2>Which reconstruction should the React force channel use?</h2>
+<p>Calibration-free, decided on React's own calibration objects: held out by
+press position, ρ&nbsp;0.812 against the LUT's 0.763, MAE 1.024 against
+1.113&nbsp;N. Across the ground-truth datasets it leads on four of five; the
+one loss is FEATS, which is the marker gel React does not use.</p>
+<p>The two estimators agree at ρ&nbsp;=&nbsp;{ag['spearman']:.3f} over
+{ag['n']:,} React frames, mean difference {ag['mad_n']:.2f}&nbsp;N, p95
+{ag['p95_abs_diff_n']:.2f}&nbsp;N. <b>The published dataset still carries the
+LUT column</b> — switching it means re-running preprocessing over 36 episodes
+and republishing.</p>
 """
     return _shell("results.html", "Results", body)
 
@@ -321,6 +332,7 @@ ASSET_SOURCES = {
     "mnist_examples.png": (OUT_ROOT / "mnist_validation",
                            "force_recovery.mnist_validation figures"),
     "recon_compare.png": (ASSETS, "force_recovery.react_leak_figure"),
+    "pred_vs_gt.png": (ASSETS, "force_recovery.pred_vs_gt"),
 }
 # A figure drawn before the laws that draw it is a figure of the old laws.
 # These are the modules a reader is looking at when they look at a panel —
