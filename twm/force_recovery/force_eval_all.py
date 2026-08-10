@@ -77,6 +77,38 @@ def _one_seed(X, f, groups, seed, shuffle=False):
 def evaluate(X, f, groups, seeds=SEEDS) -> dict:
     """Pooled rho/MAE (median of `seeds`), per-group rho range, shuffle control.
 
+    THE FIT IS PER GROUP, THE SCORE IS POOLED
+    -----------------------------------------
+    `_one_seed` loops over groups and calls `_fit_apply` inside the loop, so
+    EVERY group gets its own least-squares weights and its own isotonic
+    calibration; the predictions are then pooled and one Spearman is taken
+    over the pool. The rationale is that different indenters have different
+    depth-to-force maps, so a shared model would be measuring shape transfer
+    rather than the reconstruction.
+
+    That choice can hide a cross-group failure, so it was checked against the
+    alternative — ONE model per dataset, still split half/half within each
+    group (calibration-free arm, presses imaged whole):
+
+        dataset        per group   pooled floor | one model   pooled floor
+        cnc_mini_26      0.9930       0.033     |  0.9911        0.156
+        FoTa cnc         0.9714      -0.015     |  0.9729        0.023
+        Sparsh           0.9284       0.226     |  0.9343        0.249
+        FEATS            0.5392      -0.116     |  0.5602       -0.070
+
+    Within 0.02 everywhere, and the single model is not worse — so the
+    per-group fit is not propping the numbers up; the features transfer across
+    indenters inside a dataset. Its floor is LOWER, though (0.033 vs 0.156 on
+    cnc_mini_26): a global fit on within-group-shuffled labels can still learn
+    the between-group part of the relation, which the per-group fit cannot.
+    That is why the per-group protocol is the one reported.
+
+    NOTE: this is the CROSS-DATASET comparison protocol, not the deployed
+    estimator. React's own force channel (`react_calib.fit`) is a SINGLE model
+    — one least squares plus one isotonic over the GlowTact `round` presses,
+    with a position gain field and a clipping correction — held out by press
+    position rather than by group.
+
     WHAT A POSITIVE SHUFFLE MEANS, MEASURED
     ---------------------------------------
     The shuffle permutes labels WITHIN each group, so the pairing dies but each
