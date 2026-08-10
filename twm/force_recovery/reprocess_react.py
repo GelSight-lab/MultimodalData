@@ -194,20 +194,32 @@ def cmd_promote() -> int:
     import shutil
 
     from .react_calib import CALIBRATION_NAME
+    from .run_episode import PIPELINE_VERSION
     jobs = episodes()
-    missing, wrong = [], []
+    missing, wrong, unversioned = [], [], []
     for task, date, ep, side in jobs:
         p = STAGING / task / date / f"{ep}_{side}.npz"
         if not p.exists():
             missing.append(f"{task}/{date}/{ep}/{side}")
             continue
-        got = str(np.load(p, allow_pickle=True)["force_calibration"])
+        d = np.load(p, allow_pickle=True)
+        got = str(d["force_calibration"])
         if got != CALIBRATION_NAME:
             wrong.append(f"{task}/{date}/{ep}/{side}: {got}")
-    if missing or wrong:
+        # The stamp, not just the calibration string. `export_force_columns`
+        # reads a MISSING pipeline_version as 0 and refuses anything below its
+        # minimum, so a staging run made before the stamp moved into
+        # `process_side` would promote 72 files that no exporter will touch —
+        # a release that looks complete and cannot be shipped. That happened;
+        # this check is why it cannot happen silently again.
+        ver = int(d["pipeline_version"]) if "pipeline_version" in d else 0
+        if ver != PIPELINE_VERSION:
+            unversioned.append(f"{task}/{date}/{ep}/{side}: version {ver}")
+    if missing or wrong or unversioned:
         print(f"refusing to promote: {len(missing)} missing, "
-              f"{len(wrong)} on a stale calibration")
-        for x in (missing + wrong)[:8]:
+              f"{len(wrong)} on a stale calibration, "
+              f"{len(unversioned)} not stamped v{PIPELINE_VERSION}")
+        for x in (missing + wrong + unversioned)[:8]:
             print(f"  {x}")
         return 1
     for task, date, ep, side in jobs:

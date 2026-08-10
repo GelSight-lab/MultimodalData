@@ -50,6 +50,22 @@ def _reference_rows(intensity: np.ndarray, is_new: np.ndarray,
     return np.array(sorted(picked))
 
 
+# Bump whenever the estimator OR its calibration changes; stale npz rerun.
+# v4: force comes from stages() + react_calib instead of the v1 MLP estimator
+#     times a single N-per-mm3 constant (that path scored rho 0.297 and mapped
+#     a true 0.16-8 N range onto 0.01-103 N).
+# v5: force comes from the calibration-free reconstruction.
+#
+# It lives HERE, with the function that writes the npz. It used to live in
+# `batch_worker`, which stamped it by re-reading and re-writing the whole
+# compressed file after `process_side` had already written it — so the stamp
+# was outside the writer, and `reprocess_react`, which calls `process_side`
+# directly, produced 72 files with no version at all. `export_force_columns`
+# reads a missing key as 0 and REFUSES anything below the minimum, so promoting
+# those would have made every episode unexportable.
+PIPELINE_VERSION = 5
+
+
 def process_side(task: str, date: str, ep: str, side: str, *,
                  out_dir=None,
                  keep_top_depths: int = 3) -> dict:
@@ -131,6 +147,7 @@ def process_side(task: str, date: str, ep: str, side: str, *,
         "reference_rows": ref_rows,
         "force_calibration": scale_source,
         "scale_source": scale_source,
+        "pipeline_version": np.int64(PIPELINE_VERSION),
     }
     # An explicit destination so a reprocess can be COMPARED against the
     # published npz before replacing it. Without this the only way to try a

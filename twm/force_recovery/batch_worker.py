@@ -16,11 +16,10 @@ import numpy as np
 
 from .run_episode import OUT_ROOT, STAGE_ROOT, process_side
 
-# Bump whenever the estimator OR its calibration changes; stale npz rerun.
-# v4: force comes from stages() + react_calib instead of the v1 MLP estimator
-#     times a single N-per-mm3 constant (that path scored rho 0.297 and mapped
-#     a true 0.16-8 N range onto 0.01-103 N).
-PIPELINE_VERSION = 4
+# Defined by the module that WRITES the npz, so a stamp cannot go missing
+# by writing one through a different entry point. Re-exported here because
+# `export_force_columns` has always imported it from this module.
+from .run_episode import PIPELINE_VERSION  # noqa: F401
 
 
 def all_episodes() -> list[tuple[str, str, str]]:
@@ -63,12 +62,8 @@ def main() -> int:
             t0 = time.time()
             try:
                 m = process_side(task, date, ep, side)
-                # stamp the pipeline version into the npz
-                p = Path(m["out"])
-                with np.load(p) as z:
-                    data = dict(z)
-                data["pipeline_version"] = np.int64(PIPELINE_VERSION)
-                np.savez_compressed(p, **data)
+                # `process_side` stamps the version itself now. This used to
+                # decompress and recompress the entire npz to insert one int.
                 print(f"[worker {worker}] {task}/{date}/{ep} {side}: "
                       f"max={m['force_max_n']:.2f}N "
                       f"thr={m['contact_threshold_mm']*1e3:.0f}um "
