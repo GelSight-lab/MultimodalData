@@ -54,38 +54,39 @@ observation = obs                      # where the sensor actually was
 assert np.array_equal(action[f == 0], observation[f == 0])
 ```
 
-That identity is not a claim — it is checked element-wise over all **301,727**
+That identity is not a claim — it is checked element-wise over all **294,653**
 free-space rows of the release, maximum deviation `0.0`, quaternions included.
 Nothing changes where nothing is touched, so a model trained on `target_pose`
 degenerates to the pose-only model in free space and differs only in contact.
 
 #### Choosing `k` — it is your controller's number, not ours
 
-`k = 1.0 N/mm` is a **declared assumption**, recorded in the parquet field
+`k = 2.0 N/mm` is a **declared assumption**, recorded in the parquet field
 metadata (`twm.stiffness_n_per_mm`) and in each `<episode>.force.json`, so a
-target pose is never uninterpretable. It is deliberately soft, and at that
-value the implied penetrations are larger than the gel is thick:
+target pose is never uninterpretable. It is not a measured property of your
+environment — but it is chosen so the shipped column is at least *physically
+possible*:
 
-| | penetration at `k = 1` | inside the 4.25 mm gel? |
+| | penetration at the shipped `k = 2.0` | inside the 4.25 mm gel? |
 |---|---|---|
-| p95 over all rows | 5.78 mm | no |
-| p95 over **contact** rows | 6.86 mm | no |
-| maximum | 7.285 N → 7.285 mm | no |
+| p95 over all rows | 3.65 mm | yes |
+| p95 over **contact** rows | 3.93 mm | yes |
+| maximum | 7.870 N → 3.935 mm | yes |
 
-**8.84%** of all rows exceed the gel thickness at `k = 1`. To keep penetration
-physically plausible you need a stiffer environment model:
+**0.00%** of rows exceed the gel thickness. This matters because a target
+displaced further past the surface than the gel can be compressed asks for a
+pose that cannot be reached by pressing. Earlier releases shipped `k = 1 N/mm`,
+where 14.98% of rows were in that state.
 
-* `k ≥ 1.37 N/mm` — p95 over all rows inside the gel. *This is the weakest of
-  the three and the least useful:* 62.8% of rows are free space, so a
-  percentile over all rows is mostly a percentile of zeros.
-* `k ≥ 1.62 N/mm` — p95 over **contact** rows inside the gel. Use this one.
-* `k ≥ 1.72 N/mm` — even the hardest press inside the gel.
+The binding constraint is `k ≥ 1.86 N/mm` — the hardest press (7.870 N) inside
+a 4.25 mm gel. Anything softer puts some rows outside it.
 
-Recompute rather than rescale the shipped column, since the direction matters:
+If your controller is stiffer, recompute rather than rescale, since the
+direction matters:
 
 ```python
-K = 1.62                                             # your controller's stiffness
-n_hat  = (tgt[:, :3] - obs[:, :3])                   # F/k · n̂ at the shipped k=1
+K = 4.0                                              # your controller's stiffness
+n_hat  = (tgt[:, :3] - obs[:, :3])                   # F/k · n̂ at the shipped k
 n_hat /= np.linalg.norm(n_hat, axis=1, keepdims=True) + 1e-12
 my_target = obs.copy()
 my_target[:, :3] = obs[:, :3] + (f / K)[:, None] * n_hat
@@ -94,13 +95,16 @@ my_target[:, :3] = obs[:, :3] + (f / K)[:, None] * n_hat
 #### Read this before using the numbers
 
 - **Accuracy is rank-order within a group, not a certified absolute scale.**
-  Held out by press position the estimator scores ρ = 0.739 / MAE 1.23 N on its
-  own calibration objects. On five public force-labelled datasets the same
-  pipeline reaches ρ 0.775–0.986. It is reliable for *how hard, relative to
+  Held out by press position the estimator scores ρ = 0.781 / MAE 1.07 N on its
+  own calibration objects — but that holdout is only 158 presses and a paired
+  bootstrap cannot separate it from the previous reconstruction (95% CI on the
+  difference [-0.081, +0.120]). The evidence that it is the better estimator is
+  external: on five public force-labelled datasets the same pipeline reaches
+  ρ 0.648–0.996 over 604–2,000 scored presses each. It is reliable for *how hard, relative to
   other frames*; it is not a load cell. Do not report absolute newtons from
   this dataset as ground truth.
-- **Forces saturate at 7.285 N.** The calibration's isotonic stage clips at the
-  hardest press it was fitted on, so 0.90% of samples sit exactly at that value.
+- **Forces saturate at 7.870 N.** The calibration's isotonic stage clips at the
+  hardest press it was fitted on, so 2.22% of samples sit exactly at that value.
   Treat the maximum as a floor, not a measurement, and consider masking rows at
   the ceiling out of a regression loss.
 - **Duplicate tactile rows repeat the previous estimate.** The GelSight stream

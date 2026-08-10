@@ -39,7 +39,11 @@ def _ceil2(x: float) -> str:
 def check_numbers(text: str) -> list[str]:
     """Every quoted statistic must match the verify artifact."""
     v = json.loads(VERIFY.read_text())
-    sweep = v["penetration_sweep"]["1.0"]
+    # The SHIPPED stiffness, not a hard-coded "1.0". Pinning the check to a
+    # literal k meant that when the shipped value moved to 2.0 the gate went on
+    # validating the README against a configuration the dataset no longer used
+    # — it would have passed a README describing the wrong column.
+    sweep = v["penetration_sweep"][str(v["stiffness_n_per_mm"])]
     want = {
         f"{sweep['p95_mm']:.2f} mm": "p95 penetration",
         f"{sweep['frac_over_gel']:.2%}": "fraction past the gel",
@@ -302,10 +306,9 @@ def main() -> int:
     HfApi().upload_file(
         path_or_fileobj=new.encode(), path_in_repo="README.md",
         repo_id=REPO, repo_type="dataset",
-        commit_message="README: document the estimated contact-force columns "
-                       "(force_*_normal_n / penetration_mm / target_pose), the "
-                       "1 N/mm stiffness assumption, and the limits — the data "
-                       "shipped without a word about it")
+        commit_message="README: force columns recomputed from the "
+                       "calibration-free reconstruction; stiffness raised to "
+                       "2 N/mm so no commanded target sits deeper than the gel")
     print("uploaded README.md")
     return 0
 

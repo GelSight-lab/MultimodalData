@@ -527,14 +527,20 @@ def verify(root: Path = EXPORT_ROOT) -> dict:
         # the nearest value inverts what it asserts.
         #
         # The p95 over ALL rows is a poor number to choose a stiffness from:
-        # 62.8% of rows are free space, so it is mostly a percentile of zeros.
-        # The contact-only figure is the one a user needs, and it is much
-        # larger — 6.86 mm against 5.78 mm.
+        # most rows are free space, so it is mostly a percentile of zeros. The
+        # contact-only figure is the one a user needs, and it is larger. The
+        # two values were quoted here as "6.86 mm against 5.78 mm" until the
+        # channel moved underneath them; `verify` prints both every run.
         "k_for_p95_within_gel": float(np.percentile(force, 95)
                                       / GEL_THICKNESS_MM),
         "k_for_contact_p95_within_gel": float(
             np.percentile(force[force > 0], 95) / GEL_THICKNESS_MM),
-        "contact_p95_penetration_mm": float(np.percentile(force[force > 0], 95)),
+        # In MILLIMETRES, i.e. divided by the shipped stiffness. This held
+        # `np.percentile(force, 95)` — newtons — and was only ever right
+        # because k was 1.0 N/mm and the two were numerically equal. The
+        # README quoted it as a penetration.
+        "contact_p95_penetration_mm": float(
+            np.percentile(force[force > 0], 95) / k),
         "contact_frac": float((force > 0).mean()),
         "k_for_max_within_gel": float(force.max() / GEL_THICKNESS_MM),
         # How much of the data sits ON the estimator's upper limit. The
@@ -565,7 +571,7 @@ def verify(root: Path = EXPORT_ROOT) -> dict:
                 "p95_mm": float(np.percentile(force, 95) / kk),
                 "max_mm": float(force.max() / kk),
                 "frac_over_gel": float((force / kk > GEL_THICKNESS_MM).mean()),
-            } for kk in (0.5, 1.0, 1.5, 3.0, 5.6, 15.4)},
+            } for kk in sorted({0.5, 1.0, 1.5, 3.0, 5.6, 15.4, k})},
     }
     (root / "force_export_verify.json").write_text(json.dumps(
         {**report, "per_side": ep_stats}, indent=2))
