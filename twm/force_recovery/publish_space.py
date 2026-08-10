@@ -52,7 +52,16 @@ def check_fresh_and_labelled() -> list[str]:
 
 
 def publish() -> str:
-    problems = check_fresh_and_labelled()
+    # BUILD, then refuse on any problem the build reports. `publish` used to
+    # only upload, which is the failure its own freshness check describes —
+    # and it just happened again in a subtler form: the word-budget gate fired
+    # (results.html 444/400), the pages were written to disk anyway, the
+    # freshness check saw them as newer than the generator, and the
+    # over-budget page shipped. A gate whose verdict is discarded is not a
+    # gate.
+    from .site2 import build
+    problems = build()
+    problems += check_fresh_and_labelled()
     if problems:
         raise SystemExit("refusing to publish:\n  " + "\n  ".join(problems))
     api = HfApi()

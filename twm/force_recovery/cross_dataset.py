@@ -31,6 +31,29 @@ against. On the diagonal the frames are split half/half within each group, as
 the published protocol does; off the diagonal the whole source dataset fits and
 the whole target dataset is scored.
 
+EVERY CELL NEEDS ITS FLOOR
+
+The five features are collinear and all monotone in contact size, and rho only
+cares about ordering — so on an easy target almost ANY weight direction ranks
+the forces correctly. Measured with 400 random weight vectors per target,
+|rho|:
+
+    target        random median   p90    max    own diagonal
+    cnc_mini_26       0.884      0.981  0.992      0.992
+    FoTa cnc          0.782      0.937  0.961      0.971
+    Sparsh            0.711      0.908  0.938      0.936
+    FEATS             0.514      0.666  0.690      0.513
+    FeelAnyForce      0.460      0.620  0.694      0.661
+
+That reframes the matrix. FEATS' model scoring 0.912 on cnc_mini_26 is barely
+above what a RANDOM direction gets there (0.884) — the cell is a statement
+about how easy cnc_mini_26 is to rank, not about FEATS. And on its own data,
+FEATS' fit (0.513) is indistinguishable from a random projection (0.514).
+Only FoTa cnc has a diagonal above its random MAXIMUM (0.971 vs 0.961), i.e.
+is the one dataset where fitting the weights demonstrably beats guessing them.
+
+The baseline is drawn under each column for exactly this reason.
+
     python -m force_recovery.cross_dataset [--per-dataset 600]
 """
 from __future__ import annotations
@@ -184,12 +207,37 @@ def main() -> int:
         off = [rho[s2][tgt] for s2 in names if s2 != tgt]
         print(f"  {tgt:12s} {np.mean(off):.3f}   (自身对角 {rho[tgt][tgt]:.3f})")
 
-    _figure(rho, mae, names, data)
+    # A cell needs its floor, exactly as a rho needs its shuffle. Here the
+    # floor is a RANDOM weight vector: the five features are collinear and all
+    # monotone in contact size, so on an easy target almost any direction
+    # ranks the forces correctly and a high off-diagonal cell says more about
+    # the target than about the source model.
+    base = {}
+    rngb = np.random.default_rng(0)
+    for tgt in names:
+        Xt, ft, _, _ = data[tgt]
+        Xs = (Xt - Xt.mean(0)) / np.maximum(Xt.std(0), 1e-12)
+        r = np.array([abs(spearmanr(Xs @ rngb.normal(size=Xs.shape[1]),
+                                    ft).statistic) for _ in range(400)])
+        base[tgt] = {"median": float(np.median(r)),
+                     "p90": float(np.percentile(r, 90)), "max": float(r.max())}
+    print("\n随机权重基线(400 次随机方向的 |rho|),每个目标数据集:")
+    for tgt in names:
+        b = base[tgt]
+        print(f"  {tgt:12s} 中位 {b['median']:.3f}  p90 {b['p90']:.3f}  "
+              f"最大 {b['max']:.3f}   自身对角 {rho[tgt][tgt]:.3f}")
+    OUT.write_text(json.dumps(
+        {"rho": rho, "mae": mae, "random_baseline": base,
+         "n": {k: int(len(v[1])) for k, v in data.items()},
+         "force_range": {k: [float(v[1].min()), float(v[1].max())]
+                         for k, v in data.items()}}, indent=1))
+
+    _figure(rho, mae, names, data, base)
     print(f"\n-> {OUT}")
     return 0
 
 
-def _figure(rho, mae, names, data):
+def _figure(rho, mae, names, data, base=None):
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
@@ -222,9 +270,14 @@ def _figure(rho, mae, names, data):
                        else "black",
                        fontweight="bold" if i == j else "normal")
         fig.colorbar(im, ax=a, shrink=0.82)
+        if base is not None and tab is rho:
+            a.set_xticklabels(
+                [f"{n}\n(n={len(data[n][1])})\n随机基线 {base[n]['median']:.2f}"
+                 for n in names], fontsize=8)
     fig.suptitle("跨数据集迁移矩阵 · 每个数据集单独拟合(一个线性最小二乘 + 等距回归)\n"
-                 "对角线为组内半半留出、5 seeds 中位;非对角为整源拟合、整目标评估",
-                 fontsize=10.5)
+                 "对角线为组内半半留出、5 seeds 中位;非对角为整源拟合、整目标评估\n"
+                 "每列下方的「随机基线」是随机权重方向能拿到的 |ρ| 中位 —— 单元格必须减去它来读",
+                 fontsize=10)
     out = OUT_ROOT / "site2" / "assets" / "cross_dataset.png"
     out.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(out, dpi=110)

@@ -248,15 +248,14 @@ def page_results() -> str:
 
     body = f"""
 <h1>Results</h1>
-<p>One protocol everywhere: within each indenter/probe/pad group, half the
-frames fit a 5-feature least squares with isotonic calibration, half are
-scored; pooled Spearman ρ, five seeds, beside a within-group label shuffle.</p>
+<p>One protocol everywhere: half the frames in each group fit a 5-feature
+least squares with isotonic calibration, half are scored; pooled Spearman ρ,
+five seeds, beside a within-group label shuffle.</p>
 
 <div class="tablewrap"><table><thead>{head}</thead><tbody>{rowsx}</tbody></table></div>
-<p class="dim">“—” means not run, not zero. Calibration-free is scored under a
-stripped protocol with no position gain field, so its column is not comparable
-to the LUT's headline value — it is comparable to the LUT under the same strip,
-which is on the <a href="method.html">method</a> page.</p>
+<p class="dim">“—” means not run, not zero. The calibration-free column has no
+position gain field, so compare it to the LUT under the same strip
+(<a href="method.html">method</a>), not to the headline.</p>
 
 <figure><img src="assets/pred_vs_gt.png" alt="predicted vs ground-truth force">
 <figcaption>Held-out prediction against ground truth on presses the sensor
@@ -278,18 +277,21 @@ isotonic step is monotone, so it cannot change a rank correlation, and ρ tests
 only whether the feature-to-force ORDERING transfers. MAE tests whether the
 newton scale does, and it does not — these datasets span 0.08–1.06 N (Sparsh)
 to 0–34 N (FEATS). The diagonal is held out, five seeds; off it, the whole
-source fits and the whole target is scored.</figcaption></figure>
+source fits and the whole target is scored. <b>Read every cell against the
+random baseline under its column.</b> The five features are collinear and all
+monotone in contact size, so a random weight direction already scores 0.884 on
+cnc_mini_26 — which is why FEATS' model reaching 0.912 there describes the
+target, not FEATS. FoTa cnc is the only dataset whose own fit beats its random
+maximum.</figcaption></figure>
 
-<h2>Which reconstruction should the React force channel use?</h2>
-<p>Calibration-free, decided on React's own calibration objects: held out by
-press position, ρ&nbsp;0.812 against the LUT's 0.763, MAE 1.024 against
-1.113&nbsp;N. Across the ground-truth datasets it leads on four of five; the
-one loss is FEATS, which is the marker gel React does not use.</p>
-<p>The two estimators agree at ρ&nbsp;=&nbsp;{ag['spearman']:.3f} over
-{ag['n']:,} React frames, mean difference {ag['mad_n']:.2f}&nbsp;N, p95
-{ag['p95_abs_diff_n']:.2f}&nbsp;N. <b>The published dataset still carries the
-LUT column</b> — switching it means re-running preprocessing over 36 episodes
-and republishing.</p>
+<h2>Which reconstruction for React's force channel?</h2>
+<p>Calibration-free, on React's own calibration objects: held out by press
+position, ρ&nbsp;0.812 against the LUT's 0.763, MAE 1.024 against
+1.113&nbsp;N. It leads on four of the five ground-truth sets; the loss is
+FEATS, the marker gel React does not use.</p>
+<p>The two agree at ρ&nbsp;=&nbsp;{ag['spearman']:.3f} over {ag['n']:,} React
+frames, mean difference {ag['mad_n']:.2f}&nbsp;N. <b>The published dataset still
+carries the LUT column</b>: switching it needs 36 episodes reprocessed.</p>
 """
     return _shell("results.html", "Results", body)
 
