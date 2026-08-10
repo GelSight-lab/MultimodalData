@@ -196,7 +196,7 @@ def cmd_promote() -> int:
     from .react_calib import CALIBRATION_NAME
     from .run_episode import PIPELINE_VERSION
     jobs = episodes()
-    missing, wrong, unversioned = [], [], []
+    missing, wrong, unversioned, dropped = [], [], [], []
     for task, date, ep, side in jobs:
         p = STAGING / task / date / f"{ep}_{side}.npz"
         if not p.exists():
@@ -215,11 +215,25 @@ def cmd_promote() -> int:
         ver = int(d["pipeline_version"]) if "pipeline_version" in d else 0
         if ver != PIPELINE_VERSION:
             unversioned.append(f"{task}/{date}/{ep}/{side}: version {ver}")
-    if missing or wrong or unversioned:
+        # A staged file may ADD keys; it may not LOSE one. The version check
+        # above names a single key, and it only exists because that key was
+        # the one caught — by diffing two npz by hand, which is not a check
+        # that survives. Any other silently dropped field would promote
+        # cleanly and break whichever consumer needed it. `depth_row_*` are
+        # per-frame diagnostic samples whose indices legitimately differ.
+        pub = OUT_ROOT / task / date / f"{ep}_{side}.npz"
+        if pub.exists():
+            def _keep(ks):
+                return {k for k in ks if not k.startswith("depth_row_")}
+            lost = _keep(np.load(pub, allow_pickle=True).files) - _keep(d.files)
+            if lost:
+                dropped.append(f"{task}/{date}/{ep}/{side}: {sorted(lost)}")
+    if missing or wrong or unversioned or dropped:
         print(f"refusing to promote: {len(missing)} missing, "
               f"{len(wrong)} on a stale calibration, "
-              f"{len(unversioned)} not stamped v{PIPELINE_VERSION}")
-        for x in (missing + wrong + unversioned)[:8]:
+              f"{len(unversioned)} not stamped v{PIPELINE_VERSION}, "
+              f"{len(dropped)} dropping a published field")
+        for x in (missing + wrong + unversioned + dropped)[:8]:
             print(f"  {x}")
         return 1
     for task, date, ep, side in jobs:
