@@ -93,14 +93,8 @@ def force_stages(img, ref, recon: str | None = None) -> dict:
         # 3-30x, and the inflated area drove the force to the isotonic's lower
         # clip (a suspicious number of frames at exactly 1.59 N).
         m = r["valid"]
-        px = MM_PER_PIXEL ** 2
-        area = float(m.sum() * px)
-        maxd = float(np.percentile(d, 99.8))
-        feats = {"vol": float(d[m].sum() * px),
-                 "vol2": float((d[m] ** 2).sum() * px),
-                 "maxd": maxd, "area": area,
-                 "h1": float(np.sqrt(area) * maxd)}
-        return {"depth": d, "feats": feats, "contact": m, "recon": recon}
+        return {"depth": d, "feats": feature_vector(d, m), "contact": m,
+                "recon": recon}
     st = stages(img, ref)
     return {"depth": st["depth"], "feats": st["feats"],
             "contact": st["depth"] > 0.05, "recon": recon}
@@ -120,6 +114,34 @@ def cache_for(recon: str):
     return (CACHE if recon == FORCE_RECONSTRUCTION
             else CACHE.with_name(f"glowtact_round_{recon}.json"))
 FEATURES = ("vol", "vol2", "maxd", "area", "h1")
+
+
+def feature_vector(depth, mask) -> dict:
+    """THE five features. One definition, one place.
+
+    Both arguments are supplied by the caller because the two reconstructions
+    decide contact differently and only they know how: the LUT is in
+    millimetres and thresholds its own depth at the production 0.05 mm; the
+    calibration-free solve has no millimetre scale and takes the contact mask
+    that `calib_free.reconstruct` already computed from the difference image.
+    What must NOT differ is everything after that — the summation, the units,
+    the 99.8th percentile, the order of the five numbers.
+
+    This function exists because it had forked. `force_recon_matrix._feats`
+    (which feeds the site's results table, the cross-dataset matrix, the
+    prediction scatter and the error analysis) kept a relative floor of 5% of
+    the frame's peak for the calibration-free arm after the deployed estimator
+    in `force_stages` had moved to the contact mask — so the site was
+    evaluating a model the deployment no longer used. Measured on React
+    episode_000 the relative floor over-counts contact area by 3-30x.
+    """
+    d = np.clip(np.asarray(depth, np.float64), 0, None)
+    m = np.asarray(mask, bool)
+    px = MM_PER_PIXEL ** 2
+    area = float(m.sum() * px)
+    maxd = float(np.percentile(d, 99.8))
+    return {"vol": float(d[m].sum() * px), "vol2": float((d[m] ** 2).sum() * px),
+            "maxd": maxd, "area": area, "h1": float(np.sqrt(area) * maxd)}
 # The React clips span roughly 0-8 N; calibrating past that would fit the
 # isotonic tail on presses the deployment never sees.
 F_MAX_N = 8.0

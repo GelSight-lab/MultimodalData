@@ -52,6 +52,7 @@ h2{font-size:var(--s4);margin:44px 0 10px;font-weight:600}
 h3{font-size:var(--s3);margin:28px 0 6px;font-weight:600}
 p{margin:10px 0;max-width:70ch}
 .dim{color:var(--dim);font-size:var(--s1)}
+.bad{color:var(--bad);font-size:var(--s0)}
 nav{display:flex;gap:8px;flex-wrap:wrap;margin:18px 0 4px}
 nav a{display:inline-block;padding:10px 16px;min-height:44px;line-height:24px;
 border:1px solid var(--line);border-radius:999px;text-decoration:none;
@@ -96,6 +97,14 @@ img{max-width:100%;height:auto}
    off the --s0..--s5 scale the audit counts. Pinned to the smallest step. */
 sub,sup{font-size:var(--s0);line-height:0}
 """
+
+# A within-group label shuffle above this scores more than half the available
+# ordering with the frame-to-force pairing destroyed, so the row's rho is
+# mostly a property of the group layout. `force_recon_matrix`'s docstring has
+# said such a row "is reported as UNUSABLE rather than as a number" since it
+# was written; nothing implemented it, and FeelAnyForce's 0.952 sat in the
+# same column as Sparsh's 0.966 with a floor of 0.736 against 0.072.
+FLOOR_LIMIT = 0.5
 
 PAGES = [("index.html", "overview"), ("method.html", "method"),
          ("results.html", "results"), ("sensors.html", "sensors"),
@@ -294,13 +303,26 @@ def page_results() -> str:
                         f"<td colspan='4' class='dim'>too few frames per group"
                         f"</td></tr>")
                 continue
-            lut, cf = p["lut"]["rho"], p["calibfree"]["rho"]
-            cells = {"LUT": lut, "calib-free": cf}
-            best = max(cells, key=cells.get)
+            # MARGIN over the row's own shuffle floor, not raw rho. Two rows
+            # with the same rho are not the same result if one of them scores
+            # 0.74 on permuted labels: FeelAnyForce reads 0.952 with a floor of
+            # 0.736, so 0.216 of it is the reconstruction and the rest is 14
+            # captures each having its own force range. Ranking the two arms by
+            # raw rho would also pick the wrong winner wherever the floors
+            # differ between them, which they do.
+            cells = {k: (p[j]["rho"], p[j]["rho"] - p[j]["shuffle_rho"])
+                     for k, j in (("LUT", "lut"), ("calib-free", "calibfree"))}
+            best = max(cells, key=lambda k: cells[k][1])
+            floored = max(p[j]["shuffle_rho"] for j in ("lut", "calibfree")) > FLOOR_LIMIT
+
             def mark(k):
-                v = f"{cells[k]:.3f}"
+                rho, mar = cells[k]
+                v = f"{rho:.3f}<br><span class='dim'>{mar:+.3f}</span>"
                 return f"<td><b>{v}</b></td>" if k == best else f"<td>{v}</td>"
-            out += (f"<tr><td>{r['label']}</td><td>{p['n']}</td>"
+            out += (f"<tr><td>{r['label']}"
+                    + ("<br><span class='bad'>floor-dominated</span>"
+                       if floored else "")
+                    + f"</td><td>{p['n']}</td>"
                     + mark("LUT") + mark("calib-free")
                     + f"<td class='dim'>{p['lut']['shuffle_rho']:+.3f} / "
                       f"{p['calibfree']['shuffle_rho']:+.3f}</td>"
@@ -308,15 +330,16 @@ def page_results() -> str:
                       f"{p['groups_total']}</td></tr>")
         return out
 
-    head = ("<tr><th>dataset</th><th>n</th><th>LUT</th>"
-            "<th>calibration-free</th><th>shuffle floor</th>"
+    head = ("<tr><th>dataset</th><th>n</th><th>LUT<br>ρ / margin</th>"
+            "<th>calibration-free<br>ρ / margin</th><th>shuffle floor</th>"
             "<th>groups fitted</th></tr>")
     body = f"""
 <h1>Results</h1>
 <p>Both reconstructions through <b>one</b> protocol: half the frames in each
-group fit a 5-feature least squares with isotonic calibration, half are scored;
-pooled Spearman ρ, five seeds, beside a within-group label shuffle. Bold is the
-better of the two. Nothing but the image→gradient step differs.</p>
+group fit a 5-feature least squares, half are scored; pooled ρ, five seeds,
+beside a within-group label shuffle. The second number in each cell is ρ minus
+that row's own floor — the comparable one — and bold marks the larger. Only
+the image→gradient step differs.</p>
 
 <h3>Presses the sensor images whole</h3>
 <div class="tablewrap"><table><thead>{head}</thead><tbody>
@@ -547,7 +570,26 @@ NUMBER_ARTIFACTS = ("force_matrix.json", "calibfree_vs_lut.json",
                     "results_metrics.json", "force_agreement.json",
                     "depth_eval.json", "force_recon_matrix.json",
                     "error_analysis.json", "dataset_sizes.json")
-RECON_LAWS = ("poisson.py", "calib_free.py", "debug_gallery.py")
+# A number is stale if a law UPSTREAM OF IT moved — and each number declares
+# which those are. The gate used to watch the reconstruction alone (integrator
+# plus the two colour-to-gradient maps), so `react_calib.feature_vector` (what
+# a depth becomes) and `force_recon_matrix._feats` (what the evaluation hands
+# the model) moved underneath it unwatched, and the results table went on
+# quoting a calibration-free rho measured with a depth floor the deployment
+# had already abandoned. Depth is half the pipeline; the feature step is the
+# other half.
+#
+# Per-artifact rather than one union, because a union is a gate people learn
+# to bypass: it would order a two-hour depth recompute every time a force
+# feature changed, and the first time that is obviously pointless is the last
+# time the gate is believed.
+DEPTH_LAWS = ("poisson.py", "calib_free.py", "debug_gallery.py")
+FORCE_LAWS = DEPTH_LAWS + ("react_calib.py", "force_recon_matrix.py")
+RECON_LAWS = FORCE_LAWS                       # figures show both halves
+NUMBER_LAWS = {
+    "depth_eval.json": DEPTH_LAWS,            # no force label is read
+    "dataset_sizes.json": (),                 # counts frames on disk
+}
 
 
 def collect_assets() -> list[str]:
@@ -571,16 +613,20 @@ def collect_assets() -> list[str]:
                 f"{name}: {age/60:.0f} min older than the render laws "
                 f"({', '.join(RENDER_LAWS)}) — re-run `python -m {cmd}` under "
                 f"xvfb-run, or the page shows the previous convention")
-    recon_mtime = max((here / n).stat().st_mtime for n in RECON_LAWS)
     for name in NUMBER_ARTIFACTS:
         f = CACHE / name
+        laws = NUMBER_LAWS.get(name, FORCE_LAWS)
         if not f.exists():
             problems.append(f"{name}: missing")
-        elif recon_mtime - f.stat().st_mtime > 0:
+            continue
+        if not laws:
+            continue
+        recon_mtime = max((here / n).stat().st_mtime for n in laws)
+        if recon_mtime - f.stat().st_mtime > 0:
             problems.append(
-                f"{name}: computed BEFORE the current reconstruction "
+                f"{name}: computed BEFORE the laws it depends on "
                 f"({(recon_mtime - f.stat().st_mtime)/60:.0f} min older than "
-                f"{'/'.join(RECON_LAWS)}) — recompute it, or the page pairs a "
+                f"{'/'.join(laws)}) — recompute it, or the page pairs a "
                 f"new figure with an old number")
     for p in sorted(ASSETS.glob("panel_*.png")):
         if law_mtime - p.stat().st_mtime > 0:

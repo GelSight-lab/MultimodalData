@@ -57,7 +57,6 @@ from .lut_calibration import CNC_MINI_26, PAT
 from .run_episode import OUT_ROOT
 
 CACHE = OUT_ROOT / "feature_cache"
-CF_CACHE = CACHE / "react_calib_calibfree.json"
 
 EPISODES = [
     ("motherboard", "2026-05-10", "episode_000", "left"),
@@ -69,61 +68,14 @@ EPISODES = [
 ]
 
 
-def _feats_calibfree(img, ref) -> dict:
-    """Same five features, same units, from the calibration-free depth.
-
-    The scale is fixed later by the newton fit, exactly as it is for the LUT —
-    a linear least squares absorbs one global factor, so a scale-free
-    reconstruction costs nothing here that a table-based one does not.
-    """
-    d = CF.reconstruct(img, ref)["depth"]
-    m = d > 0.05 * max(d.max(), 1e-9)
-    px = MM_PER_PIXEL ** 2
-    f = {"vol": float(d[m].sum() * px), "vol2": float((d[m] ** 2).sum() * px),
-         "maxd": float(np.percentile(d, 99.8)), "area": float(m.sum() * px)}
-    f["h1"] = np.sqrt(f["area"]) * f["maxd"]
-    return f, d, m
-
-
-def build_calibfree_cache() -> None:
-    """React's newton fit, on calibration-free features. Same frames as the LUT."""
-    from PIL import Image
-
-    ref = crop(np.asarray(Image.open(CNC_MINI_26 / "round" / "initial.jpg")
-                          .convert("RGB"))).astype(np.float32)
-    rows = []
-    files = sorted((CNC_MINI_26 / "round").glob("*.jpg"))
-    for i, p in enumerate(files):
-        m = PAT.search(p.name)
-        if not m:
-            continue
-        fN = float(m["f"])
-        if not (0.15 < fN <= RC.F_MAX_N):
-            continue
-        img = crop(np.asarray(Image.open(p).convert("RGB"))).astype(np.float32)
-        feats, d, mm = _feats_calibfree(img, ref)
-        if mm.sum() < 30:
-            continue
-        yy, xx = np.nonzero(mm)
-        w = d[mm]
-        rows.append({**feats, "f": fN, "x": float(m["x"]), "y": float(m["y"]),
-                     "z": -float(m["z"]),
-                     "cx": float((xx * w).sum() / w.sum()),
-                     "cy": float((yy * w).sum() / w.sum())})
-        if (i + 1) % 400 == 0:
-            print(f"  {i+1}/{len(files)} -> {len(rows)} kept", flush=True)
-    CF_CACHE.write_text(json.dumps(rows))
-    print(f"{len(rows)} frames -> {CF_CACHE}")
-
-
-def fit_calibfree():
-    """RC.fit's procedure, on the calibration-free cache — same code path."""
-    orig = RC.CACHE
-    RC.CACHE = CF_CACHE
-    try:
-        return RC.fit(report=True)
-    finally:
-        RC.CACHE = orig
+# `_feats_calibfree`, `build_calibfree_cache` and `fit_calibfree` lived here:
+# a private copy of the fit so this module could have a second arm. Once the
+# force channel moved to the calibration-free solve that copy became the same
+# arm twice, and `compare` was rewritten to call `react_calib.fit(recon=...)`
+# for both. The copies were then dead — except that `--rebuild` still ran
+# `build_calibfree_cache`, a full pass over 1153 frames whose output nothing
+# read, using the relative contact floor that `react_calib.force_stages` has
+# since been shown to over-count with. Deleted rather than left to rot.
 
 
 def compare(n_frames: int = 400) -> dict:
@@ -167,9 +119,11 @@ def main() -> int:
     ap.add_argument("--out", type=Path, default=CACHE / "force_agreement.json")
     args = ap.parse_args()
 
-    if args.rebuild or not CF_CACHE.exists():
-        print("[verify] building the calibration-free newton cache", flush=True)
-        build_calibfree_cache()
+    if args.rebuild:
+        from . import react_calib as _RC
+        for r in ("calibfree", "lut"):
+            print(f"[verify] rebuilding the {r} calibration cache", flush=True)
+            _RC.build_cache(r)
 
     res = compare(args.frames)
     fr = res["frames"]

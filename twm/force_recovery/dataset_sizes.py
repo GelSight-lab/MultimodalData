@@ -99,6 +99,13 @@ SOURCES = {
 
 
 def main() -> int:
+    """One writer at a time — see `artifact_lock` for why."""
+    from .artifact_lock import one_writer
+    with one_writer(OUT):
+        return _main()
+
+
+def _main() -> int:
     out = []
     for name, (label, fn) in SOURCES.items():
         try:

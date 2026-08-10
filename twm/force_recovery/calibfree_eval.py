@@ -35,6 +35,15 @@ from .force_eval_all import CACHE, evaluate
 # to one global factor, so the threshold has to scale with the data or it
 # means something different for each. Taken as a fraction of that frame's own
 # peak, which is scale-free and identical for both.
+#
+# THIS IS NOT THE DEPLOYED FEATURE LAW, and its rho is not comparable to the
+# results table. This module is an ABLATION: six arms differing only in the
+# reconstruction, held to one threshold so a difference in rho is attributable
+# to the reconstruction rather than to the threshold. The deployed estimator
+# (`react_calib.feature_vector`) decides contact on the difference image
+# instead — a relative floor cannot express "no contact", since every frame
+# has a peak. Keeping the uniform floor here is what makes the arms
+# comparable to EACH OTHER; do not lift these numbers into the headline.
 DEPTH_FLOOR_FRAC = 0.05
 
 # Every arm scored on identical frames. `*_dirichlet` / `lut_neumann` exist so

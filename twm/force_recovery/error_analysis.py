@@ -88,7 +88,7 @@ def collect(name: str, cap: int):
         img, ref = get(fr)
         if not (in_fov(fr) and visible(img, ref)):
             continue
-        X.append(_feats(CF.reconstruct(img, ref)["depth"], False))
+        X.append(_feats(CF.reconstruct(img, ref), False))
         f.append(float(fr["f"]))
         g.append(str(fr["group"]))
         keep.append(fr)
@@ -104,7 +104,7 @@ def collect(name: str, cap: int):
     idx_ok = np.flatnonzero(ok)
     for j in idx_ok[:: max(len(idx_ok) // 8, 1)][:8]:
         img, ref = get(keep[j])
-        again = np.array(_feats(CF.reconstruct(img, ref)["depth"], False))
+        again = np.array(_feats(CF.reconstruct(img, ref), False))
         if not np.allclose(again, X[j], rtol=1e-9, atol=1e-12):
             raise AssertionError(
                 f"{name}: frame {j} does not reproduce its own features — the "

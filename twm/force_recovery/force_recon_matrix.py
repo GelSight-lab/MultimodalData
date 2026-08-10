@@ -33,10 +33,16 @@ outside the image and whose depth is not identifiable from it. Scores there
 measure the truncation as much as the method. Both are reported; neither is
 hidden.
 
-The floor differs between arms and has to: the LUT is in millimetres and uses
-its absolute 0.05 mm, the calibration-free solve has no millimetre scale so it
-uses the same fraction of its own peak. That asymmetry is forced, it is the
-one `calibfree_eval` already documents, and it is the only one.
+Contact is decided differently by each arm and has to be: the LUT is in
+millimetres and thresholds its own depth at the production 0.05 mm; the
+calibration-free solve has no millimetre scale and takes the contact mask that
+`calib_free.reconstruct` derives from the difference image. Everything after
+the mask is `react_calib.feature_vector` — the DEPLOYED estimator's own
+function, shared, so this table cannot again score a model the deployment does
+not use. It did: this module kept a relative floor (5% of the frame's peak)
+for its calibration-free arm after the deployed estimator had moved to the
+contact mask, which over-counts contact area by 3-30x on React episode_000.
+Every calibration-free number here predating 2026-08-10 was that model.
 
     python -m force_recovery.force_recon_matrix [--per-dataset 400]
 """
@@ -60,24 +66,22 @@ DATASETS = (
 )
 
 
-# How many raw frames each dataset actually has, measured on disk, against
-# what these loaders used to hand back. The gap was not a sampling decision —
-# the loaders were written to draw FIGURES and their caps were never revisited
-# when they started feeding the evaluation, so the site reported a loader
-# ceiling as if it were the dataset:
+# These loaders were written to draw FIGURES and their caps were never
+# revisited when they started feeding the evaluation, so the site reported a
+# loader ceiling as if it were the dataset — FEATS read one split and stopped
+# at 390 of 16,276 rows; load_sparsh took 960 of 129,389 frames and dropped
+# both `sharp` batches outright.
 #
-#     dataset       on disk    previously used      why
-#     cnc_mini_26     6,219            6,219        (no cap — correct)
-#     cnc             3,358            3,000        CNC_N ceiling
-#     feats          16,969              390        val split only, then [:390]
-#     sparsh        174,866              960        BATCHES[:8], ~120 each
-#     faf           110,109 labelled   5,410        only 5,202 PNGs extracted
-#                                                   from the 81 GB spanned zip
+# The counts live in `dataset_sizes.py`, which measures them from disk. They
+# are deliberately NOT restated here: the first version of this comment held
+# its own copy of the table and was wrong within the hour (16,969 against the
+# counted 16,276, 174,866 against 129,389), because a hand-copied number is
+# only ever correct at the moment it is typed.
 #
-# POOL is the number of raw frames to draw; roughly a fifth survive the
-# fully-imaged filter, so this is sized to clear 2,000 whole presses where the
-# dataset physically allows it. cnc_mini_26 and cnc cannot: they hold 6,219
-# and 3,358 frames in total and the honest ceiling is theirs, not ours.
+# POOL is the number of raw frames to draw. Roughly a fifth survive the
+# fully-imaged filter, so this is sized to clear 2,000 whole presses wherever
+# the dataset physically allows it — cnc_mini_26 and cnc cannot, and that
+# ceiling is theirs, not ours.
 POOL = int(__import__("os").environ.get("RECON_POOL", "12000"))
 
 
@@ -186,22 +190,21 @@ def _faf_labelled(tiers=("A",)):
     return rows, get
 
 
-def _feats(d: np.ndarray, absolute_floor: bool):
-    """The five features, from a depth map.
+def _feats(recon: dict, absolute_floor: bool):
+    """The five features of one reconstruction, in the deployed definition.
 
-    `absolute_floor` is the one forced asymmetry: the LUT is in millimetres and
-    uses its production 0.05 mm; the calibration-free solve has no millimetre
-    scale, so the same absolute number would mean something different for it
-    and it uses the same fraction of its own peak.
+    Takes the whole reconstruction, not just its depth, because the contact
+    mask is part of it: `stages()` is in millimetres and thresholds at the
+    production 0.05 mm, `calib_free.reconstruct` returns the `valid` mask it
+    derived from the difference image. Everything downstream of the mask comes
+    from `react_calib.feature_vector`, the deployed estimator's own function —
+    see the note there for what forked and what it cost.
     """
-    from .lut_calibration import MM_PER_PIXEL
-    d = np.clip(np.asarray(d, np.float64), 0, None)
-    m = d > 0.05 if absolute_floor else d > 0.05 * max(d.max(), 1e-12)
-    px = MM_PER_PIXEL ** 2
-    area = float(m.sum() * px)
-    maxd = float(np.percentile(d, 99.8))
-    return [float(d[m].sum() * px), float((d[m] ** 2).sum() * px),
-            maxd, area, float(np.sqrt(area) * maxd)]
+    from .react_calib import FEATURES, feature_vector
+    d = np.clip(np.asarray(recon["depth"], np.float64), 0, None)
+    m = d > 0.05 if absolute_floor else np.asarray(recon["valid"], bool)
+    f = feature_vector(d, m)
+    return [f[k] for k in FEATURES]
 
 
 def main() -> int:
@@ -270,9 +273,8 @@ def _main() -> int:
                 continue
             seen_all[grp] += 1
             seen_whole[grp] += w
-            X["lut"].append(_feats(stages(img, ref)["depth"], True))
-            X["calibfree"].append(_feats(CF.reconstruct(img, ref)["depth"],
-                                         False))
+            X["lut"].append(_feats(stages(img, ref), True))
+            X["calibfree"].append(_feats(CF.reconstruct(img, ref), False))
             f.append(float(fr["f"]))
             g.append(str(fr["group"]))
             whole.append(w)

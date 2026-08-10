@@ -73,8 +73,8 @@ def main() -> int:
         if not m or not (0.15 < float(m["f"]) <= RC.F_MAX_N):
             continue
         img = crop(np.asarray(Image.open(p).convert("RGB"))).astype(np.float32)
-        a = _feats(stages(img, ref)["depth"], absolute_floor=True)
-        b = _feats(CF.reconstruct(img, ref)["depth"], absolute_floor=False)
+        a = _feats(stages(img, ref), absolute_floor=True)
+        b = _feats(CF.reconstruct(img, ref), absolute_floor=False)
         if a is None or b is None:
             dropped += 1
             continue

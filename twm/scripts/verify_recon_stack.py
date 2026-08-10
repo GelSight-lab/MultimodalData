@@ -7,7 +7,7 @@ functions themselves — `debug_gallery.stages`, `calib_free.reconstruct`,
 `react_calib.force_stages`, `eval_panel.mesh` — and fails if any improvement is
 not actually in the path a user's frame travels.
 
-Ten checks, one line of evidence each:
+Eleven checks, one line of evidence each:
 
   1  boundary condition is data-driven          poisson.integrate
   2  marker gel keeps the clamped solver        poisson.free_boundary_ok
@@ -17,6 +17,7 @@ Ten checks, one line of evidence each:
   6  truncated frames are flagged               calib_free.reconstruct
   7  force comes from the declared recon        react_calib.force_stages
   8  force refuses the wrong reconstruction     react_calib.fit().predict
+ 8b  the evaluation scores what is deployed     force_recon_matrix._feats
   9  mesh shading scales on the imprint         o3d_view.gradient_shade
  10  mesh camera does not crop the pad          o3d_view.render_mesh
 
@@ -129,6 +130,27 @@ def main() -> int:
     except TypeError as exc:
         check(True, "force refuses the wrong reconstruction",
               f"TypeError: {str(exc)[:60]}...")
+
+    # 8b — THE SITE SCORES THE MODEL THE SITE SHIPS.
+    #
+    # `force_recon_matrix._feats` feeds the results table, the cross-dataset
+    # matrix, the prediction scatter and the error analysis. It kept a
+    # relative depth floor (5% of the frame's peak) for its calibration-free
+    # arm for eight commits after the deployed estimator had moved to the
+    # contact mask, so every published calibration-free rho was measured on a
+    # model that no longer existed. Nothing failed: both halves were
+    # internally consistent, and a fork like that is only visible if something
+    # compares them. This is that something.
+    from force_recovery.force_recon_matrix import _feats as eval_feats
+    same = []
+    for img_i, ref_i, _fr in frames[:6]:
+        a = eval_feats(CF.reconstruct(img_i, ref_i), False)
+        b = [RC.force_stages(img_i, ref_i)["feats"][k] for k in RC.FEATURES]
+        same.append(np.allclose(a, b, rtol=1e-12, atol=0))
+    check(bool(same) and all(same),
+          "the evaluation scores the deployed feature law",
+          f"{sum(same)}/{len(same)} frames identical to the bit between "
+          f"force_recon_matrix._feats and react_calib.force_stages")
 
     # 9 — shading scaled on the imprint, not the flat gel
     z = np.zeros((240, 320), np.float32)

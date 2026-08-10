@@ -104,13 +104,20 @@ def gather(name: str, cap: int, whole_only: bool = True):
         img, ref = get(fr)
         if whole_only and not (in_fov(fr) and visible(img, ref)):
             continue
-        X.append(_feats(CF.reconstruct(img, ref)["depth"], False))
+        X.append(_feats(CF.reconstruct(img, ref), False))
         f.append(float(fr["f"]))
         g.append(str(fr["group"]))
     return np.array(X), np.array(f), np.array(g)
 
 
 def main() -> int:
+    """One writer at a time — see `artifact_lock` for why."""
+    from .artifact_lock import one_writer
+    with one_writer(OUT):
+        return _main()
+
+
+def _main() -> int:
     from scipy.stats import spearmanr
 
     ap = argparse.ArgumentParser()

@@ -68,8 +68,8 @@ def collect(name: str, per_group: int):
         if not (in_fov(fr) and visible(img, ref)):
             continue
         seen[q] += 1
-        X["lut"].append(_feats(stages(img, ref)["depth"], True))
-        X["calibfree"].append(_feats(CF.reconstruct(img, ref)["depth"], False))
+        X["lut"].append(_feats(stages(img, ref), True))
+        X["calibfree"].append(_feats(CF.reconstruct(img, ref), False))
         f.append(float(fr["f"]))
         g.append(q)
     f, g = np.array(f), np.array(g)
@@ -85,6 +85,13 @@ def collect(name: str, per_group: int):
 
 
 def main() -> int:
+    """One writer at a time — see `artifact_lock` for why."""
+    from .artifact_lock import one_writer
+    with one_writer(OUT_JSON):
+        return _main()
+
+
+def _main() -> int:
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
