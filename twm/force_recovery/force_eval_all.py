@@ -51,18 +51,25 @@ def _fit_apply(Xf, ff, Xe):
     return iso.predict(Xe @ w)
 
 
-def _one_seed(X, f, groups, seed, shuffle=False):
-    """Per-group half/half + isotonic -> pooled (truth, pred) for the eval half."""
+def heldout_pred(X, f, groups, seed=0, shuffle=False):
+    """Held-out predictions ALIGNED TO THE INPUT INDICES; NaN where not scored.
+
+    Exists so that anything wanting to know *which frame* got which prediction
+    — the error-analysis figures, for one — reads the protocol instead of
+    re-implementing it. The first version of that module carried its own copy
+    of this loop and agreed with it only because `1000 * seed + 7 * gi`
+    happens to equal `7 * gi` at seed 0; one edit here and the figures would
+    have ranked frames by a different model than the tables report.
+
+    Returns (pred, labels_used) — labels differ from `f` only when shuffling.
+    """
     pred = np.full(len(f), np.nan)
     fuse = f.copy()
     for gi, g in enumerate(sorted(set(groups))):
         idx = np.where(groups == g)[0]
         if shuffle:
-            # permute labels WITHIN the group, so the group's force
-            # distribution is untouched and only the pairing dies
             fuse[idx] = f[idx][np.random.default_rng(9000 + 13 * gi + seed)
                                .permutation(len(idx))]
-        # deterministic across processes (str hash is salted in python3)
         idx = idx[np.random.default_rng(1000 * seed + 7 * gi)
                   .permutation(len(idx))]
         h = len(idx) // 2
@@ -70,6 +77,12 @@ def _one_seed(X, f, groups, seed, shuffle=False):
         if len(fi) < 8:
             continue
         pred[ei] = _fit_apply(X[fi], fuse[fi], X[ei])
+    return pred, fuse
+
+
+def _one_seed(X, f, groups, seed, shuffle=False):
+    """Per-group half/half + isotonic -> pooled (truth, pred) for the eval half."""
+    pred, fuse = heldout_pred(X, f, groups, seed, shuffle)
     ok = np.isfinite(pred)
     return fuse[ok], pred[ok], groups[ok]
 

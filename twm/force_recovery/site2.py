@@ -28,7 +28,14 @@ ASSETS = SITE / "assets"
 CACHE = OUT_ROOT / "feature_cache"
 
 # Words of prose allowed per page, tags and code stripped. Enforced.
-WORD_BUDGET = {"index.html": 400, "method.html": 600, "results.html": 400,
+#
+# results.html went 400 -> 560 when the error analysis was added: five figure
+# captions, each carrying its dataset's error percentiles. Raised deliberately
+# and recorded here rather than met by shaving sentences until the number
+# passed — the budget exists to stop prose sprawl, and a caption that states a
+# measured number is not sprawl. If it needs raising again, that is a signal
+# the page has taken on a second job and should split.
+WORD_BUDGET = {"index.html": 400, "method.html": 600, "results.html": 560,
                "sensors.html": 350, "gallery.html": 150, "workbench.html": 250}
 
 CSS = """
@@ -259,82 +266,118 @@ best; it is now set by sphere presses reconstructing as circles (axis ratio
 
 
 def page_results() -> str:
-    fm = _artifact("force_matrix.json")["datasets"]
-    ab = _artifact("calibfree_vs_lut.json")
+    """The two reconstructions under ONE protocol.
+
+    This table used to put the LUT column from `force_matrix.json` — which
+    applies a fitted position gain field and a scope filter — beside the
+    calibration-free column from a STRIPPED protocol with neither. Adjacent
+    columns are a comparison whatever the caption says, and that one read
+    LUT 0.969 against calibration-free 0.838 when the same-protocol numbers
+    are 0.626 and 0.838. Both columns now come from the same run.
+    """
+    m = {r["dataset"]: r for r in _artifact("force_recon_matrix.json")
+         if r.get("available")}
     base = _artifact("results_metrics.json")
     ag = _artifact("force_agreement.json")
-    cf = {r["label"]: r for r in ab}
+    key = {"cnc_mini_26": "glowtact", "cnc": "cnc", "feats": "feats"}
+
+    def rows_for(pop: str) -> str:
+        out = ""
+        for name, r in m.items():
+            p = r.get(pop, {})
+            if not p.get("scored"):
+                out += (f"<tr><td>{r['label']}</td><td>{p.get('n', 0)}</td>"
+                        f"<td colspan='4' class='dim'>too few frames per group"
+                        f"</td></tr>")
+                continue
+            lut, cf = p["lut"]["rho"], p["calibfree"]["rho"]
+            b = base.get(key.get(name, ""), {})
+            cells = {"LUT": lut, "calib-free": cf}
+            best = max(cells, key=cells.get)
+            def mark(k):
+                v = f"{cells[k]:.3f}"
+                return f"<td><b>{v}</b></td>" if k == best else f"<td>{v}</td>"
+            un = f"{base.get(key.get(name,''),{}).get('FEATS U-net',{}).get('rho')}"
+            out += (f"<tr><td>{r['label']}</td><td>{p['n']}</td>"
+                    + mark("LUT") + mark("calib-free")
+                    + f"<td class='dim'>{p['lut']['shuffle_rho']:+.3f} / "
+                      f"{p['calibfree']['shuffle_rho']:+.3f}</td>"
+                    + f"<td class='dim'>{p['groups_fittable']}/"
+                      f"{p['groups_total']}</td></tr>")
+        return out
 
     head = ("<tr><th>dataset</th><th>n</th><th>LUT</th>"
-            "<th>calibration-free</th><th>FEATS U-net</th>"
-            "<th>FeelAnyForce</th><th>shuffle</th></tr>")
-    key = {"cnc_mini_26 (markerless, 0-20 N)": "glowtact",
-           "FoTa cnc_Mini (markerless, in view)": "cnc",
-           "FEATS (marker gel)": "feats"}
-    rowsx = ""
-    for k, v in fm.items():
-        ctrl = k.strip().startswith("↳")
-        lbl = k.strip()
-        c = cf.get(k)
-        b = base.get(key.get(k, ""), {})
-        def cell(x):
-            return f"{x:.3f}" if isinstance(x, (int, float)) else "—"
-        pad = " style='padding-left:26px;opacity:.75'" if ctrl else ""
-        rowsx += (f"<tr><td{pad}>{lbl}</td><td>{v['n_eval']}</td>"
-                  f"<td>{cell(v['rho'])}</td>"
-                  f"<td>{cell(c['calibfree']['rho']) if c else '—'}</td>"
-                  f"<td>{cell(b.get('FEATS U-net',{}).get('rho'))}</td>"
-                  f"<td>{cell(b.get('FeelAnyForce',{}).get('rho'))}</td>"
-                  f"<td class='dim'>{v['shuffle_rho']:+.3f}</td></tr>")
-
+            "<th>calibration-free</th><th>shuffle floor</th>"
+            "<th>groups fitted</th></tr>")
     body = f"""
 <h1>Results</h1>
-<p>One protocol everywhere: half the frames in each group fit a 5-feature
-least squares with isotonic calibration, half are scored; pooled Spearman ρ,
-five seeds, beside a within-group label shuffle.</p>
+<p>Both reconstructions through <b>one</b> protocol: half the frames in each
+group fit a 5-feature least squares with isotonic calibration, half are scored;
+pooled Spearman ρ, five seeds, beside a within-group label shuffle. Bold is the
+better of the two. Nothing but the image→gradient step differs.</p>
 
-<div class="tablewrap"><table><thead>{head}</thead><tbody>{rowsx}</tbody></table></div>
-<p class="dim">“—” means not run, not zero. The calibration-free column has no
-position gain field, so compare it to the LUT under the same strip
-(<a href="method.html">method</a>), not to the headline.</p>
+<h3>Presses the sensor images whole</h3>
+<div class="tablewrap"><table><thead>{head}</thead><tbody>
+{rows_for("whole")}</tbody></table></div>
+
+<h3>All frames</h3>
+<p class="dim">Most capture grids are larger than the field of view, so this
+population is dominated by contacts whose extent is outside the image and whose
+depth is not identifiable from it.</p>
+<div class="tablewrap"><table><thead>{head}</thead><tbody>
+{rows_for("all")}</tbody></table></div>
+
+<p class="dim">The shuffle floor is an absolute ρ — what this protocol scores
+when the labels are permuted inside each group. Subtract it before reading a
+cell. React's own production number carries a fitted position gain field on top
+and is not in this table for that reason; it is on the
+<a href="method.html">method</a> page.</p>
 
 <figure><img src="assets/pred_vs_gt.png" alt="predicted vs ground-truth force">
-<figcaption>Held-out prediction against ground truth on presses the sensor
-images whole, both reconstructions, shared axes per row. Each panel carries its
-within-group shuffle control. That is an ABSOLUTE ρ, not a change in ρ: it is
-what this protocol scores when the force labels are permuted inside each group,
-i.e. when the features carry nothing. The margin ρ − shuffle is what the
-reconstruction is actually worth, and it is printed beside it.
-FeelAnyForce is absent because its control reads +0.63: with 42 captures the
-protocol reproduces the between-capture ordering whether or not the
-frame-to-force pairing survives, so a scatter of it would be convincing and
-meaningless.</figcaption></figure>
+<figcaption>Held-out prediction against ground truth, shared axes per row.
+Each panel carries its shuffle floor and the margin over it.</figcaption>
+</figure>
 
-<figure><img src="assets/cross_dataset.png" alt="cross-dataset transfer matrix">
-<figcaption>Fit on one dataset, predict on every other. One model per dataset —
-a 5-feature least squares plus an isotonic calibration — on the calibration-free
-reconstruction. ρ and MAE answer different questions and both are shown: the
-isotonic step is monotone, so it cannot change a rank correlation, and ρ tests
-only whether the feature-to-force ORDERING transfers. MAE tests whether the
-newton scale does, and it does not — these datasets span 0.08–1.06 N (Sparsh)
-to 0–34 N (FEATS). The diagonal is held out, five seeds; off it, the whole
-source fits and the whole target is scored. <b>Read every cell against the
-random baseline under its column.</b> The five features are collinear and all
-monotone in contact size, so a random weight direction already scores 0.884 on
-cnc_mini_26 — which is why FEATS' model reaching 0.912 there describes the
-target, not FEATS. FoTa cnc is the only dataset whose own fit beats its random
-maximum.</figcaption></figure>
+<figure><img src="assets/cross_dataset.png" alt="cross-dataset transfer">
+<figcaption>Fit on one dataset, predict on every other. Read each cell against
+the random-weight baseline under its column: the features are collinear and all
+monotone in contact size, so on an easy target almost any direction ranks
+correctly.</figcaption></figure>
 
 <h2>Which reconstruction for React's force channel?</h2>
 <p>Calibration-free, on React's own calibration objects: held out by press
 position, ρ&nbsp;0.812 against the LUT's 0.763, MAE 1.024 against
-1.113&nbsp;N. It leads on four of the five ground-truth sets; the loss is
-FEATS, the marker gel React does not use.</p>
+1.113&nbsp;N.</p>
 <p>The two agree at ρ&nbsp;=&nbsp;{ag['spearman']:.3f} over {ag['n']:,} React
 frames, mean difference {ag['mad_n']:.2f}&nbsp;N. <b>The published dataset still
 carries the LUT column</b>: switching it needs 36 episodes reprocessed.</p>
+
+<h2>Error analysis</h2>
+{_error_section()}
 """
     return _shell("results.html", "Results", body)
+
+
+def _error_section() -> str:
+    try:
+        rows = _artifact("error_analysis.json")
+    except SystemExit:
+        return "<p class='dim'>not yet computed</p>"
+    out = ""
+    for r in rows:
+        if not r.get("available"):
+            out += (f"<p class='dim'>{r['dataset']}: not drawn — "
+                    f"{r.get('reason','')}</p>")
+            continue
+        out += (f'<figure><img src="assets/{r["asset"]}" alt="{r["dataset"]} '
+                f'errors"><figcaption>{r["label"]} — the ten worst held-out '
+                f'frames and, as a control, the five best. Relative error is '
+                f'|pred−true| over the dataset\'s force span '
+                f'({r["force_span"]:.2f}&nbsp;N); median '
+                f'{r["rel_err_median"]*100:.1f}%, p90 '
+                f'{r["rel_err_p90"]*100:.1f}%, worst '
+                f'{r["rel_err_max"]*100:.1f}%.</figcaption></figure>')
+    return out
 
 
 def page_gallery() -> str:
@@ -456,7 +499,8 @@ RENDER_LAWS = ("o3d_view.py", "showcase.py", "visualize.py", "eval_panel.py",
 # artifact the pages read must postdate the reconstruction.
 NUMBER_ARTIFACTS = ("force_matrix.json", "calibfree_vs_lut.json",
                     "results_metrics.json", "force_agreement.json",
-                    "depth_eval.json")
+                    "depth_eval.json", "force_recon_matrix.json",
+                    "error_analysis.json")
 RECON_LAWS = ("poisson.py", "calib_free.py", "debug_gallery.py")
 
 
