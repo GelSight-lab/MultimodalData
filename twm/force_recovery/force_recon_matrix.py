@@ -129,6 +129,22 @@ def _faf_labelled(tiers=("A",)):
 
     Default is tier A only. Pass tiers=("A", "B") to reproduce the old mix, or
     ("B",) to score the loaded-reference captures on their own.
+
+    HOW MUCH IT MATTERS: measured, and the answer is almost nothing.
+
+        population   tier A only        tier A + B (the old mix)
+        whole 2000   LUT .9392 CF .9522   LUT .9413 CF .9515
+        all          LUT .9052 CF .9360   LUT .9110 CF .9325
+
+    A difference of 0.0007 is not a difference. The reason is structural: each
+    capture is its own GROUP, and the protocol fits every group separately, so
+    a reference carrying 6 N puts a constant offset into that capture's depths
+    and the group's own intercept absorbs it. The tier split protects absolute
+    depth, which this ranking protocol never reads.
+
+    Tier A stays the default anyway — a reference frame that is not
+    contact-free is wrong on its face, and it costs nothing here — but it
+    would be dishonest to present it as a fix that bought accuracy.
     """
     import collections
 

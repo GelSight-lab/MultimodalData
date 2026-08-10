@@ -334,9 +334,9 @@ Their depth is not identifiable, so no reconstruction can fix them.</figcaption>
 calibration-free scores ρ&nbsp;{m['cnc_mini_26']['whole']['calibfree']['rho']:.3f}
 on whole presses against
 {m['cnc_mini_26']['all']['calibfree']['rho']:.3f} once truncated frames are
-mixed in. They are also the minority — {_avail(m)}. <b>A uniform 2,000-frame
-evaluation does not exist</b>: no dataset here contains that many fully imaged
-presses.</p>
+mixed in. They are also the minority — {_avail(m)}. Three datasets reach the
+2,000 scored presses this table asks for; cnc_mini_26 and cnc cannot, because
+every press they contain is already counted here.</p>
 
 <h3>All frames</h3>
 <p class="dim">The same protocol without that exclusion.</p>
@@ -378,14 +378,23 @@ not move these frames.</p>
 
 
 def _avail(m: dict) -> str:
-    """How many presses each dataset actually images whole, from the artifact.
+    """Whole presses scored, against what the dataset actually holds.
 
-    Typed into the HTML these would go stale the moment the visibility rule
-    moved, and a sentence claiming 605 of 6,219 next to a table saying
-    otherwise is worse than no sentence.
+    The denominator comes from `dataset_sizes.json`, which COUNTS the frames on
+    disk. It used to come from the evaluation's own `n_all`, which is a scan
+    quota — so once the quota was smaller than the dataset the sentence read
+    "605 of 2,376" for a dataset holding 6,219, understating it by a factor of
+    three. That is the same mistake, one level down, as the one this whole
+    section exists to correct.
     """
-    return "; ".join(f"{r['label']} {r['whole']['n']:,} of {r['all']['n']:,}"
-                     for r in m.values())
+    sizes = {r["dataset"]: r for r in _artifact("dataset_sizes.json")
+             if r.get("available")}
+    out = []
+    for name, r in m.items():
+        n = sizes.get(name, {}).get("n_frames")
+        out.append(f"{r['label']} {r['whole']['n']:,}"
+                   + (f" of {n:,}" if n else ""))
+    return "; ".join(out)
 
 
 def _error_section() -> str:
@@ -537,7 +546,7 @@ RENDER_LAWS = ("o3d_view.py", "showcase.py", "visualize.py", "eval_panel.py",
 NUMBER_ARTIFACTS = ("force_matrix.json", "calibfree_vs_lut.json",
                     "results_metrics.json", "force_agreement.json",
                     "depth_eval.json", "force_recon_matrix.json",
-                    "error_analysis.json")
+                    "error_analysis.json", "dataset_sizes.json")
 RECON_LAWS = ("poisson.py", "calib_free.py", "debug_gallery.py")
 
 
