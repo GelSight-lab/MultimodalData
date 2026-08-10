@@ -60,6 +60,27 @@ DATASETS = (
 )
 
 
+# How many raw frames each dataset actually has, measured on disk, against
+# what these loaders used to hand back. The gap was not a sampling decision —
+# the loaders were written to draw FIGURES and their caps were never revisited
+# when they started feeding the evaluation, so the site reported a loader
+# ceiling as if it were the dataset:
+#
+#     dataset       on disk    previously used      why
+#     cnc_mini_26     6,219            6,219        (no cap — correct)
+#     cnc             3,358            3,000        CNC_N ceiling
+#     feats          16,969              390        val split only, then [:390]
+#     sparsh        174,866              960        BATCHES[:8], ~120 each
+#     faf           110,109 labelled   5,410        only 5,202 PNGs extracted
+#                                                   from the 81 GB spanned zip
+#
+# POOL is the number of raw frames to draw; roughly a fifth survive the
+# fully-imaged filter, so this is sized to clear 2,000 whole presses where the
+# dataset physically allows it. cnc_mini_26 and cnc cannot: they hold 6,219
+# and 3,358 frames in total and the honest ceiling is theirs, not ours.
+POOL = int(__import__("os").environ.get("RECON_POOL", "12000"))
+
+
 def _rows(name: str):
     """(rows, get) over the widest pool available for one dataset."""
     import os
@@ -69,21 +90,21 @@ def _rows(name: str):
     dg.RNG = np.random.default_rng(0)          # module-level; see verify script
     if name == "cnc_mini_26":
         from .visible_eval import _wide_glowtact
-        return _wide_glowtact()
+        return _wide_glowtact()                # already every press on disk
     if name == "cnc":
-        os.environ["CNC_N"] = "3000"
+        os.environ["CNC_N"] = str(POOL)        # 3,358 exist; this takes all
         try:
             return dg.load_cnc()
         finally:
             os.environ.pop("CNC_N", None)
     if name == "sparsh":
-        return dg.load_sparsh(n=1200)
+        return dg.load_sparsh(n=POOL)
     if name == "faf":
         return _faf_labelled()
-    return dg.load_feats()
+    return dg.load_feats(n=POOL)
 
 
-def _faf_labelled():
+def _faf_labelled(tiers=("A",)):
     """FeelAnyForce WITH its force labels — `debug_gallery.load_faf` has none.
 
     That loader was written for figures and returns `f: None`, so FeelAnyForce
@@ -96,12 +117,24 @@ def _faf_labelled():
     The reference frame is the LIGHTEST labelled frame of each capture, not
     the first file: nothing guarantees the first frame is unloaded, and the
     labels say which one is closest to it.
+
+    TIERS. `faf_extract.cmd_select` established — and its docstring says in so
+    many words that tier B must be "reported separately, never mixed into the
+    headline" — that only 14 of the 42 captures contain a contact-free frame.
+    In the other 28 the lightest frame available carries 5.50 to 6.29 N, so
+    "the lightest frame" is not a reference at all: every difference image in
+    those captures is one loaded state minus another. This function ignored
+    the distinction and pooled all 42, which is 2,240 of 5,465 frames (41%),
+    and that pooled number is the FeelAnyForce row the site has been showing.
+
+    Default is tier A only. Pass tiers=("A", "B") to reproduce the old mix, or
+    ("B",) to score the loaded-reference captures on their own.
     """
     import collections
 
     from PIL import Image
 
-    from .faf_extract import IMG_DIR, load_labels
+    from .faf_extract import IMG_DIR, ZERO_N, load_labels
     from .lut_calibration import crop
 
     by_cap = collections.defaultdict(list)
@@ -111,13 +144,22 @@ def _faf_labelled():
             by_cap[r["capture"]].append((p, abs(float(r["fz"]))))
     if not by_cap:
         raise LookupError("no FeelAnyForce frame resolved to a label")
-    refs, rows = {}, []
+    refs, rows, dropped = {}, [], 0
     for cap, items in sorted(by_cap.items()):
         items.sort(key=lambda t: t[1])
+        tier = "A" if items[0][1] < ZERO_N else "B"
+        if tier not in tiers:
+            dropped += len(items)
+            continue
         refs[cap] = crop(np.asarray(Image.open(items[0][0]).convert("RGB"))
                          ).astype(np.float32)
         for p, fz in items[1:]:
-            rows.append({"path": p, "group": cap, "f": fz})
+            rows.append({"path": p, "group": cap, "f": fz, "tier": tier})
+    if not rows:
+        raise LookupError(f"no FeelAnyForce capture is tier {tiers}")
+    print(f"  FeelAnyForce: {len(refs)} captures of tier {'+'.join(tiers)}, "
+          f"{len(rows)} frames; {dropped} frames dropped as another tier",
+          flush=True)
     rng = np.random.default_rng(0)
     rows = [rows[i] for i in rng.permutation(len(rows))]
 
@@ -147,6 +189,19 @@ def _feats(d: np.ndarray, absolute_floor: bool):
 
 
 def main() -> int:
+    """One writer at a time — see `artifact_lock`, which explains why.
+
+    This module MERGES into its artifact rather than overwriting it, which
+    makes a second concurrent run worse than for a plain overwrite: two runs
+    with different `--per-dataset`/`--per-group` merge row by row and the file
+    ends up describing two protocols at once, with nothing in it saying so.
+    """
+    from .artifact_lock import one_writer
+    with one_writer(OUT):
+        return _main()
+
+
+def _main() -> int:
     from . import calib_free as CF
     from .debug_gallery import stages
     from .force_eval_all import evaluate

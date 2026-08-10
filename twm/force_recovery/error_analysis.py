@@ -182,27 +182,10 @@ def figure(name: str, label: str, cap: int) -> dict:
 
 
 def main() -> int:
-    """One writer at a time.
-
-    Two runs of this module were once in flight together — a leftover
-    background job and a new one — and both wrote OUT_JSON. The artifact then
-    held a mix of two samplings (n=201 in the file against n=303 in the log)
-    and the printed lines interleaved, which is how it was noticed. A lock is
-    cheaper than discovering that from a log.
-    """
-    import os
-    lock = OUT_JSON.with_suffix(".lock")
-    try:
-        fd = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-        os.write(fd, str(os.getpid()).encode())
-        os.close(fd)
-    except FileExistsError:
-        raise SystemExit(f"another run holds {lock} (pid "
-                         f"{lock.read_text().strip()}) — wait, or remove it")
-    try:
+    """One writer at a time — see `artifact_lock`, which explains why."""
+    from .artifact_lock import one_writer
+    with one_writer(OUT_JSON):
         return _main()
-    finally:
-        lock.unlink(missing_ok=True)
 
 
 def _main() -> int:

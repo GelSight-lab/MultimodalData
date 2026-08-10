@@ -50,7 +50,8 @@ def _reference_rows(intensity: np.ndarray, is_new: np.ndarray,
     return np.array(sorted(picked))
 
 
-def process_side(task: str, date: str, ep: str, side: str,
+def process_side(task: str, date: str, ep: str, side: str, *,
+                 out_dir=None,
                  keep_top_depths: int = 3) -> dict:
     """Estimate per-row normal force for one sensor of one episode."""
     table = pq.read_table(str(STAGE_ROOT / task / "meta" / date / f"{ep}.parquet"))
@@ -131,7 +132,10 @@ def process_side(task: str, date: str, ep: str, side: str,
         "force_calibration": scale_source,
         "scale_source": scale_source,
     }
-    out_dir = OUT_ROOT / task / date
+    # An explicit destination so a reprocess can be COMPARED against the
+    # published npz before replacing it. Without this the only way to try a
+    # pipeline change was to overwrite the released force channel and hope.
+    out_dir = Path(out_dir) if out_dir is not None else OUT_ROOT / task / date
     out_dir.mkdir(parents=True, exist_ok=True)
     np.savez_compressed(
         out_dir / f"{ep}_{side}.npz",

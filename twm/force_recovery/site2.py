@@ -295,13 +295,11 @@ def page_results() -> str:
                         f"</td></tr>")
                 continue
             lut, cf = p["lut"]["rho"], p["calibfree"]["rho"]
-            b = base.get(key.get(name, ""), {})
             cells = {"LUT": lut, "calib-free": cf}
             best = max(cells, key=cells.get)
             def mark(k):
                 v = f"{cells[k]:.3f}"
                 return f"<td><b>{v}</b></td>" if k == best else f"<td>{v}</td>"
-            un = f"{base.get(key.get(name,''),{}).get('FEATS U-net',{}).get('rho')}"
             out += (f"<tr><td>{r['label']}</td><td>{p['n']}</td>"
                     + mark("LUT") + mark("calib-free")
                     + f"<td class='dim'>{p['lut']['shuffle_rho']:+.3f} / "

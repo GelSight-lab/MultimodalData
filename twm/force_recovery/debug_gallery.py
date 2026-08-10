@@ -178,10 +178,31 @@ def load_cnc():
     return frames, get
 
 
-def load_feats():
+# FEATS ships six parquet splits. Four are the SAME sensor and gel and differ
+# only in which indenters they hold; two (`test_diff_sensor_*`) are a different
+# sensor with a different pad, and pooling those would break the one assumption
+# the per-group least squares makes — that one sensor's response is being
+# fitted. They are excluded here and are a transfer test, not training data.
+FEATS_SAME_SENSOR = ("train-00000-of-00001.parquet",
+                     "val-00000-of-00001.parquet",
+                     "test-00000-of-00001.parquet",
+                     "test_unknown_indenters-00000-of-00001.parquet")
+
+
+def load_feats(n: int = N_FIT + 40, splits=FEATS_SAME_SENSOR):
+    """FEATS frames, pooled over the same-sensor splits.
+
+    This read only `val` (704 rows) and then cut to 390, so every FEATS number
+    on the site was computed from 2.3% of the 16,969 rows on disk while the
+    prose called 390 "the dataset". The default `n` is unchanged so figure code
+    keeps its old cost; evaluation asks for the pool it wants.
+    """
     import pyarrow.parquet as pq
-    t = pq.read_table(FEATS_PQ / "val-00000-of-00001.parquet",
-                      columns=["image", "f_z", "indenter"]).to_pandas()
+    parts = [pq.read_table(FEATS_PQ / s,
+                           columns=["image", "f_z", "indenter"]).to_pandas()
+             for s in splits]
+    import pandas as pd
+    t = pd.concat(parts, ignore_index=True)
     imgs = t["image"].to_list()
     def decode(i):
         a = np.asarray(Image.open(io.BytesIO(imgs[i])).convert("RGB"))
@@ -191,7 +212,7 @@ def load_feats():
     frames = [{"idx": int(i), "group": t["indenter"].iloc[i],
                "f": float(abs(t["f_z"].iloc[i])), "z": float("nan"),
                "x": float("nan"), "y": float("nan")}
-              for i in RNG.permutation(len(t))[:N_FIT + 40]]
+              for i in RNG.permutation(len(t))[:n]]
     def get(fr):
         return decode(fr["idx"]), ref
     return frames, get
@@ -332,15 +353,24 @@ if __name__ == "__main__":
 # place to reach every dataset, rather than each figure knowing five layouts.
 
 def load_sparsh(n: int = 60):
-    """Sparsh / Meta gel pads, via the batch loader the metrics already use."""
+    """Sparsh / Meta gel pads, via the batch loader the metrics already use.
+
+    This took `BATCHES[:8]` while sizing `per` by `len(BATCHES)` — so it asked
+    for n frames, returned 0.8n, and silently dropped BOTH `sharp` batches,
+    which are the only sharp indenter Sparsh has and 35,356 of its 174,866
+    frames. Nothing recorded why the slice was there; it reads as a leftover
+    from when the last two batches would not load.
+    """
     from .sparsh_data import BATCHES, load_frames
 
     rows = []
-    per = max(n // max(len(BATCHES), 1), 2)
-    for probe, b in BATCHES[:8]:
+    per = max(-(-n // max(len(BATCHES), 1)), 2)
+    missing = []
+    for probe, b in BATCHES:
         try:
             fr, _ref_global = load_frames(probe, b, n=per)
-        except Exception:
+        except Exception as exc:                               # noqa: BLE001
+            missing.append(f"{probe}{b}: {type(exc).__name__}")
             continue
         for r in fr[:per]:
             r = dict(r)
@@ -349,6 +379,12 @@ def load_sparsh(n: int = 60):
             rows.append(r)
     if not rows:
         raise LookupError("no Sparsh batches could be loaded")
+    if missing:
+        # A batch that will not load must SAY so. The previous silent `except`
+        # plus the [:8] slice is exactly how two whole batches went missing
+        # without anyone noticing.
+        print(f"  load_sparsh: {len(missing)} batch(es) unavailable: "
+              f"{'; '.join(missing)}", flush=True)
 
     def get(fr):
         # SPARSH FRAMES REACH US WITH R AND B EXCHANGED relative to this

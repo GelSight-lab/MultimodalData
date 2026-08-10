@@ -73,7 +73,11 @@ LABELS = ROOT / "faf_labels"
 IMG_DIR = ROOT / "faf_images"
 PLAN_JSON = ROOT / "faf_plan.json"
 
-N_TIER_A = 200             # frames per capture that HAS contact-free frames
+N_TIER_A = 800             # frames per capture that HAS contact-free frames
+# 200 was sized for a first look. Tier A holds 58,630 frames across its 14
+# captures and roughly a fifth of any sample survives the fully-imaged
+# filter, so 200 each capped the scorable set near 590 — below the 2,000
+# the evaluation wants. 800 clears it with room for the filter.
 N_TIER_B = 80              # frames per capture that does not (see cmd_select)
 N_DECILES = 10             # |Fz| strata within each capture
 N_REF = 3                  # lowest-|Fz| frames per session -> median reference

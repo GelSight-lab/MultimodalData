@@ -75,10 +75,24 @@ def force_stages(img, ref, recon: str | None = None) -> dict:
     if recon == "calibfree":
         from . import calib_free as CF
         from .lut_calibration import MM_PER_PIXEL
-        d = np.clip(CF.reconstruct(img, ref)["depth"], 0, None)
-        # relative floor: this depth has no millimetre scale, so the LUT's
-        # absolute 0.05 mm would mean something different for it
-        m = d > 0.05 * max(float(d.max()), 1e-12)
+        r = CF.reconstruct(img, ref)
+        d = np.clip(r["depth"], 0, None)
+        # THE CONTACT MASK, NOT A FRACTION OF THE PEAK.
+        #
+        # A relative floor was used here because this depth has no millimetre
+        # scale, so the LUT's absolute 0.05 mm would mean something else for
+        # it. But "is this pixel in contact" never needed a depth scale: it is
+        # decided on the raw difference image by `contact_mask`, which both
+        # reconstructions already share.
+        #
+        # The relative floor cannot say "no contact" — every frame has a peak,
+        # so 5% of it always selects something. Measured on React
+        # episode_000, frames where the published channel reads 0 N and the
+        # new one read over 0.5 N: the true contact covers 0.01-6.2% of the
+        # frame while the relative floor marked 1.8-40.6%, over-counting by
+        # 3-30x, and the inflated area drove the force to the isotonic's lower
+        # clip (a suspicious number of frames at exactly 1.59 N).
+        m = r["valid"]
         px = MM_PER_PIXEL ** 2
         area = float(m.sum() * px)
         maxd = float(np.percentile(d, 99.8))
