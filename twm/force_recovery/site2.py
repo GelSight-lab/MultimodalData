@@ -478,12 +478,16 @@ frames outside the rig's range), and {wag['seeds']} held-out seeds differ by
 {wag['paired_diff_median']:+.3f}&nbsp;±&nbsp;{wag['paired_diff_sd']:.3f}&nbsp;ρ.</p>
 
 <h2>Which reconstruction for React's force channel?</h2>
-<p>{ho['winner'].replace('calibfree', 'Calibration-free').replace('lut', 'The LUT')},
-on React's own calibration objects: held out by press position,
-ρ&nbsp;{ho['calibfree']['rho']:.3f} against the LUT's {ho['lut']['rho']:.3f},
-MAE {ho['calibfree']['mae_n']:.3f} against
-{ho['lut']['mae_n']:.3f}&nbsp;N over {ho['calibfree']['n_heldout']} held-out
-presses.</p>
+<p>React's own calibration objects <b>cannot answer this</b>. Held out by press
+position, calibration-free scores ρ&nbsp;{ho['calibfree']['rho']:.3f} against
+the LUT's {ho['lut']['rho']:.3f} over only
+{ho['calibfree']['n_heldout']} presses — but a paired bootstrap puts that
+margin at 95%&nbsp;CI
+[{ho['paired_bootstrap']['d_rho_ci95'][0]:+.3f},
+{ho['paired_bootstrap']['d_rho_ci95'][1]:+.3f}], ahead in
+{ho['paired_bootstrap']['d_rho_frac_calibfree_ahead']*100:.0f}% of resamples.
+That is a coin flip. The reason to deploy it is the table above: real newtons,
+{_n_range(m)} presses per dataset, calibration-free {_cf_record(m)}.</p>
 <p>The two agree at ρ&nbsp;=&nbsp;{ag['spearman']:.3f} over {ag['n']:,} React
 frames, mean difference {ag['mad_n']:.2f}&nbsp;N. {_release_line(rc)}</p>
 
@@ -495,6 +499,32 @@ them.</p>
 {_error_section()}
 """
     return _shell("results.html", "Results", body)
+
+
+def _n_range(m: dict) -> str:
+    """The scored-press range of the headline table, for prose that compares
+    React's 158 held-out presses against it."""
+    ns = sorted(r["whole"]["n"] for r in m.values()
+                if r.get("whole", {}).get("scored"))
+    return f"{ns[0]:,}–{ns[-1]:,}" if ns else "?"
+
+
+def _cf_record(m: dict) -> str:
+    """Calibration-free's record against the LUT, BY MARGIN, counted here.
+
+    Written out longhand it was "ahead on all five", which is true of raw ρ and
+    false of the margin the table now ranks by — Sparsh's LUT clears its floor
+    by 0.909 against 0.894. A sentence that contradicts the table above it is
+    worse than no sentence, and the only way it cannot is if it counts.
+    """
+    scored = [r["whole"] for r in m.values()
+              if r.get("whole", {}).get("scored")]
+    def marg(p, arm):
+        return p[arm]["rho"] - p[arm]["shuffle_rho"]
+    win = sum(marg(p, "calibfree") > marg(p, "lut") for p in scored)
+    n = len(scored)
+    return ("ahead on all " + "five four three two one".split()[5 - n]
+            if win == n else f"ahead on {win} of {n}")
 
 
 def _avail(m: dict) -> str:

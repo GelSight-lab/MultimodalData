@@ -320,21 +320,79 @@ def holdout_report() -> dict:
     moved to the contact mask those became 0.781 and 1.072 and the page kept
     saying 0.812 — a typed number cannot go stale loudly. Every number on the
     site is read from an artifact; this is the artifact for this sentence.
+
+    IT ALSO CARRIES ITS OWN UNCERTAINTY, because the margin does not survive
+    it. "Calibration-free wins, rho 0.781 against the LUT's 0.763" reads like a
+    decision; a paired bootstrap over the same 158 held-out presses puts that
+    +0.018 at 95% CI [-0.081, +0.120], with calibration-free ahead in only 61%
+    of resamples. MAE agrees: +0.040 N, CI [-0.149, +0.238], 66%. This holdout
+    CANNOT separate the two arms, and `winner` on its own invited exactly the
+    reading it does not support.
+
+    The reason to deploy calibration-free is the external datasets, where the
+    labels are real newtons and n is 605 to 2,000 — it leads on all five
+    (`force_recon_matrix.json`). React's own 158 presses are corroboration at
+    best, and this artifact now says so in a field rather than in a comment.
     """
     from scipy.stats import spearmanr
 
-    out = {}
+    out, held = {}, {}
     for arm in ("calibfree", "lut"):
         _predict, h = fit(report=False, holdout=True, recon=arm)
+        held[arm] = (np.asarray(h["pred"]), np.asarray(h["f"]))
         out[arm] = {"rho": float(spearmanr(h["pred"], h["f"]).statistic),
                     "mae_n": float(np.abs(h["pred"] - h["f"]).mean()),
                     "n_heldout": int(len(h["f"]))}
-    out["winner"] = max(("calibfree", "lut"), key=lambda k: out[k]["rho"])
+    out["higher_rho"] = max(("calibfree", "lut"), key=lambda k: out[k]["rho"])
+
+    # Paired: one resample of FRAMES scores both arms, so their correlation is
+    # preserved. Bootstrapping the arms separately would compare two
+    # independent draws and inflate the spread.
+    ta, tb = held["calibfree"][1], held["lut"][1]
+    if not np.array_equal(ta, tb):
+        raise AssertionError("arms held out on different frames — the "
+                             "comparison would be meaningless")
+    rng = np.random.default_rng(0)
+    drho, dmae = [], []
+    for _ in range(4000):
+        i = rng.integers(0, len(ta), len(ta))
+        if len(np.unique(ta[i])) < 5:
+            continue
+        drho.append(spearmanr(held["calibfree"][0][i], ta[i]).statistic
+                    - spearmanr(held["lut"][0][i], tb[i]).statistic)
+        dmae.append(np.abs(held["lut"][0][i] - tb[i]).mean()
+                    - np.abs(held["calibfree"][0][i] - ta[i]).mean())
+    drho, dmae = np.array(drho), np.array(dmae)
+    out["paired_bootstrap"] = {
+        "n_resamples": int(len(drho)),
+        "d_rho_mean": float(drho.mean()),
+        "d_rho_ci95": [float(np.percentile(drho, 2.5)),
+                       float(np.percentile(drho, 97.5))],
+        "d_rho_frac_calibfree_ahead": float((drho > 0).mean()),
+        "d_mae_mean_n": float(dmae.mean()),
+        "d_mae_ci95_n": [float(np.percentile(dmae, 2.5)),
+                         float(np.percentile(dmae, 97.5))],
+        "separates_the_arms": bool(np.percentile(drho, 2.5) > 0)}
+    # Named `higher_rho`, not `winner`. The field was read as a verdict and
+    # printed on the site as one; it is only ever an argmax over two numbers
+    # whose difference this same artifact reports as indistinguishable from
+    # zero. `verdict` states what the data supports, so a consumer that quotes
+    # the obvious field cannot overstate it.
+    out["verdict"] = (f"{out['higher_rho']} has the higher rho, but this "
+                      f"holdout does not separate the arms"
+                      if not out["paired_bootstrap"]["separates_the_arms"]
+                      else f"{out['higher_rho']} is ahead beyond the "
+                           f"bootstrap CI")
     HOLDOUT_JSON.parent.mkdir(parents=True, exist_ok=True)
     HOLDOUT_JSON.write_text(json.dumps(out, indent=1))
     for arm in ("calibfree", "lut"):
         print(f"  {arm:10s} rho {out[arm]['rho']:.3f}  "
               f"MAE {out[arm]['mae_n']:.3f} N  n={out[arm]['n_heldout']}")
+    b = out["paired_bootstrap"]
+    print(f"  paired d_rho {b['d_rho_mean']:+.4f}  "
+          f"95% CI [{b['d_rho_ci95'][0]:+.4f}, {b['d_rho_ci95'][1]:+.4f}]  "
+          f"calibfree ahead in {b['d_rho_frac_calibfree_ahead']*100:.0f}% "
+          f"-> separates the arms: {b['separates_the_arms']}")
     print(f"-> {HOLDOUT_JSON}")
     return out
 
