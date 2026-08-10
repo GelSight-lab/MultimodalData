@@ -240,6 +240,45 @@ def ds_cnc() -> dict:
     return evaluate(X[inner], f[inner], grp[inner])
 
 
+# THE FIVE FEATURES: HOW MUCH EACH IS WORTH, MEASURED
+#
+# They are five functions of the same depth map and they are collinear —
+# Spearman between them, pooled over all datasets:
+#
+#          vol   vol2   maxd   area    h1
+#   vol   1.00  0.959  0.779  0.480  0.918
+#   vol2        1.000  0.917  0.246  0.984
+#   maxd               1.000 -0.096  0.955
+#   area                      1.000  0.176
+#
+# Only `area` is close to independent (-0.10 against maxd). vol2 and h1 agree
+# at 0.984, which is why the fitted weights put them on OPPOSITE signs and
+# partly cancel (standardised: vol +0.94..+1.73, h1 -0.48..-0.86 on four of
+# five datasets). That is collinearity, not two mechanisms.
+#
+# Held-out rho (15 seeds, median, +-sd) and MAE [N] by feature subset:
+#
+#   dataset       all five            drop maxd      vol+vol2         vol only
+#   cnc_mini_26  0.993+-.001 0.49   0.992 0.51    0.991 0.55     0.989 0.61
+#   cnc          0.970+-.007 0.17   0.970 0.17    0.970 0.17     0.952 0.22
+#   FEATS        0.544+-.068 3.77   0.569 3.71    0.555 3.66     0.589 3.56
+#   Sparsh       0.937+-.006 0.05   0.930 0.06    0.920 0.06     0.909 0.07
+#   FeelAnyForce 0.649+-.020 2.57   0.653 2.57    0.650 2.63     0.642 2.65
+#
+# NO, all five are not necessary for rho: `vol` alone lands within 0.03 of the
+# full set on every dataset. They are kept because MAE — which is what an
+# exported newton is judged on — degrades monotonically as they are removed
+# (0.49 -> 0.61 on cnc_mini_26, 0.17 -> 0.22 on FoTa, 0.05 -> 0.07 on Sparsh),
+# and because the full set is best or tied on rho everywhere.
+#
+# `maxd` is the one that earns least: dropping it moves nothing beyond noise on
+# any dataset.
+#
+# A CLAIM THAT DID NOT SURVIVE MORE SEEDS. At 5 seeds this read "on FEATS `vol`
+# alone scores 0.599 against the full set's 0.513, so the extra features hurt
+# there". FEATS has by far the widest seed spread (+-0.068, against +-0.001 on
+# cnc_mini_26); at 15 seeds the gap is 0.589 vs 0.544, inside one sd. There is
+# no FEATS-specific feature effect to report.
 FE = ("vol", "vol2", "maxd", "area", "h1")
 
 
