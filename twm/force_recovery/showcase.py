@@ -378,7 +378,10 @@ def _lut_force_rows(frame, ref, calib, rows, is_new,
         if is_new[row] or row == rows[0]:
             img = crop(frame(row)).astype(np.float32)
             st = stages(img, ref)
-            last = calib(st)
+            # force from the reconstruction react_calib is calibrated on,
+            # never from whichever depth this figure happens to be drawing
+            from .react_calib import force_stages
+            last = calib(force_stages(img, ref))
             if keep_depth:
                 depths[row] = (stages_depth(img, ref, mask=dots)["depth"]
                                if dots is not None else st["depth"])

@@ -66,7 +66,9 @@ def process_side(task: str, date: str, ep: str, side: str,
     # What was here — a single N-per-mm3 constant times the v1 MLP volume —
     # scored rho 0.297 on GlowTact `round` and mapped a true 0.16-8 N range
     # onto 0.01-103 N. See react_calib for the held-out numbers.
-    from .react_calib import CALIBRATION_NAME, fit as _fit_calib
+    from .react_calib import (CALIBRATION_NAME,
+                              FORCE_RECONSTRUCTION as _FORCE_RECON,
+                              fit as _fit_calib)
     predict_force = _fit_calib(report=False)
     scale_source = CALIBRATION_NAME
 
@@ -91,12 +93,21 @@ def process_side(task: str, date: str, ep: str, side: str,
         ref = np.median(np.stack([crop(frames[src(int(r))]).astype(np.float32)
                                   for r in ref_rows[:12]]), 0)
 
+        # Force from `react_calib.force_stages` (the calibration-free solve,
+        # 0.812 held-out rho against the LUT's 0.763 on the same presses and
+        # split); the exported vol/area/maxd stay in the LUT's MILLIMETRES,
+        # because those columns are read as geometry and the calibration-free
+        # depth has no millimetre scale. Two reconstructions, two purposes,
+        # both named in the metadata below.
+        from .react_calib import force_stages
         last = None
         for row in range(T):
             if is_new[row] or last is None:
-                st = stages(crop(frames[src(row)]).astype(np.float32), ref)
-                ft = st["feats"]
-                last = (predict_force(st), ft["vol"], ft["area"], ft["maxd"])
+                img = crop(frames[src(row)]).astype(np.float32)
+                st_mm = stages(img, ref)
+                ft = st_mm["feats"]
+                last = (predict_force(force_stages(img, ref)),
+                        ft["vol"], ft["area"], ft["maxd"])
             for key, value in zip(FIELDS, last):
                 out[key][row] = value
 
@@ -113,6 +124,9 @@ def process_side(task: str, date: str, ep: str, side: str,
         # depth>0.05 mm for the contact mask
         "contact_threshold_mm": 0.05,
         "valid_mask_dI": 8.0,
+        # which reconstruction produced which column
+        "force_reconstruction": _FORCE_RECON,
+        "geometry_reconstruction": "stages (LUT, millimetres)",
         "reference_rows": ref_rows,
         "force_calibration": scale_source,
         "scale_source": scale_source,

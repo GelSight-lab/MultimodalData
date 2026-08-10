@@ -36,7 +36,61 @@ from .run_episode import OUT_ROOT
 # map produced a newton (npz metadata, the export sidecar, the site's action
 # trace). A copy in each of those places is how the site went on advertising
 # "LUT v2, GlowTact-calibrated" after that map had been replaced.
-CALIBRATION_NAME = "react_calib (stages + gain field + clip correction)"
+CALIBRATION_NAME = ("react_calib (calibration-free recon + gain field + "
+                    "clip correction)")
+
+# WHICH RECONSTRUCTION THE FORCE CHANNEL IS COMPUTED FROM
+#
+# Decided by measurement, not preference. Same 478 GlowTact `round` presses,
+# held out by press position, the identical split and the identical fitting
+# code below — only the reconstruction swapped
+# (`scripts/react_calib_recon_ab.py`):
+#
+#     recon              held-out rho   MAE      in view    clipped   shuffle
+#     LUT                    0.763    1.113 N   0.932 (14)   0.725    +0.056
+#     calibration-free       0.812    1.024 N   0.996 (20)   0.762    -0.015
+#
+# The calibration-free solve wins on every split and its shuffle control is
+# the cleaner one. Its lack of a millimetre scale is irrelevant HERE: the
+# least squares below determines one global factor, which is exactly the
+# unknown.
+#
+# It is NOT irrelevant elsewhere. Anything that needs depth in millimetres —
+# the exported penetration fraction, the gel-thickness bound, the 3D figures —
+# keeps using the LUT, which is calibrated in mm. So the dataset carries a
+# force from one reconstruction and a depth from the other, on purpose, and
+# both say which.
+FORCE_RECONSTRUCTION = "calibfree"
+
+
+def force_stages(img, ref) -> dict:
+    """The reconstruction the force channel is built on — ONE definition.
+
+    Returned in the shape `predict` and `build_cache` both expect, so the
+    calibration and the inference cannot drift onto different reconstructions
+    (that exact drift is what the module docstring above is about).
+    """
+    from .debug_gallery import stages
+    if FORCE_RECONSTRUCTION == "calibfree":
+        from . import calib_free as CF
+        from .lut_calibration import MM_PER_PIXEL
+        d = np.clip(CF.reconstruct(img, ref)["depth"], 0, None)
+        # relative floor: this depth has no millimetre scale, so the LUT's
+        # absolute 0.05 mm would mean something different for it
+        m = d > 0.05 * max(float(d.max()), 1e-12)
+        px = MM_PER_PIXEL ** 2
+        area = float(m.sum() * px)
+        maxd = float(np.percentile(d, 99.8))
+        feats = {"vol": float(d[m].sum() * px),
+                 "vol2": float((d[m] ** 2).sum() * px),
+                 "maxd": maxd, "area": area,
+                 "h1": float(np.sqrt(area) * maxd)}
+        return {"depth": d, "feats": feats, "contact": m,
+                "recon": FORCE_RECONSTRUCTION}
+    st = stages(img, ref)
+    return {"depth": st["depth"], "feats": st["feats"],
+            "contact": st["depth"] > 0.05,
+            "recon": FORCE_RECONSTRUCTION}
 
 CACHE = OUT_ROOT / "feature_cache" / "glowtact_round_mm.json"
 FEATURES = ("vol", "vol2", "maxd", "area", "h1")
@@ -65,7 +119,6 @@ def _with_clip(X, area_mm2, cx, cy):
 def build_cache() -> None:
     """Recompute GlowTact `round` features with the CURRENT stages()."""
     from PIL import Image
-    from .debug_gallery import stages
 
     ref = crop(np.asarray(Image.open(GLOWTACT / "round" / "initial.jpg")
                           .convert("RGB"))).astype(np.float32)
@@ -79,9 +132,9 @@ def build_cache() -> None:
         if not (0.15 < f <= F_MAX_N):
             continue
         img = crop(np.asarray(Image.open(p).convert("RGB"))).astype(np.float32)
-        st = stages(img, ref)
+        st = force_stages(img, ref)
         d = st["depth"]
-        mm = d > 0.05
+        mm = st["contact"]
         if mm.sum() < 30:
             continue
         yy, xx = np.nonzero(mm)
@@ -167,11 +220,26 @@ def fit(report: bool = True, holdout: bool = False):
               f"for a true {f[te].min():.2f}-{f[te].max():.2f} N")
 
     def predict(st: dict) -> float:
+        """`st` must come from `force_stages`, not from `stages`.
+
+        Checked at runtime rather than by convention. The weights below were
+        fitted on ONE reconstruction; handing them another one's features is
+        silent and produces plausible newtons, which is precisely the failure
+        this module was created to undo (a pixel-unit weight vector scored
+        mm-unit features for weeks and read as rho 0.143).
+        """
+        if st.get("recon") != FORCE_RECONSTRUCTION:
+            raise TypeError(
+                f"force prediction fed a {st.get('recon') or 'plain stages()'} "
+                f"reconstruction, but this calibration was fitted on "
+                f"{FORCE_RECONSTRUCTION!r} — call react_calib.force_stages()")
         ft = st["feats"]
         if ft["area"] < 1.0:
             return 0.0
         d = st["depth"]
-        mm = d > 0.05
+        mm = st.get("contact")
+        if mm is None:
+            mm = d > 0.05
         if mm.sum() < 30:
             return 0.0
         yy, xx = np.nonzero(mm)
