@@ -27,7 +27,15 @@ than skipped quietly.
 """
 from __future__ import annotations
 
-import numpy as np
+import sys
+from pathlib import Path
+
+# Run me directly: `python scripts/verify_recon_stack.py`. Without this the
+# `force_recovery` import fails and the run reads as a broken checker rather
+# than as ten checks that never ran.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+import numpy as np                                              # noqa: E402
 
 RESULTS: list[tuple[bool, str, str]] = []
 

@@ -15,26 +15,34 @@ span 0.08-1.06 N and 0-34 N and an absolute newton means different things in
 each. The best five are drawn as a control: if the good and the bad frames look
 alike, the error is not coming from the reconstruction.
 
-WHAT IT FOUND ON THE FIRST RUN
+WHAT IT FOUND — AND ONE CLAIM RETRACTED
 
-Seven of cnc_mini_26's ten worst frames are `triangle`, and their predictions
-repeat the same value: 13.30 N against true forces of 11.2 to 17.9. That is
-not the reconstruction — their depth maps are clean and consistent — it is
-`IsotonicRegression(out_of_bounds="clip")`, which cannot return anything above
-the largest value in its fit half. Counted over the held-out set:
+The figures answer the attribution question cleanly: the ten worst frames of
+each dataset reconstruct as well as the five best. Same crisp gradient dipoles,
+same compact depth blob, no ramping, no truncation. Whatever the residual error
+is, it is in the depth→force mapping, not in image→gradient→depth.
 
-    group        n   pred max   true max   pinned at the ceiling
-    triangle    37     13.30     17.91          6
-    round       40     14.80     16.17          3
-    B / quad / quad_small / star                1 each
+I first read that residual as `IsotonicRegression(out_of_bounds="clip")`
+refusing to extrapolate above its fit half's largest value, and wrote here that
+"47% of the worst decile sit at their group's ceiling". THAT NUMBER WAS WRONG.
+It came from an n=201 sampling produced while two runs of this module were
+writing OUT_JSON at once (see `main`). On the clean single-writer run:
 
-    13 of 201 held-out predictions (6.5%) sit at their group's ceiling — but
-    among the worst DECILE of frames, 47% do.
+    dataset       n    pinned at the ceiling    ... of the worst decile
+    cnc_mini_26  303       5  (1.7%)                   10%
+    cnc          266      10  (3.8%)                    4%
+    feats         98       1  (1.0%)                    0%
+    sparsh       205      10  (4.9%)                   19%
+    faf          300      15  (5.0%)                    7%
 
-So nearly half the largest errors come from the calibration step refusing to
-extrapolate, and would not be improved by a better depth map. Reported rather
-than patched: the same clip is in the deployed `react_calib`, so changing it is
-a production decision, not a figure fix.
+So clipping explains a small minority of the largest errors, not half of them.
+Nor is any other single mechanism responsible: the worst decile sits mildly
+nearer its group's force extremes (0.29 against 0.19 of the range, Spearman
++0.05 to +0.24 — weak, and absent entirely on cnc), and its sign is not
+consistently a bias (43-74% underestimates depending on the dataset).
+
+The honest statement is the negative one, which is also the useful one: a
+better reconstruction will not move these frames.
 
     xvfb-run -a python -m force_recovery.error_analysis [--per-dataset 400]
 """
@@ -174,6 +182,30 @@ def figure(name: str, label: str, cap: int) -> dict:
 
 
 def main() -> int:
+    """One writer at a time.
+
+    Two runs of this module were once in flight together — a leftover
+    background job and a new one — and both wrote OUT_JSON. The artifact then
+    held a mix of two samplings (n=201 in the file against n=303 in the log)
+    and the printed lines interleaved, which is how it was noticed. A lock is
+    cheaper than discovering that from a log.
+    """
+    import os
+    lock = OUT_JSON.with_suffix(".lock")
+    try:
+        fd = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        os.write(fd, str(os.getpid()).encode())
+        os.close(fd)
+    except FileExistsError:
+        raise SystemExit(f"another run holds {lock} (pid "
+                         f"{lock.read_text().strip()}) — wait, or remove it")
+    try:
+        return _main()
+    finally:
+        lock.unlink(missing_ok=True)
+
+
+def _main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--per-dataset", type=int, default=400)
     ap.add_argument("--datasets", nargs="*", default=[d for d, _ in DATASETS])

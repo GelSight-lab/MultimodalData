@@ -275,6 +275,10 @@ def page_results() -> str:
     LUT 0.969 against calibration-free 0.838 when the same-protocol numbers
     are 0.626 and 0.838. Both columns now come from the same run.
     """
+    # The gel thickness is quoted in the prose; read it from the module that
+    # enforces it rather than typing 4.25 into HTML.
+    from .lut_calibration import GEL_THICKNESS_MM
+
     m = {r["dataset"]: r for r in _artifact("force_recon_matrix.json")
          if r.get("available")}
     base = _artifact("results_metrics.json")
@@ -320,18 +324,31 @@ better of the two. Nothing but the image→gradient step differs.</p>
 <div class="tablewrap"><table><thead>{head}</thead><tbody>
 {rows_for("whole")}</tbody></table></div>
 
+<figure><img src="assets/truncation.png" alt="truncated presses">
+<figcaption>What the row above excludes. A press is <b>truncated</b> when its
+contact core reaches an image border: part of the indentation is outside the
+frame, so the free-boundary solve runs off the edge with nothing beyond it to
+stop the ramp. 14.5% of truncated frames reconstruct deeper than the
+{GEL_THICKNESS_MM}&nbsp;mm gel is thick, against 0% of frames imaged whole.
+Their depth is not identifiable, so no reconstruction can fix them.</figcaption></figure>
+
+<p>Excluding them is what the headline row buys: on {m['cnc_mini_26']['label']}
+calibration-free scores ρ&nbsp;{m['cnc_mini_26']['whole']['calibfree']['rho']:.3f}
+on whole presses against
+{m['cnc_mini_26']['all']['calibfree']['rho']:.3f} once truncated frames are
+mixed in. They are also the minority — {_avail(m)}. <b>A uniform 2,000-frame
+evaluation does not exist</b>: no dataset here contains that many fully imaged
+presses.</p>
+
 <h3>All frames</h3>
-<p class="dim">Most capture grids are larger than the field of view, so this
-population is dominated by contacts whose extent is outside the image and whose
-depth is not identifiable from it.</p>
+<p class="dim">The same protocol without that exclusion.</p>
 <div class="tablewrap"><table><thead>{head}</thead><tbody>
 {rows_for("all")}</tbody></table></div>
 
 <p class="dim">The shuffle floor is an absolute ρ — what this protocol scores
 when the labels are permuted inside each group. Subtract it before reading a
-cell. React's own production number carries a fitted position gain field on top
-and is not in this table for that reason; it is on the
-<a href="method.html">method</a> page.</p>
+cell. React's production number adds a fitted position gain field and is
+therefore on the <a href="method.html">method</a> page instead.</p>
 
 <figure><img src="assets/pred_vs_gt.png" alt="predicted vs ground-truth force">
 <figcaption>Held-out prediction against ground truth, shared axes per row.
@@ -353,9 +370,24 @@ frames, mean difference {ag['mad_n']:.2f}&nbsp;N. <b>The published dataset still
 carries the LUT column</b>: switching it needs 36 episodes reprocessed.</p>
 
 <h2>Error analysis</h2>
+<p>The ten worst held-out frames of each dataset reconstruct as well as the
+five best — same gradient dipoles, same compact depth, no ramping. The residual
+is in the depth→force fit, not in image→depth, so a better reconstruction will
+not move these frames.</p>
 {_error_section()}
 """
     return _shell("results.html", "Results", body)
+
+
+def _avail(m: dict) -> str:
+    """How many presses each dataset actually images whole, from the artifact.
+
+    Typed into the HTML these would go stale the moment the visibility rule
+    moved, and a sentence claiming 605 of 6,219 next to a table saying
+    otherwise is worse than no sentence.
+    """
+    return "; ".join(f"{r['label']} {r['whole']['n']:,} of {r['all']['n']:,}"
+                     for r in m.values())
 
 
 def _error_section() -> str:
@@ -483,6 +515,13 @@ ASSET_SOURCES = {
     "pred_vs_gt.png": (ASSETS, "force_recovery.pred_vs_gt"),
     "cross_dataset.png": (ASSETS, "force_recovery.cross_dataset"),
     "sparsh_channel_fix.png": (ASSETS, "force_recovery.sparsh_channel_fix"),
+    "truncation.png": (ASSETS, "force_recovery.truncation_figure"),
+    # These are written straight into ASSETS by their builder, so nothing
+    # copies them — but they must still be declared, or a depth map drawn by
+    # the previous reconstruction sits under a current number and no check
+    # ever looks at it.
+    **{f"errors_{d}.png": (ASSETS, "force_recovery.error_analysis")
+       for d in ("cnc_mini_26", "cnc", "feats", "sparsh", "faf")},
 }
 # A figure drawn before the laws that draw it is a figure of the old laws.
 # These are the modules a reader is looking at when they look at a panel —
