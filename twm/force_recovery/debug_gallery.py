@@ -49,8 +49,21 @@ LUT, CNT = _cal["lut"], _cal["count"]
 
 
 # ---------------------------------------------------------------- pipeline
-def stages(img: np.ndarray, ref: np.ndarray) -> dict:
-    """All intermediate stages from raw to depth + features."""
+def stages(img: np.ndarray, ref: np.ndarray,
+           bc_ref: np.ndarray | None = None) -> dict:
+    """All intermediate stages from raw to depth + features.
+
+    `bc_ref` is the reference the BOUNDARY CONDITION is decided from, when that
+    differs from the reference the difference image is taken against. Exactly
+    one caller needs it and the reason is a trap: `marker_removal.stages_depth`
+    inpaints the dots out of both images first, and the boundary rule decides
+    "marker gel, so clamp" BY DETECTING THOSE DOTS. Inpainting destroys the
+    evidence the rule reads, so the reference handed to `stages` no longer
+    looked like a marker gel — measured on 40 FEATS frames, the rule flipped
+    to the free boundary on 3 of them and moved the depth by up to 1.18 mm on
+    a surface only 1-2 mm deep. The other 37 were saved by a second test (no
+    anchor region), which is luck, not a design.
+    """
     dI = img - ref
     q = np.clip((dI + DI_RANGE) / (2 * DI_RANGE) * (BINS - 1),
                 0, BINS - 1).astype(np.int32)
@@ -69,7 +82,8 @@ def stages(img: np.ndarray, ref: np.ndarray) -> dict:
     # FoTa cnc +0.146; FEATS is left on the clamped solver by the rule because
     # its marker lattice leaves no flat gel to anchor a free boundary on.
     from .poisson import integrate
-    depth, _bc = integrate(g[..., 0], g[..., 1], valid, ref=ref)
+    depth, _bc = integrate(g[..., 0], g[..., 1], valid,
+                          ref=ref if bc_ref is None else bc_ref)
     if depth[valid].size and np.median(depth[valid]) < 0:
         depth = -depth
     d = np.maximum(depth, 0.0)

@@ -309,9 +309,41 @@ def fit(report: bool = True, holdout: bool = False,
     return (predict, held) if holdout else predict
 
 
+HOLDOUT_JSON = OUT_ROOT / "feature_cache" / "react_holdout.json"
+
+
+def holdout_report() -> dict:
+    """Both arms held out by press position, WRITTEN DOWN.
+
+    The results page used to carry "rho 0.812 against the LUT's 0.763, MAE
+    1.024 against 1.113 N" as literal text in the HTML. When the feature step
+    moved to the contact mask those became 0.781 and 1.072 and the page kept
+    saying 0.812 — a typed number cannot go stale loudly. Every number on the
+    site is read from an artifact; this is the artifact for this sentence.
+    """
+    from scipy.stats import spearmanr
+
+    out = {}
+    for arm in ("calibfree", "lut"):
+        _predict, h = fit(report=False, holdout=True, recon=arm)
+        out[arm] = {"rho": float(spearmanr(h["pred"], h["f"]).statistic),
+                    "mae_n": float(np.abs(h["pred"] - h["f"]).mean()),
+                    "n_heldout": int(len(h["f"]))}
+    out["winner"] = max(("calibfree", "lut"), key=lambda k: out[k]["rho"])
+    HOLDOUT_JSON.parent.mkdir(parents=True, exist_ok=True)
+    HOLDOUT_JSON.write_text(json.dumps(out, indent=1))
+    for arm in ("calibfree", "lut"):
+        print(f"  {arm:10s} rho {out[arm]['rho']:.3f}  "
+              f"MAE {out[arm]['mae_n']:.3f} N  n={out[arm]['n_heldout']}")
+    print(f"-> {HOLDOUT_JSON}")
+    return out
+
+
 if __name__ == "__main__":
     cmd = sys.argv[1] if len(sys.argv) > 1 else "fit"
     if cmd == "build":
         build_cache()
+    elif cmd == "holdout":
+        holdout_report()
     else:
         fit()

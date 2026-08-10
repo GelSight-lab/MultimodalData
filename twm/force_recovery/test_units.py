@@ -98,9 +98,18 @@ def test_stages_depth_matches_marker_study_img_telea():
     img, ref = get(frames[3])
     mask = marker_mask(ref)
     assert mask is not None and mask.mean() > 0.15
+    from .lut_calibration import GEL_THICKNESS_MM
     a = stages_depth(img, ref)["depth"]
     b = run_strategy(img, ref, mask, "img_telea")["depth"]
-    assert np.array_equal(a, b), float(np.abs(a - b).max())
+    # Equal UP TO THE GEL CEILING. `stages()` later gained a physical clip at
+    # the 4.25 mm elastomer thickness; `marker_study.stages_m` is frozen
+    # evidence from before that and does not clip. On FEATS frame 3 that is
+    # the entire difference — 506 pixels, all of them the ones the study
+    # reconstructs at 4.25-4.66 mm, i.e. deeper than the gel can be. The
+    # assertion is kept exact everywhere else, because the point of it is that
+    # these two code paths have not otherwise forked.
+    assert np.array_equal(a, np.minimum(b, GEL_THICKNESS_MM)), \
+        float(np.abs(a - np.minimum(b, GEL_THICKNESS_MM)).max())
 
 
 def test_force_dot_area_is_linear_in_force():

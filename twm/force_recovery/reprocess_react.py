@@ -55,11 +55,40 @@ def _one(job):
         return {"job": job, "ok": False, "error": f"{type(exc).__name__}: {exc}"}
 
 
+def _done(job) -> bool:
+    """Staged AND readable. `exists()` alone is not a completion test for a job
+    that has already been killed once mid-run: a truncated npz exists, and a
+    resume that trusts the filename would skip it and carry the damage into
+    `promote`. Cheap to check — the header and one array are enough.
+    """
+    p = STAGING / job[0] / job[1] / f"{job[2]}_{job[3]}.npz"
+    if not p.exists():
+        return False
+    try:
+        with np.load(p, allow_pickle=True) as d:
+            len(d["force_normal_n"])
+            str(d["force_calibration"])
+        return True
+    except Exception:                                          # noqa: BLE001
+        print(f"  re-doing damaged staged file: {p.name}", flush=True)
+        p.unlink(missing_ok=True)
+        return False
+
+
 def cmd_run() -> int:
+    """Resumable on purpose. A four-hour job that cannot resume is fragile:
+    this one was SIGKILLed at 5 of 72 (no traceback — the OOM killer, after a
+    heavy evaluation was started alongside it) and without resume the whole
+    run would have restarted from zero."""
     from concurrent.futures import ProcessPoolExecutor
-    jobs = episodes()
-    print(f"[reprocess] {len(jobs)} sides -> {STAGING} ({WORKERS} workers)",
+    allj = episodes()
+    jobs = [j for j in allj if not _done(j)]
+    print(f"[reprocess] {len(allj)} sides, {len(allj) - len(jobs)} already "
+          f"staged, {len(jobs)} to do -> {STAGING} ({WORKERS} workers)",
           flush=True)
+    if not jobs:
+        print("nothing to do")
+        return 0
     done, failed = [], []
     with ProcessPoolExecutor(max_workers=WORKERS) as ex:
         for i, r in enumerate(ex.map(_one, jobs), 1):
@@ -74,6 +103,37 @@ def cmd_run() -> int:
     for f in failed:
         print(f"  FAILED {'/'.join(f['job'])}: {f['error']}")
     return 1 if failed else 0
+
+
+def _tie_frac(a, b) -> float:
+    """How much of the side sits on ONE force value."""
+    from collections import Counter
+    n = len(a)
+    return float(max(max(Counter(np.round(a, 4)).values()),
+                     max(Counter(np.round(b, 4)).values())) / max(n, 1))
+
+
+def _rho_varying(a, b) -> float:
+    """Rank agreement on the frames that actually VARY.
+
+    The isotonic calibration is a step function fitted on 477 rig samples, so a
+    third to two thirds of an episode can land on a single output level (zero,
+    or one plateau). Ranks inside a tied block carry no information, and both
+    series agreeing that "these 60% are all the same" inflates the plain rho:
+    on the best-agreeing side measured here, dropping each series' modal value
+    took 0.966 to 0.542. The plain number is kept because it is what a consumer
+    of the channel sees; this one is what says whether the CHANGING part of the
+    signal still means the same thing.
+    """
+    from collections import Counter
+
+    from scipy.stats import spearmanr
+    ma = Counter(np.round(a, 4)).most_common(1)[0][0]
+    mb = Counter(np.round(b, 4)).most_common(1)[0][0]
+    k = (np.round(a, 4) != ma) & (np.round(b, 4) != mb)
+    if k.sum() < 30:
+        return float("nan")
+    return float(spearmanr(a[k], b[k]).statistic)
 
 
 def cmd_compare() -> int:
@@ -92,6 +152,8 @@ def cmd_compare() -> int:
         rows.append({
             "ep": f"{task}/{date}/{ep}/{side}", "staged": True, "n": int(n),
             "rho": float(spearmanr(a, b).statistic),
+            "rho_varying": _rho_varying(a, b),
+            "tie_frac": _tie_frac(a, b),
             "mad": float(np.abs(a - b).mean()),
             "old_max": float(a.max()), "new_max": float(b.max()),
             "old_contact": float((a > 0.1).mean()),
@@ -107,8 +169,13 @@ def cmd_compare() -> int:
     oc = np.array([r["old_contact"] for r in ok])
     nc = np.array([r["new_contact"] for r in ok])
     print(f"[compare] {len(ok)}/{len(rows)} staged")
+    rv = np.array([r["rho_varying"] for r in ok])
+    tf = np.array([r["tie_frac"] for r in ok])
     print(f"  rank agreement with the published channel: "
           f"min {rho.min():.3f}  median {np.median(rho):.3f}  max {rho.max():.3f}")
+    print(f"  ... on the VARYING frames only: min {np.nanmin(rv):.3f}  "
+          f"median {np.nanmedian(rv):.3f}  max {np.nanmax(rv):.3f}   "
+          f"(one value covers a median {np.median(tf)*100:.0f}% of each side)")
     print(f"  mean |difference|: median {np.median(mad):.3f} N  "
           f"worst {mad.max():.3f} N")
     print(f"  contact fraction: published {oc.mean()*100:.1f}%  "
@@ -147,6 +214,15 @@ def cmd_promote() -> int:
         src = STAGING / task / date / f"{ep}_{side}.npz"
         shutil.copy2(src, OUT_ROOT / task / date / f"{ep}_{side}.npz")
     print(f"promoted {len(jobs)} sides to {OUT_ROOT}")
+
+    # The site describes the release by reading the release. That description
+    # is invalidated by exactly this function and by nothing else, and the
+    # freshness gate cannot catch it — the artifact has no upstream CODE to be
+    # older than, only a directory. So the step that changes the directory
+    # refreshes the description; otherwise the page would keep announcing the
+    # channel that was just replaced.
+    from .release_channel import main as refresh_release
+    refresh_release()
     return 0
 
 

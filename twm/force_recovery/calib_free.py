@@ -371,8 +371,11 @@ def reconstruct(img: np.ndarray, ref: np.ndarray,
     return {"dI": dI, "valid": valid, "gx": gx, "gy": gy, "depth": d,
             "normals": normals(gx, gy), "solver": used,
             # True when the contact reaches the frame edge: the free boundary
-            # has extrapolated a surface it could not see, and 14.5% of such
-            # frames come out deeper than the gel is thick. See poisson.py.
+            # has extrapolated a surface it could not see, and a sizeable
+            # minority of such frames come out deeper than the gel is thick.
+            # The fraction is MEASURED by truncation_figure and written to
+            # truncation.json — it is not repeated here, because it was, in
+            # four files, and stopped being true in all of them at once.
             "truncated": contact_truncated(valid),
             "units": "relative (peak = 1)" if normalize
                      else "arbitrary (scale not recovered)"}

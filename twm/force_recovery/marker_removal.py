@@ -146,8 +146,11 @@ def stages_depth(img: np.ndarray, ref: np.ndarray,
         mask = marker_mask(ref)
     if mask is None:
         return stages(img, ref)
+    # The boundary condition is decided from the UNINPAINTED reference: the
+    # rule identifies a marker gel by its dots, and this function has just
+    # removed them. See `debug_gallery.stages`.
     return stages(inpaint_img(img, mask, method),
-                  inpaint_img(ref, mask, method))
+                  inpaint_img(ref, mask, method), bc_ref=ref)
 
 
 # ------------------------------------------------------------------ geometry

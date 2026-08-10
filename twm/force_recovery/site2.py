@@ -135,6 +135,49 @@ def _artifact(name: str):
     return json.loads(p.read_text())
 
 
+
+LABEL = {"cnc_mini_26": "GelSight Mini CNC", "cnc": "FoTa cnc_Mini",
+         "feats": "FEATS", "sparsh": "Sparsh", "faf": "FeelAnyForce"}
+
+
+def _oor_line(xd: dict) -> str:
+    """Name the transfers whose target is ENTIRELY outside the source's range.
+
+    Written from the artifact rather than typed, because which pairs saturate
+    depends on the pools and has already changed once when they widened.
+    """
+    full = [(s, t) for s, row in xd["out_of_range"].items()
+            # 0.99, not 1.0: cnc->FEATS sits at 0.9955 and the
+            # difference from 1.0 carries no meaning for this sentence.
+            for t, v in row.items() if s != t and v >= 0.99]
+    if not full:
+        worst = max(((s, t, v) for s, row in xd["out_of_range"].items()
+                     for t, v in row.items() if s != t),
+                    key=lambda r: r[2])
+        return (f"the worst is {LABEL[worst[0]]}→{LABEL[worst[1]]} at "
+                f"{worst[2] * 100:.0f}&nbsp;% of frames extrapolated.")
+    names = ", ".join(f"{LABEL[a]}→{LABEL[b]}" for a, b in full)
+    return (f"{names} {'are' if len(full) > 1 else 'is'} "
+            f"≥99&nbsp;% extrapolation.")
+
+
+
+def _release_line(rc: dict) -> str:
+    """The published channel, described by the published channel."""
+    if not rc["uniform"]:
+        parts = ", ".join(f"{v} sides on “{k}”"
+                          for k, v in rc["calibrations"].items())
+        return (f"<b>The release is not uniform</b> — {parts}. It must not "
+                f"ship in this state.")
+    if rc["matches_current_code"]:
+        return (f"The published dataset carries this channel across all "
+                f"{rc['sides']} sides of {rc['episodes']} episodes "
+                f"({rc['frames']:,} frames).")
+    return (f"<b>The published dataset still carries the previous channel</b> "
+            f"(“{rc['calibration']}”) across {rc['sides']} sides; switching it "
+            f"means reprocessing {rc['episodes']} episodes.")
+
+
 def words(html: str) -> int:
     body = re.sub(r"<(script|style|table)[^>]*>.*?</\1>", " ", html, flags=re.S)
     body = re.sub(r"<[^>]+>", " ", body)
@@ -144,12 +187,34 @@ def words(html: str) -> int:
 # ─────────────────────────────────────────────────────────────── pages
 
 def page_index() -> str:
-    fm = _artifact("force_matrix.json")["datasets"]
-    ab = _artifact("calibfree_vs_lut.json")
+    # Keyed by the substring of the label, not by list position. It used to be
+    # ab[0] and ab[2]; the sentence names "markerless GelSight Mini" and "a
+    # marker gel", so a reordering of the artifact would have kept the prose
+    # and silently swapped which dataset it described.
+    _ab = _artifact("calibfree_vs_lut.json")
+
+    def ab_for(tag: str) -> dict:
+        hit = [r for r in _ab if tag in r["label"]]
+        if len(hit) != 1:
+            raise SystemExit(f"calibfree_vs_lut.json: expected exactly one "
+                             f"entry matching {tag!r}, found {len(hit)}")
+        return hit[0]
+
+    ab_mini, ab_marker = ab_for("cnc_mini_26"), ab_for("marker gel")
     ag = _artifact("force_agreement.json")
     figs = json.loads((SITE / "figure_manifest.json").read_text())
     n_ds = sum(f["available"] for f in figs)
-    best = max(v["rho"] for v in fm.values())
+
+    # The headline read `force_matrix.json`, a DIFFERENT protocol (it fits a
+    # position gain field), so the front page said 0.969 while the results
+    # table said 0.996 and neither mentioned the other. It now comes from the
+    # same artifact the table does — and picks by margin over the row's own
+    # shuffle floor, so a floor-dominated row cannot become the headline.
+    whole = [r["whole"] for r in _artifact("force_recon_matrix.json")
+             if r.get("available") and r.get("whole", {}).get("scored")]
+    arms = [a for p in whole for a in (p["lut"], p["calibfree"])
+            if a["shuffle_rho"] <= FLOOR_LIMIT]
+    best = max(arms, key=lambda a: a["rho"] - a["shuffle_rho"])["rho"]
     body = f"""
 <h1>Contact force from a GelSight image,<br>with no force sensor</h1>
 <p>React records tactile images and sensor pose. It has no load cell, so the
@@ -178,8 +243,8 @@ all.</figcaption></figure>
 lookup table learns it from ~700 sphere presses per sensor; a linear
 photometric solve needs only the LED geometry. On markerless GelSight&nbsp;Mini
 presses the calibration-free solve leads by
-{ab[0]['calibfree']['rho'] - ab[0]['lut']['rho']:+.2f}&nbsp;ρ; on a marker gel
-it trails by {ab[2]['calibfree']['rho'] - ab[2]['lut']['rho']:+.2f}, which is
+{ab_mini['calibfree']['rho'] - ab_mini['lut']['rho']:+.2f}&nbsp;ρ; on a marker
+gel it trails by {ab_marker['calibfree']['rho'] - ab_marker['lut']['rho']:+.2f}, which is
 what the physics predicts.</p>
 <p class="dim">Full comparison on the <a href="results.html">results</a> page ·
 how it works on <a href="method.html">method</a>.</p>
@@ -239,6 +304,15 @@ on one direction and <code>(gx,&nbsp;gy)</code> is a 3×2 least-squares solve.
 No table, no sphere presses. This is the GelSight Wedge driver's approach. It
 recovers shape but not scale.</p>
 
+<h3>Fitting the newtons, and why the weights can lie</h3>
+<p>Five collinear contact features, then a monotone isotonic calibration.
+Isotonic clips outside its fitted range, so transfer ρ is scored on the linear
+projection: on the isotonic output a fully extrapolated target returns a
+constant, and a constant has no ranks. Least squares can also cancel large
+opposite-sign terms, a balance holding only at the ratios it was fitted on —
+that sends one row of the <a href="results.html">transfer matrix</a>
+negative.</p>
+
 <h2>Stage 1 scored on its own — no force labels</h2>
 <p>Force estimation is image→depth then depth→newtons, and a ρ only ever scores
 the pair: a geometrically wrong depth that is monotone in contact size still
@@ -292,6 +366,13 @@ def page_results() -> str:
          if r.get("available")}
     base = _artifact("results_metrics.json")
     ag = _artifact("force_agreement.json")
+    ho = _artifact("react_holdout.json")
+    tr = _artifact("truncation.json")
+    xd = _artifact("cross_dataset.json")
+    xn = xd["nnls"]
+    wa = _artifact("react_weight_ab.json")
+    rc = _artifact("release_channel.json")
+    war, wag = wa["react"], wa["rig"]
     key = {"cnc_mini_26": "glowtact", "cnc": "cnc", "feats": "feats"}
 
     def rows_for(pop: str) -> str:
@@ -349,17 +430,19 @@ the image→gradient step differs.</p>
 <figcaption>What the row above excludes. A press is <b>truncated</b> when its
 contact core reaches an image border: part of the indentation is outside the
 frame, so the free-boundary solve runs off the edge with nothing beyond it to
-stop the ramp. 14.5% of truncated frames reconstruct deeper than the
-{GEL_THICKNESS_MM}&nbsp;mm gel is thick, against 0% of frames imaged whole.
-Their depth is not identifiable, so no reconstruction can fix them.</figcaption></figure>
+stop the ramp. {tr['over_gel_frac_truncated']*100:.1f}% of truncated frames
+reconstruct deeper than the {GEL_THICKNESS_MM}&nbsp;mm gel is thick, against
+{tr['over_gel_frac_whole']*100:.1f}% of frames imaged whole
+({tr['n_truncated']} and {tr['n_whole']} frames). Their depth is not
+identifiable, so no reconstruction can fix them.</figcaption></figure>
 
 <p>Excluding them is what the headline row buys: on {m['cnc_mini_26']['label']}
 calibration-free scores ρ&nbsp;{m['cnc_mini_26']['whole']['calibfree']['rho']:.3f}
 on whole presses against
 {m['cnc_mini_26']['all']['calibfree']['rho']:.3f} once truncated frames are
-mixed in. They are also the minority — {_avail(m)}. Three datasets reach the
-2,000 scored presses this table asks for; cnc_mini_26 and cnc cannot, because
-every press they contain is already counted here.</p>
+mixed in. They are also the minority: whole presses run {_avail(m)}. Three
+datasets reach the 2,000 this table samples; cnc_mini_26 and cnc cannot,
+because every press they hold is already counted.</p>
 
 <h3>All frames</h3>
 <p class="dim">The same protocol without that exclusion.</p>
@@ -367,9 +450,9 @@ every press they contain is already counted here.</p>
 {rows_for("all")}</tbody></table></div>
 
 <p class="dim">The shuffle floor is an absolute ρ — what this protocol scores
-when the labels are permuted inside each group. Subtract it before reading a
-cell. React's production number adds a fitted position gain field and is
-therefore on the <a href="method.html">method</a> page instead.</p>
+with labels permuted inside each group. Subtract it before reading a cell.
+React's production number adds a fitted position gain field and lives on the
+<a href="method.html">method</a> page.</p>
 
 <figure><img src="assets/pred_vs_gt.png" alt="predicted vs ground-truth force">
 <figcaption>Held-out prediction against ground truth, shared axes per row.
@@ -382,19 +465,33 @@ the random-weight baseline under its column: the features are collinear and all
 monotone in contact size, so on an easy target almost any direction ranks
 correctly.</figcaption></figure>
 
+<p>{_oor_line(xd)} — there MAE is extrapolation, not prediction.
+FeelAnyForce's row goes <i>negative</i>: collinear features let least squares
+cancel opposite-sign terms (<a href="method.html">method</a>). Non-negative
+weights fix it — off-diagonal ρ
+{xn['ols_offdiag_mean']:.3f}&nbsp;→&nbsp;{xn['nnls_offdiag_mean']:.3f}, negative
+cells {xn['ols_negative_cells']}&nbsp;→&nbsp;{xn['nnls_negative_cells']} of
+{xn['n_offdiag']}, costing {xn['diagonal_cost']:.3f} on the diagonal.
+<b>The deployed estimator is unchanged</b>: on React both agree at
+ρ&nbsp;{war['rho']:.3f} ({war['outside_rig_range_frac']*100:.1f}&nbsp;% of
+frames outside the rig's range), and {wag['seeds']} held-out seeds differ by
+{wag['paired_diff_median']:+.3f}&nbsp;±&nbsp;{wag['paired_diff_sd']:.3f}&nbsp;ρ.</p>
+
 <h2>Which reconstruction for React's force channel?</h2>
-<p>Calibration-free, on React's own calibration objects: held out by press
-position, ρ&nbsp;0.812 against the LUT's 0.763, MAE 1.024 against
-1.113&nbsp;N.</p>
+<p>{ho['winner'].replace('calibfree', 'Calibration-free').replace('lut', 'The LUT')},
+on React's own calibration objects: held out by press position,
+ρ&nbsp;{ho['calibfree']['rho']:.3f} against the LUT's {ho['lut']['rho']:.3f},
+MAE {ho['calibfree']['mae_n']:.3f} against
+{ho['lut']['mae_n']:.3f}&nbsp;N over {ho['calibfree']['n_heldout']} held-out
+presses.</p>
 <p>The two agree at ρ&nbsp;=&nbsp;{ag['spearman']:.3f} over {ag['n']:,} React
-frames, mean difference {ag['mad_n']:.2f}&nbsp;N. <b>The published dataset still
-carries the LUT column</b>: switching it needs 36 episodes reprocessed.</p>
+frames, mean difference {ag['mad_n']:.2f}&nbsp;N. {_release_line(rc)}</p>
 
 <h2>Error analysis</h2>
-<p>The ten worst held-out frames of each dataset reconstruct as well as the
-five best — same gradient dipoles, same compact depth, no ramping. The residual
-is in the depth→force fit, not in image→depth, so a better reconstruction will
-not move these frames.</p>
+<p>The ten worst held-out frames reconstruct as well as the five best — same
+gradient dipoles, same compact depth, no ramping. The residual is in the
+depth→force fit, not in image→depth, so a better reconstruction will not move
+them.</p>
 {_error_section()}
 """
     return _shell("results.html", "Results", body)
@@ -412,12 +509,19 @@ def _avail(m: dict) -> str:
     """
     sizes = {r["dataset"]: r for r in _artifact("dataset_sizes.json")
              if r.get("available")}
-    out = []
+    # A range, not a roll-call. Spelling out five "scored of held" pairs put
+    # a table into a paragraph and cost 40 words of a 560-word page; the
+    # per-dataset n is already a column of the table above.
+    frac = []
     for name, r in m.items():
         n = sizes.get(name, {}).get("n_frames")
-        out.append(f"{r['label']} {r['whole']['n']:,}"
-                   + (f" of {n:,}" if n else ""))
-    return "; ".join(out)
+        if n:
+            frac.append((r["whole"]["n"] / n, r["whole"]["n"], n, r["label"]))
+    if not frac:
+        return "counts unavailable"
+    lo, hi = min(frac), max(frac)
+    return (f"from {lo[1]:,} of {lo[2]:,} ({lo[3]}) to "
+            f"{hi[1]:,} of {hi[2]:,} ({hi[3]})")
 
 
 def _error_section() -> str:
@@ -431,15 +535,18 @@ def _error_section() -> str:
             out += (f"<p class='dim'>{r['dataset']}: not drawn — "
                     f"{r.get('reason','')}</p>")
             continue
+        # The convention is stated ONCE, above the group. It used to be
+        # repeated verbatim in all five captions — 175 words saying the same
+        # sentence, which is the kind of prose the word budget exists to catch.
         out += (f'<figure><img src="assets/{r["asset"]}" alt="{r["dataset"]} '
-                f'errors"><figcaption>{r["label"]} — the ten worst held-out '
-                f'frames and, as a control, the five best. Relative error is '
-                f'|pred−true| over the dataset\'s force span '
-                f'({r["force_span"]:.2f}&nbsp;N); median '
+                f'errors"><figcaption>{r["label"]}, span '
+                f'{r["force_span"]:.2f}&nbsp;N — median '
                 f'{r["rel_err_median"]*100:.1f}%, p90 '
                 f'{r["rel_err_p90"]*100:.1f}%, worst '
                 f'{r["rel_err_max"]*100:.1f}%.</figcaption></figure>')
-    return out
+    return ("<p class='dim'>Each panel: the ten worst held-out frames, with the"
+            " five best as a control. Relative error is |pred−true| over the "
+            "dataset's force span.</p>" + out)
 
 
 def page_gallery() -> str:
@@ -569,7 +676,10 @@ RENDER_LAWS = ("o3d_view.py", "showcase.py", "visualize.py", "eval_panel.py",
 NUMBER_ARTIFACTS = ("force_matrix.json", "calibfree_vs_lut.json",
                     "results_metrics.json", "force_agreement.json",
                     "depth_eval.json", "force_recon_matrix.json",
-                    "error_analysis.json", "dataset_sizes.json")
+                    "error_analysis.json", "dataset_sizes.json",
+                    "react_holdout.json", "truncation.json",
+                    "cross_dataset.json", "react_weight_ab.json",
+                    "release_channel.json")
 # A number is stale if a law UPSTREAM OF IT moved — and each number declares
 # which those are. The gate used to watch the reconstruction alone (integrator
 # plus the two colour-to-gradient maps), so `react_calib.feature_vector` (what
@@ -587,9 +697,121 @@ DEPTH_LAWS = ("poisson.py", "calib_free.py", "debug_gallery.py")
 FORCE_LAWS = DEPTH_LAWS + ("react_calib.py", "force_recon_matrix.py")
 RECON_LAWS = FORCE_LAWS                       # figures show both halves
 NUMBER_LAWS = {
-    "depth_eval.json": DEPTH_LAWS,            # no force label is read
+    # Declared DEPTH_LAWS with the comment "no force label is read". It does
+    # not read one — but it draws its frames through `force_recon_matrix._rows`
+    # and its features through `react_calib`, so those move underneath it.
+    # Caught by `test_number_laws.py`, not by reading the comment.
+    "depth_eval.json": FORCE_LAWS,
     "dataset_sizes.json": (),                 # counts frames on disk
+    "cross_dataset.json": FORCE_LAWS + ("cross_dataset.py",),
+    "react_weight_ab.json": FORCE_LAWS + ("react_weight_ab.py",),
+    # Declared from the actual import chain, checked by `test_number_laws.py`.
+    # These three never touch `force_recon_matrix`, so the default union was
+    # condemning them whenever the evaluation module changed — including for a
+    # change that only added a file lock. An over-broad dependency is not a
+    # stricter gate, it is a gate that cries wolf, and this one had started to.
+    "results_metrics.json": DEPTH_LAWS + ("force_eval_all.py",
+                                          "react_calib.py"),
+    "force_agreement.json": DEPTH_LAWS + ("react_calib.py",),
+    "react_holdout.json": DEPTH_LAWS + ("react_calib.py",),
+    # Describes the release on disk, not a computation over it: no law.
+    "release_channel.json": (),
 }
+
+
+LAW_STATE = CACHE / "law_code_state.json"
+
+
+def _code_fingerprint(path: Path) -> str:
+    """A law's CODE, with comments and docstrings removed.
+
+    `ast.dump` of the parsed module is already comment-free; the docstrings
+    survive as Constant nodes, so they are blanked. What is left changes only
+    when behaviour can change.
+    """
+    import ast
+    import hashlib
+
+    tree = ast.parse(path.read_text())
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef,
+                             ast.AsyncFunctionDef)):
+            body = getattr(node, "body", None)
+            if (body and isinstance(body[0], ast.Expr)
+                    and isinstance(body[0].value, ast.Constant)
+                    and isinstance(body[0].value.value, str)):
+                body[0].value.value = ""
+    return hashlib.sha256(ast.dump(tree).encode()).hexdigest()[:16]
+
+
+def _first_seen(path: Path, fp: str, mtime: float) -> float:
+    """When this code first existed, for a law with no recorded history.
+
+    Falling back to the mtime would date every law to the moment this state
+    file was created, condemning artifacts that are in fact current. Git knows
+    better: if the committed version of the file has the SAME fingerprint —
+    i.e. everything since was comments — the code dates from that commit, not
+    from the last time someone touched the prose.
+    """
+    import subprocess
+    try:
+        root = subprocess.run(["git", "rev-parse", "--show-toplevel"],
+                              cwd=path.parent, capture_output=True, text=True,
+                              check=True).stdout.strip()
+        rel = str(path.resolve().relative_to(root))
+        blob = subprocess.run(["git", "show", f"HEAD:{rel}"], cwd=root,
+                              capture_output=True, text=True, check=True).stdout
+        import ast
+        import hashlib
+        import tempfile
+        with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False) as fh:
+            fh.write(blob)
+            tmp = Path(fh.name)
+        same = _code_fingerprint(tmp) == fp
+        tmp.unlink(missing_ok=True)
+        if not same:
+            return mtime
+        when = subprocess.run(["git", "log", "-1", "--format=%ct", "--", rel],
+                              cwd=root, capture_output=True, text=True,
+                              check=True).stdout.strip()
+        return float(when) if when else mtime
+    except Exception:                                          # noqa: BLE001
+        return mtime
+
+
+def law_time(names) -> float:
+    """When the newest of these laws last CHANGED BEHAVIOUR.
+
+    Not `st_mtime`: rewriting a comment moves the mtime and would condemn every
+    figure and every number on the site, including a three-hour evaluation that
+    was still running when the comment was written. A gate that orders work it
+    cannot justify is a gate people learn to touch their way around — and the
+    moment it is routine to bypass, it stops catching the real staleness it
+    exists for.
+
+    So each law's fingerprint and the time it first appeared are remembered in
+    `law_code_state.json`, and a file whose code is unchanged keeps its earlier
+    timestamp however often it is edited.
+    """
+    here = Path(__file__).resolve().parent
+    try:
+        state = json.loads(LAW_STATE.read_text())
+    except Exception:                                          # noqa: BLE001
+        state = {}
+    newest, dirty = 0.0, False
+    for n in names:
+        f = here / n
+        fp, mt = _code_fingerprint(f), f.stat().st_mtime
+        prev = state.get(n)
+        if not prev or prev.get("fingerprint") != fp:
+            state[n] = {"fingerprint": fp,
+                        "changed_at": _first_seen(f, fp, mt)}
+            dirty = True
+        newest = max(newest, state[n]["changed_at"])
+    if dirty:
+        LAW_STATE.parent.mkdir(parents=True, exist_ok=True)
+        LAW_STATE.write_text(json.dumps(state, indent=1, sort_keys=True))
+    return newest
 
 
 def collect_assets() -> list[str]:
@@ -597,7 +819,7 @@ def collect_assets() -> list[str]:
     import shutil
 
     here = Path(__file__).resolve().parent
-    law_mtime = max((here / n).stat().st_mtime for n in RENDER_LAWS)
+    law_mtime = law_time(RENDER_LAWS)
     ASSETS.mkdir(parents=True, exist_ok=True)
     problems = []
     for name, (src_dir, cmd) in ASSET_SOURCES.items():
@@ -621,7 +843,7 @@ def collect_assets() -> list[str]:
             continue
         if not laws:
             continue
-        recon_mtime = max((here / n).stat().st_mtime for n in laws)
+        recon_mtime = law_time(laws)
         if recon_mtime - f.stat().st_mtime > 0:
             problems.append(
                 f"{name}: computed BEFORE the laws it depends on "
