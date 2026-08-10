@@ -400,10 +400,16 @@ def page_results() -> str:
                 rho, mar = cells[k]
                 v = f"{rho:.3f}<br><span class='dim'>{mar:+.3f}</span>"
                 return f"<td><b>{v}</b></td>" if k == best else f"<td>{v}</td>"
+            # "scored of available" in the column itself. This used to be a
+            # sentence listing all five datasets with their pool sizes — about
+            # thirty words of prose restating what a table cell says better.
+            pool = _sizes().get(name, {}).get("n_frames")
             out += (f"<tr><td>{r['label']}"
                     + ("<br><span class='bad'>floor-dominated</span>"
                        if floored else "")
-                    + f"</td><td>{p['n']}</td>"
+                    + f"</td><td>{p['n']:,}"
+                    + (f"<br><span class='dim'>of {pool:,}</span>"
+                       if pool else "")
                     + mark("LUT") + mark("calib-free")
                     + f"<td class='dim'>{p['lut']['shuffle_rho']:+.3f} / "
                       f"{p['calibfree']['shuffle_rho']:+.3f}</td>"
@@ -440,9 +446,8 @@ identifiable, so no reconstruction can fix them.</figcaption></figure>
 calibration-free scores ρ&nbsp;{m['cnc_mini_26']['whole']['calibfree']['rho']:.3f}
 on whole presses against
 {m['cnc_mini_26']['all']['calibfree']['rho']:.3f} once truncated frames are
-mixed in. They are also the minority: whole presses run {_avail(m)}. Three
-datasets reach the 2,000 this table samples; cnc_mini_26 and cnc cannot,
-because every press they hold is already counted.</p>
+mixed in. Three datasets reach the 2,000 this table samples; the two that
+cannot have no more presses to give.</p>
 
 <h3>All frames</h3>
 <p class="dim">The same protocol without that exclusion.</p>
@@ -450,9 +455,9 @@ because every press they hold is already counted.</p>
 {rows_for("all")}</tbody></table></div>
 
 <p class="dim">The shuffle floor is an absolute ρ — what this protocol scores
-with labels permuted inside each group. Subtract it before reading a cell.
-React's production number adds a fitted position gain field and lives on the
-<a href="method.html">method</a> page.</p>
+with labels permuted inside each group; the margin beside each cell already has
+it subtracted. React's production number adds a fitted position gain field and
+lives on the <a href="method.html">method</a> page.</p>
 
 <figure><img src="assets/pred_vs_gt.png" alt="predicted vs ground-truth force">
 <figcaption>Held-out prediction against ground truth, shared axes per row.
@@ -468,7 +473,7 @@ correctly.</figcaption></figure>
 <p>{_oor_line(xd)} — there MAE is extrapolation, not prediction.
 FeelAnyForce's row goes <i>negative</i>: collinear features let least squares
 cancel opposite-sign terms (<a href="method.html">method</a>). Non-negative
-weights fix it — off-diagonal ρ
+weights fix it: off-diagonal ρ
 {xn['ols_offdiag_mean']:.3f}&nbsp;→&nbsp;{xn['nnls_offdiag_mean']:.3f}, negative
 cells {xn['ols_negative_cells']}&nbsp;→&nbsp;{xn['nnls_negative_cells']} of
 {xn['n_offdiag']}, costing {xn['diagonal_cost']:.3f} on the diagonal.
@@ -478,16 +483,14 @@ frames outside the rig's range), and {wag['seeds']} held-out seeds differ by
 {wag['paired_diff_median']:+.3f}&nbsp;±&nbsp;{wag['paired_diff_sd']:.3f}&nbsp;ρ.</p>
 
 <h2>Which reconstruction for React's force channel?</h2>
-<p>React's own calibration objects <b>cannot answer this</b>. Held out by press
-position, calibration-free scores ρ&nbsp;{ho['calibfree']['rho']:.3f} against
-the LUT's {ho['lut']['rho']:.3f} over only
-{ho['calibfree']['n_heldout']} presses — but a paired bootstrap puts that
-margin at 95%&nbsp;CI
+<p>React's own calibration objects <b>cannot answer this</b>: calibration-free
+scores ρ&nbsp;{ho['calibfree']['rho']:.3f} against the LUT's
+{ho['lut']['rho']:.3f} on {ho['calibfree']['n_heldout']} held-out presses, but
+a paired bootstrap puts the margin at 95%&nbsp;CI
 [{ho['paired_bootstrap']['d_rho_ci95'][0]:+.3f},
-{ho['paired_bootstrap']['d_rho_ci95'][1]:+.3f}], ahead in
-{ho['paired_bootstrap']['d_rho_frac_calibfree_ahead']*100:.0f}% of resamples.
-That is a coin flip. The reason to deploy it is the table above: real newtons,
-{_n_range(m)} presses per dataset, calibration-free {_cf_record(m)}.</p>
+{ho['paired_bootstrap']['d_rho_ci95'][1]:+.3f}] — a coin flip. The reason to
+deploy it is the table above: real newtons, {_n_range(m)} presses each,
+calibration-free {_cf_record(m)}.</p>
 <p>The two agree at ρ&nbsp;=&nbsp;{ag['spearman']:.3f} over {ag['n']:,} React
 frames, mean difference {ag['mad_n']:.2f}&nbsp;N. {_release_line(rc)}</p>
 
@@ -499,6 +502,12 @@ them.</p>
 {_error_section()}
 """
     return _shell("results.html", "Results", body)
+
+
+def _sizes() -> dict:
+    """dataset -> counted frames on disk, keyed for the results table."""
+    return {r["dataset"]: r for r in _artifact("dataset_sizes.json")
+            if r.get("available")}
 
 
 def _n_range(m: dict) -> str:
@@ -804,7 +813,16 @@ def _first_seen(path: Path, fp: str, mtime: float) -> float:
         when = subprocess.run(["git", "log", "-1", "--format=%ct", "--", rel],
                               cwd=root, capture_output=True, text=True,
                               check=True).stdout.strip()
-        return float(when) if when else mtime
+        commit_t = float(when) if when else mtime
+        # The code cannot have changed later than the file was last WRITTEN,
+        # so the commit time is an upper bound and mtime is another — take the
+        # earlier. Without this, the ordinary "compute the artifact, then
+        # commit the code" sequence condemns the artifact every time: the code
+        # was already in the working tree when the number was computed, but
+        # `git log -1` dates it to the commit that came minutes later. Every
+        # freshly computed artifact was being marked stale by its own commit,
+        # which is a treadmill, and a gate people step off.
+        return min(commit_t, mtime)
     except Exception:                                          # noqa: BLE001
         return mtime
 
