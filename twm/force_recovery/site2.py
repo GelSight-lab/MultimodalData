@@ -168,6 +168,25 @@ how it works on <a href="method.html">method</a>.</p>
     return _shell("index.html", "React — force from touch", body)
 
 
+def _depth_table() -> str:
+    """Stage 1 scored WITHOUT force labels — see force_recovery.depth_eval."""
+    rows = _artifact("depth_eval.json")
+    out = ["<div class='tablewrap'><table><thead><tr><th>dataset</th><th>n</th>"
+           "<th>flat-gel leak, LUT</th><th>leak, calib-free</th>"
+           "<th>peak [mm]</th><th>over the gel</th><th>truncated</th>"
+           "<th>LUT vs calib-free shape</th></tr></thead><tbody>"]
+    for r in rows:
+        bad = " style='color:var(--bad)'" if r["shape_agreement"] < 0.3 else ""
+        out.append(
+            f"<tr><td>{r['dataset']}</td><td>{r['n']}</td>"
+            f"<td>{r['leak_lut']:.3f}</td><td>{r['leak_calibfree']:.3f}</td>"
+            f"<td>{r['peak_lut_mm']:.2f}</td>"
+            f"<td>{r['over_gel_frac']*100:.0f}%</td>"
+            f"<td>{r['truncated_frac']*100:.0f}%</td>"
+            f"<td{bad}>{r['shape_agreement']:+.3f}</td></tr>")
+    return "\n".join(out) + "</tbody></table></div>"
+
+
 def page_method() -> str:
     figs = json.loads((SITE / "figure_manifest.json").read_text())
     ab = {r["label"]: r for r in _artifact("calibfree_vs_lut.json")}
@@ -200,6 +219,29 @@ the depth datum from the data. ~700 frames per sensor.</p>
 on one direction and <code>(gx,&nbsp;gy)</code> is a 3×2 least-squares solve.
 No table, no sphere presses. This is the GelSight Wedge driver's approach. It
 recovers shape but not scale.</p>
+
+<h2>Stage 1 scored on its own — no force labels</h2>
+<p>Force estimation is image→depth then depth→newtons, and a ρ only ever scores
+the pair: a geometrically wrong depth that is monotone in contact size still
+ranks force well. Depth has no ground truth, so stage 1 is judged by eye on the
+panels below and by physical checks that need no labels.</p>
+
+{_depth_table()}
+
+<p class="dim">Leak is mean |depth| off-contact over peak — zero for a coherent
+surface. “Over the gel” counts peaks past the 4.25&nbsp;mm elastomer, possible
+only where the contact runs off the sensor and the depth is extrapolated.
+“Truncated” is a fact about the capture, not the method, and bounds what any
+reconstruction can know. The last column is the two reconstructions agreeing
+with each other, which is evidence neither invents the shape — not that either
+is right.</p>
+
+<p><b>Sparsh is the row that matters.</b> −0.082 means the two disagree
+entirely there, and the frames show why: both render a round sphere press
+wrongly, in orthogonal directions. The LED azimuths are per-sensor wiring, and
+these are ours — on Sparsh's own spheres a sphere comes out 3.3× elongated
+under our value and 1.5× under the one measured from its data. Its force ρ is
+0.93 either way, which is the whole reason this stage is scored separately.</p>
 
 {rows}
 
@@ -363,7 +405,8 @@ RENDER_LAWS = ("o3d_view.py", "showcase.py", "visualize.py", "eval_panel.py",
 # uniformly old: it looks current and is internally inconsistent. Every
 # artifact the pages read must postdate the reconstruction.
 NUMBER_ARTIFACTS = ("force_matrix.json", "calibfree_vs_lut.json",
-                    "results_metrics.json", "force_agreement.json")
+                    "results_metrics.json", "force_agreement.json",
+                    "depth_eval.json")
 RECON_LAWS = ("poisson.py", "calib_free.py", "debug_gallery.py")
 
 

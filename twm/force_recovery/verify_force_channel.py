@@ -130,8 +130,18 @@ def compare(n_frames: int = 400) -> dict:
     """Per-frame LUT vs calibration-free newtons on React."""
     from . import showcase as S
 
-    pred_lut = RC.fit(report=False)
-    pred_cf = fit_calibfree()
+    # BOTH arms through react_calib's own fitting code, differing only in the
+    # reconstruction. This module used to carry a private copy of the fit so it
+    # could have a second arm; once the force channel moved to the
+    # calibration-free solve that copy WAS the same arm twice, and the "LUT"
+    # arm was feeding stages() features into a calibration-free-fitted model.
+    # The runtime check in react_calib.predict caught it.
+    for r in ("calibfree", "lut"):
+        if not RC.cache_for(r).exists():
+            print(f"[verify] building the {r} calibration cache", flush=True)
+            RC.build_cache(r)
+    pred_cf = RC.fit(report=False, recon="calibfree")
+    pred_lut = RC.fit(report=False, recon="lut")
 
     out = []
     for task, date, ep, side in EPISODES:
@@ -142,10 +152,8 @@ def compare(n_frames: int = 400) -> dict:
             rows = rows[np.linspace(0, len(rows) - 1, n_frames).astype(int)]
         for r in rows:
             img = crop(frame(int(r))).astype(np.float32)
-            st = stages(img, ref)
-            feats, d, _ = _feats_calibfree(img, ref)
-            a = float(pred_lut(st))
-            b = float(pred_cf({"feats": feats, "depth": d}))
+            a = float(pred_lut(RC.force_stages(img, ref, recon="lut")))
+            b = float(pred_cf(RC.force_stages(img, ref, recon="calibfree")))
             out.append({"ep": f"{task}/{date}/{ep}/{side}", "row": int(r),
                         "lut_n": a, "cf_n": b})
         print(f"  {task}/{ep}/{side}: {len(rows)} frames", flush=True)

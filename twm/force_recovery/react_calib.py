@@ -63,7 +63,7 @@ CALIBRATION_NAME = ("react_calib (calibration-free recon + gain field + "
 FORCE_RECONSTRUCTION = "calibfree"
 
 
-def force_stages(img, ref) -> dict:
+def force_stages(img, ref, recon: str | None = None) -> dict:
     """The reconstruction the force channel is built on — ONE definition.
 
     Returned in the shape `predict` and `build_cache` both expect, so the
@@ -71,7 +71,8 @@ def force_stages(img, ref) -> dict:
     (that exact drift is what the module docstring above is about).
     """
     from .debug_gallery import stages
-    if FORCE_RECONSTRUCTION == "calibfree":
+    recon = recon or FORCE_RECONSTRUCTION
+    if recon == "calibfree":
         from . import calib_free as CF
         from .lut_calibration import MM_PER_PIXEL
         d = np.clip(CF.reconstruct(img, ref)["depth"], 0, None)
@@ -85,14 +86,25 @@ def force_stages(img, ref) -> dict:
                  "vol2": float((d[m] ** 2).sum() * px),
                  "maxd": maxd, "area": area,
                  "h1": float(np.sqrt(area) * maxd)}
-        return {"depth": d, "feats": feats, "contact": m,
-                "recon": FORCE_RECONSTRUCTION}
+        return {"depth": d, "feats": feats, "contact": m, "recon": recon}
     st = stages(img, ref)
     return {"depth": st["depth"], "feats": st["feats"],
-            "contact": st["depth"] > 0.05,
-            "recon": FORCE_RECONSTRUCTION}
+            "contact": st["depth"] > 0.05, "recon": recon}
 
 CACHE = OUT_ROOT / "feature_cache" / "glowtact_round_mm.json"
+
+
+def cache_for(recon: str):
+    """One cache per reconstruction, so both can be fitted by the SAME code.
+
+    `verify_force_channel` used to carry its own copy of the fit in order to
+    have a second arm. After the force channel moved to the calibration-free
+    solve that copy became the same arm twice, and the LUT arm was left
+    feeding `stages()` features into a model fitted on calibration-free ones —
+    caught at runtime by the check in `predict`, which is what it is for.
+    """
+    return (CACHE if recon == FORCE_RECONSTRUCTION
+            else CACHE.with_name(f"glowtact_round_{recon}.json"))
 FEATURES = ("vol", "vol2", "maxd", "area", "h1")
 # The React clips span roughly 0-8 N; calibrating past that would fit the
 # isotonic tail on presses the deployment never sees.
@@ -116,8 +128,8 @@ def _with_clip(X, area_mm2, cx, cy):
     return np.column_stack([X, X[:, 0] * c, c])
 
 
-def build_cache() -> None:
-    """Recompute GlowTact `round` features with the CURRENT stages()."""
+def build_cache(recon: str | None = None) -> None:
+    """Recompute GlowTact `round` features for one reconstruction."""
     from PIL import Image
 
     ref = crop(np.asarray(Image.open(GLOWTACT / "round" / "initial.jpg")
@@ -132,7 +144,7 @@ def build_cache() -> None:
         if not (0.15 < f <= F_MAX_N):
             continue
         img = crop(np.asarray(Image.open(p).convert("RGB"))).astype(np.float32)
-        st = force_stages(img, ref)
+        st = force_stages(img, ref, recon)
         d = st["depth"]
         mm = st["contact"]
         if mm.sum() < 30:
@@ -146,19 +158,22 @@ def build_cache() -> None:
                      "cy": float((yy * w).sum() / w.sum())})
         if (i + 1) % 200 == 0:
             print(f"  {i+1}/{len(files)} -> {len(rows)} kept", flush=True)
-    CACHE.write_text(json.dumps(rows))
-    print(f"{len(rows)} frames -> {CACHE}")
+    out = cache_for(recon or FORCE_RECONSTRUCTION)
+    out.write_text(json.dumps(rows))
+    print(f"{len(rows)} frames -> {out}")
 
 
-def _load():
-    if not CACHE.exists():
-        raise SystemExit("run `build` first")
-    rows = json.loads(CACHE.read_text())
+def _load(recon: str | None = None):
+    c = cache_for(recon or FORCE_RECONSTRUCTION)
+    if not c.exists():
+        raise SystemExit(f"run `build` first ({c} missing)")
+    rows = json.loads(c.read_text())
     a = lambda k: np.array([r[k] for r in rows])          # noqa: E731
     return rows, a
 
 
-def fit(report: bool = True, holdout: bool = False):
+def fit(report: bool = True, holdout: bool = False,
+        recon: str | None = None):
     """Fit the newton scale; returns predict(stages_dict) -> N.
 
     Held out by PRESS POSITION, not at random: neighbouring frames of one press
@@ -167,7 +182,8 @@ def fit(report: bool = True, holdout: bool = False):
     from scipy.stats import spearmanr
     from sklearn.isotonic import IsotonicRegression
 
-    rows, a = _load()
+    recon = recon or FORCE_RECONSTRUCTION
+    rows, a = _load(recon)
     f, cx, cy, z = a("f"), a("cx"), a("cy"), a("z")
     X0 = np.column_stack([a(k) for k in FEATURES])
 
@@ -228,11 +244,11 @@ def fit(report: bool = True, holdout: bool = False):
         this module was created to undo (a pixel-unit weight vector scored
         mm-unit features for weeks and read as rho 0.143).
         """
-        if st.get("recon") != FORCE_RECONSTRUCTION:
+        if st.get("recon") != recon:
             raise TypeError(
                 f"force prediction fed a {st.get('recon') or 'plain stages()'} "
                 f"reconstruction, but this calibration was fitted on "
-                f"{FORCE_RECONSTRUCTION!r} — call react_calib.force_stages()")
+                f"{recon!r} — call react_calib.force_stages(recon=...)")
         ft = st["feats"]
         if ft["area"] < 1.0:
             return 0.0
