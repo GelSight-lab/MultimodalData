@@ -236,12 +236,22 @@ reconstruction can know. The last column is the two reconstructions agreeing
 with each other, which is evidence neither invents the shape — not that either
 is right.</p>
 
-<p><b>Sparsh is the row that matters.</b> −0.082 means the two disagree
-entirely there, and the frames show why: both render a round sphere press
-wrongly, in orthogonal directions. The LED azimuths are per-sensor wiring, and
-these are ours — on Sparsh's own spheres a sphere comes out 3.3× elongated
-under our value and 1.5× under the one measured from its data. Its force ρ is
-0.93 either way, which is the whole reason this stage is scored separately.</p>
+<p><b>Sparsh was the row that mattered, and it is fixed.</b> Its two
+reconstructions disagreed at −0.13, against 0.69–0.83 everywhere else, and both
+rendered a round sphere press wrongly in orthogonal directions. Cause: its
+frames reach us with R and B exchanged, and the calibration-free solve reads
+each channel as one LED direction, so the swap rotates the whole gradient
+field. Measured, not guessed — for a sphere the gradient points radially out,
+so each channel's difference dipole IS that channel's LED azimuth, and swapped
+they land within 1° of ours.</p>
+
+<figure><img src="assets/sparsh_channel_fix.png" alt="Sparsh channel-order fix">
+<figcaption>Same frames before and after, at every stage. Sphere axis ratio
+3.62 → 1.53 (1.0 is a circle), agreement with the LUT −0.125 → +0.920,
+flat-gel leak 0.0272 → 0.0071. Force ρ barely moves — 0.909 → 0.894
+calibration-free — while the LUT gains 0.822 → 0.894. <b>A force number could
+not see a geometry this wrong</b>, which is the whole reason this stage is
+scored separately.</figcaption></figure>
 
 {rows}
 
@@ -390,6 +400,7 @@ ASSET_SOURCES = {
     "recon_compare.png": (ASSETS, "force_recovery.react_leak_figure"),
     "pred_vs_gt.png": (ASSETS, "force_recovery.pred_vs_gt"),
     "cross_dataset.png": (ASSETS, "force_recovery.cross_dataset"),
+    "sparsh_channel_fix.png": (ASSETS, "force_recovery.sparsh_channel_fix"),
 }
 # A figure drawn before the laws that draw it is a figure of the old laws.
 # These are the modules a reader is looking at when they look at a panel —

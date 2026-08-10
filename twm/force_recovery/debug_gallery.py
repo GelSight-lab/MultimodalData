@@ -351,8 +351,31 @@ def load_sparsh(n: int = 60):
         raise LookupError("no Sparsh batches could be loaded")
 
     def get(fr):
-        return (crop(np.asarray(fr["img"], np.float32)),
-                crop(np.asarray(fr["ref"], np.float32)))
+        # SPARSH FRAMES REACH US WITH R AND B EXCHANGED relative to this
+        # project's Mini, and the calibration-free solve reads each CHANNEL as
+        # one LED direction, so the swap rotates its whole gradient field.
+        #
+        # Measured, not assumed. For a sphere press the surface gradient points
+        # radially outward, so the dipole direction of each channel's dI IS
+        # that channel's LED azimuth. Over 30 sphere presses per sensor:
+        #
+        #                   rest hue      R        G        B
+        #     our Mini        172.1 deg  259.2    5.1     51.1
+        #     Sparsh, as-is    42.1 deg   75.7    4.3    259.8
+        #     Sparsh, R<->B   197.9 deg  259.8    4.3     75.7
+        #
+        # Swapped, R and G land within 1 deg of ours and the rest hue moves
+        # from 130 deg away to 26 deg away. A different gel tint would not
+        # align the LED azimuths; a channel-order difference does exactly this.
+        #
+        # `sparsh_data.load_frames` already normalises R/B ACROSS batches (all
+        # ten come out at hue 48-50), so this is the remaining global
+        # convention difference between that sensor and ours. A uniform channel
+        # permutation cannot disturb that per-batch normalisation.
+        img = crop(np.asarray(fr["img"], np.float32))
+        ref = crop(np.asarray(fr["ref"], np.float32))
+        return (np.ascontiguousarray(img[..., ::-1]),
+                np.ascontiguousarray(ref[..., ::-1]))
     return rows, get
 
 

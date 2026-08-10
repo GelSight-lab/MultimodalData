@@ -142,36 +142,44 @@ import numpy as np
 # normal to the gel), and it is left visible rather than tuned away.
 LED_AZIMUTH_DEG = (210.0, 330.0, 90.0)
 
-# THIS CONSTANT IS PER SENSOR, AND APPLYING IT ACROSS SENSORS DISTORTS SHAPE
+# THE AZIMUTHS ARE FINE. SPARSH'S CHANNELS ARRIVED SWAPPED — DIAGNOSED, FIXED
 #
-# Found by evaluating stage 1 on its own: on Sparsh the LUT and the
-# calibration-free depth of the same contact correlate at -0.08 inside the
-# contact, against 0.69-0.83 on every other dataset. Looking at the frames,
-# both render a round sphere press wrongly and in ORTHOGONAL directions — the
-# LUT as a vertical hourglass, the calibration-free solve as a horizontal bar.
+# Found by scoring stage 1 alone: on Sparsh the LUT and the calibration-free
+# depth of the same contact correlated at -0.13 inside the contact, against
+# 0.69-0.83 everywhere else, and both rendered a round sphere press wrongly in
+# ORTHOGONAL directions.
 #
-# The azimuths above are this project's Mini. Re-measured on Sparsh's own
-# sphere presses with the criterion that settled them here (second moment of
-# the depth peak; a sphere must reconstruct with axis ratio 1):
+# First reading: "the LED azimuths are per-sensor and these are ours." A search
+# over the six permutations put Sparsh's best at (90, 330, 210), axis ratio
+# 1.50 against 3.33 for the value above, and that was recorded here as a
+# different wiring. It is the same thing said less usefully: (90, 330, 210) IS
+# (210, 330, 90) with R and B exchanged. The azimuths never differed; the
+# CHANNELS did.
 #
-#     (R,G,B) azimuth      axis ratio on Sparsh spheres
-#     (210, 330,  90)          3.33      <- the value above, i.e. ours
-#     ( 90, 210, 330)          3.25
-#     (330,  90, 210)          3.30
-#     (210,  90, 330)          2.47
-#     ( 90, 330, 210)          1.50      <- Sparsh's own best
-#     (330, 210,  90)          1.68
+# Measured directly rather than searched. For a sphere the surface gradient
+# points radially outward, so the dipole direction of each channel's dI is that
+# channel's LED azimuth. 30 sphere presses per sensor:
 #
-# So a sphere pressed into Sparsh's gel comes out 3.3x elongated under our
-# wiring and 1.5x under its own. The force rho on Sparsh is 0.93 either way,
-# because contact size tracks force whatever the shape does — which is exactly
-# why stage 1 has to be scored separately from stage 2.
+#                    rest hue       R        G        B
+#     our Mini        172.1 deg   259.2     5.1     51.1
+#     Sparsh, as-is    42.1 deg    75.7     4.3    259.8
+#     Sparsh, R<->B   197.9 deg   259.8     4.3     75.7
 #
-# NOT changed in production: React is this sensor, and the value above is the
-# one measured for it. Anything reconstructing ANOTHER sensor's frames must
-# re-derive the azimuth from that sensor's own sphere presses
-# (`azimuth_search`), and the cross-sensor depth panels on the site carry this
-# caveat.
+# Swapped, R and G land within 1 deg of ours. A different gel tint cannot do
+# that; a channel-order difference does exactly it. Fixed in
+# `debug_gallery.load_sparsh`, where the frames enter — NOT here, because this
+# constant was never wrong.
+#
+# What the fix bought, 41 Sparsh sphere presses:
+#
+#                       sphere axis ratio   agreement with LUT   flat-gel leak
+#     before                  3.62               -0.125              0.0272
+#     after                   1.53               +0.920              0.0071
+#
+# And the point of having scored stage 1 separately: force rho on Sparsh was
+# 0.909 BEFORE the fix, with the shape that wrong. After it, 0.894 for the
+# calibration-free solve and 0.822 -> 0.894 for the LUT. A force number cannot
+# see a geometry this broken.
 
 # Does `reconstruct` return millimetres? NO, and the code now says so where a
 # consumer can see it, because the docstring saying it was not enough.
