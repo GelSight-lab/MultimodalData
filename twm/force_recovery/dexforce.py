@@ -35,14 +35,30 @@ import numpy as np
 # between the exported dataset column and the site figure is a silent lie
 # about what the action means.
 #
-# 1000 N/m = 1 N/mm is the project's declared starting point. Franka-class
-# arms span ~150-3000 N/m, so this sits low-mid range: with LUT-calibrated
-# in-contact forces of ~0.3-8 N the penetration F/k lands in 0.3-8 mm. Note
-# the top of that band exceeds the 4.25 mm gel thickness, i.e. at high force
-# this k commands a target further past the surface than the gel could ever
-# be compressed — an argument for raising k, to be settled by the measured
-# penetration distribution rather than by taste.
-STIFFNESS_N_PER_M = 1000.0
+# SETTLED BY MEASUREMENT, as the previous note here said it should be.
+#
+# It read: "1000 N/m = 1 N/mm is the project's declared starting point ... the
+# top of that band exceeds the 4.25 mm gel thickness, i.e. at high force this k
+# commands a target further past the surface than the gel could ever be
+# compressed — an argument for raising k, to be settled by the measured
+# penetration distribution rather than by taste." The distribution is now
+# measured over the whole release (480,080 force samples, 72 sides):
+#
+#     k [N/mm]   max penetration   rows past the 4.25 mm gel
+#       1.00        7.870 mm              14.98%
+#       1.85        4.254 mm               2.22%
+#       2.00        3.935 mm               0.00%
+#
+# The binding constraint is max |F| = 7.870 N, which needs k >= 1.852 N/mm for
+# the deepest commanded target to stay inside the gel. 2.0 N/mm clears it with
+# margin and is still low-mid for Franka-class arms (~150-3000 N/m).
+#
+# This is an ASSUMPTION about the environment either way — raising it does not
+# make it measured. What changed is that 1.0 was measurably WRONG: it commanded
+# a target past the surface further than the gel can compress on 15% of rows,
+# and `export_force_columns.verify` now fails rather than reports if that ever
+# returns.
+STIFFNESS_N_PER_M = 2000.0
 
 # The pressing direction in the rigid-body frame is NOT a coordinate axis:
 # the rig's dual-ball calibration measures it as ``gel_axis_in_rigid``

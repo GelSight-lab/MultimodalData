@@ -93,13 +93,19 @@ from .run_episode import STAGE_ROOT
 EXPORT_ROOT = Path("/media/yxma/Disk1/twm/release_force")
 
 # Stiffness for ``penetration = F / k``.  NOT redeclared here: it comes from
-# ``pipeline.STIFFNESS_N_PER_MM``, itself derived from the single definition
-# in ``dexforce.STIFFNESS_N_PER_M`` (1000 N/m = 1 N/mm, the project's declared
-# starting point).  A stiffness that disagreed between this dataset column and
-# the rest of the codebase would be a silent lie about what the action means.
+# ``pipeline.STIFFNESS_N_PER_MM``, itself derived from the single definition in
+# ``dexforce.STIFFNESS_N_PER_M``, where the value and the measurement that
+# settled it are written down.  A stiffness that disagreed between this dataset
+# column and the rest of the codebase would be a silent lie about what the
+# action means -- which is why the value is not repeated here.  It used to be,
+# as "(1000 N/m = 1 N/mm, the project's declared starting point)" alongside a
+# quoted gel stiffness of "median 15.4 N/mm"; both were stale copies by the
+# time anyone read them.  ``verify`` prints the current numbers every run.
+#
 # It is an ASSUMPTION about the deployment controller, not a measured gel
-# property -- ``verify`` reports how far it sits from the gel stiffness
-# implied by the estimator's own indentation depths (median 15.4 N/mm).
+# property.  What ``verify`` does enforce is the one thing that is not a matter
+# of taste: a commanded target may not sit further past the surface than the
+# gel can be compressed.
 
 # GelSight Mini elastomer thickness; the hard physical ceiling a penetration
 # interpreted as gel compression may not exceed. Defined in lut_calibration,
@@ -634,7 +640,37 @@ def digest(root: Path = EXPORT_ROOT) -> str:
     return h.hexdigest()
 
 
-def main() -> None:
+def _gate(report: dict) -> int:
+    """Turn the verification report into an EXIT CODE.
+
+    `verify` computed all of this already and `_print` showed it, but `main`
+    returned None either way — so a run with `identity_pass` False, or with a
+    commanded target displaced further past the surface than the gel can be
+    compressed, exited 0 and read as a clean export. The penetration case was
+    not hypothetical: at k = 1 N/mm it covered 14.98% of rows and 49 of 72
+    sides, printed on every run, and nothing downstream of the print cared.
+    """
+    fails = []
+    if not report.get("identity_pass", False):
+        fails.append("no-contact rows do not leave the pose identical")
+    if not report.get("alignment_pass", False):
+        fails.append(f"row alignment {report.get('alignment_rate', 0)*100:.1f}%")
+    frac = report.get("penetration_over_gel_thickness_frac", 0.0)
+    if frac > 0:
+        fails.append(
+            f"{frac*100:.2f}% of rows command a target more than "
+            f"{GEL_THICKNESS_MM} mm past the surface — the gel cannot be "
+            f"compressed that far, so raise the stiffness "
+            f"(dexforce.STIFFNESS_N_PER_M)")
+    err = report.get("roundtrip_max_abs_err_n", 0.0)
+    if err > 1e-6:
+        fails.append(f"k*|dp| != F, max err {err:.2e} N")
+    for f in fails:
+        print(f"  FAIL: {f}")
+    return 1 if fails else 0
+
+
+def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("command", choices=["export", "verify", "digest"])
     ap.add_argument("--stiffness", type=float, default=STIFFNESS_N_PER_MM,
@@ -646,12 +682,16 @@ def main() -> None:
         print(f"\nwrote {m['n_episodes']} episodes / "
               f"{m['n_sensor_sides']} sensor-sides / {m['total_rows']} rows "
               f"to {args.root}")
-        _print(verify(args.root))
+        rep = verify(args.root)
+        _print(rep)
+        return _gate(rep)
     elif args.command == "verify":
-        _print(verify(args.root))
-    else:
-        print(digest(args.root))
+        rep = verify(args.root)
+        _print(rep)
+        return _gate(rep)
+    print(digest(args.root))
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
