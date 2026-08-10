@@ -28,6 +28,7 @@ afterwards.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 from pathlib import Path
 
@@ -127,7 +128,26 @@ def main() -> int:
             api.upload_file(path_or_fileobj=str(f),
                             path_in_repo=f"data/{name}",
                             repo_id=REPO, repo_type="dataset")
-    print("uploaded")
+    # RECORD WHAT WAS PUSHED. `release_channel.json` surveys the npz on this
+    # disk, and the site turned that into "the published dataset carries this
+    # channel" — a claim about a Hugging Face repo inferred from local files.
+    # If a promote succeeded and this upload failed, the page would have gone
+    # on saying published. The sentence now cites this file, which only exists
+    # once the upload has actually returned.
+    from .react_calib import CALIBRATION_NAME
+    from .run_episode import OUT_ROOT
+    rec = OUT_ROOT / "feature_cache" / "force_upload.json"
+    rec.parent.mkdir(parents=True, exist_ok=True)
+    rec.write_text(json.dumps({
+        "repo": REPO,
+        "n_parquet": len(paths),
+        "force_columns": cols,
+        "calibration": CALIBRATION_NAME,
+        "manifest_sha": hashlib.sha256(
+            (EXPORT / "force_export_manifest.json").read_bytes()
+        ).hexdigest()[:16],
+    }, indent=1))
+    print(f"uploaded; recorded -> {rec}")
     return 0
 
 

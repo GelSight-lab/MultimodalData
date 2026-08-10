@@ -170,9 +170,19 @@ def _release_line(rc: dict) -> str:
         return (f"<b>The release is not uniform</b> — {parts}. It must not "
                 f"ship in this state.")
     if rc["matches_current_code"]:
-        return (f"The published dataset carries this channel across all "
-                f"{rc['sides']} sides of {rc['episodes']} episodes "
-                f"({rc['frames']:,} frames).")
+        # "published" is a claim about a Hugging Face repo, and `rc` only
+        # surveys the npz on this disk. Those are different facts: a promote
+        # that succeeded while the upload failed satisfies `rc` completely.
+        # The stronger word is used only when the uploader left a record.
+        try:
+            up = _artifact("force_upload.json")
+        except SystemExit:
+            up = None
+        where = (f"Published to <code>{up['repo']}</code>:"
+                 if up and up["calibration"] == rc["calibration"]
+                 else "The release on disk carries")
+        return (f"{where} this channel across all {rc['sides']} sides of "
+                f"{rc['episodes']} episodes ({rc['frames']:,} frames).")
     return (f"<b>The published dataset still carries the previous channel</b> "
             f"(“{rc['calibration']}”) across {rc['sides']} sides; switching it "
             f"means reprocessing {rc['episodes']} episodes.")
