@@ -302,7 +302,15 @@ def ds_feats(inpaint: bool = False) -> dict:
 
 
 def ds_sparsh() -> dict:
-    """Sparsh (Meta), Sparsh-native LUT, in-view frames, per-gel-pad."""
+    """Sparsh (Meta), Sparsh-native LUT, in-view frames, per (probe, batch).
+
+    NOT "per gel pad", which is what this line said. `sparsh_data.BATCHES` is
+    [(sphere,1..6), (flat,1..2), (sharp,1..2)] — indenter shape and capture
+    batch. Nothing in that dataset's layout says a batch is a different pad,
+    and the grouping variable has to be named for what it is, because the
+    protocol fits one model per group and the reader has to know what is being
+    held apart.
+    """
     from .sparsh_figure import _inview_mask, _load, _xy
 
     data = _load("sparsh")

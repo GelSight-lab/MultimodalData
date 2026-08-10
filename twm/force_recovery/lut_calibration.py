@@ -43,6 +43,30 @@ GLOWTACT = CNC_MINI_26          # deprecated alias, do not use in new code
 # it; `export_force_columns` imports rather than restating it.
 GEL_THICKNESS_MM = 4.25
 
+# WHAT IS ON DISK FOR cnc_mini_26, AND WHAT IS SCORED
+#
+# 19 family directories, of which SIX are used by every evaluation in this
+# repo (round, quad, star, triangle, B, quad_small) — a 6-tuple hard-coded in
+# four modules, never justified anywhere. The other 13 carry force labels that
+# parse at 100%, so the restriction is not a data limitation:
+#
+#   single initial.jpg, no defect mask   round quad star triangle B quad_small
+#   initial/ (50 frames) + SNR_MASK      A B_2 C_1 D E quad_2
+#   initial/ (50 frames), no mask        C balloon bulb pipe pipe_2 rope rope_1
+#
+# The six masked families share ONE identical `exclude_rectangles`, whose
+# stated purpose is to "exclude the pre-identified gel-defect region", so those
+# six were captured with the same known gel damage. That is a capture state,
+# and it is the only pad-like distinction the files actually record: the
+# manifest names `pad0` for both sensors and nothing else, and the rest-gel hue
+# is 169.9-175.2 deg across ALL 19 families — a 5 deg spread, against the
+# tens of degrees that separate genuinely different pads in this project
+# (169 Mini / 90-82 React / 62 GlowTact self-made).
+#
+# So: the six in use share one reference convention and carry no defect mask.
+# Whether the other two configurations are other PADS is not recorded on disk
+# and is not assumed here.
+
 CAL_OUT = OUT_ROOT / "lut_calibration"
 
 # same view as the rest of the pipeline: 1/7 border crop -> 320x240
