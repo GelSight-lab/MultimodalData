@@ -270,6 +270,16 @@ protocol reproduces the between-capture ordering whether or not the
 frame-to-force pairing survives, so a scatter of it would be convincing and
 meaningless.</figcaption></figure>
 
+<figure><img src="assets/cross_dataset.png" alt="cross-dataset transfer matrix">
+<figcaption>Fit on one dataset, predict on every other. One model per dataset —
+a 5-feature least squares plus an isotonic calibration — on the calibration-free
+reconstruction. ρ and MAE answer different questions and both are shown: the
+isotonic step is monotone, so it cannot change a rank correlation, and ρ tests
+only whether the feature-to-force ORDERING transfers. MAE tests whether the
+newton scale does, and it does not — these datasets span 0.08–1.06 N (Sparsh)
+to 0–34 N (FEATS). The diagonal is held out, five seeds; off it, the whole
+source fits and the whole target is scored.</figcaption></figure>
+
 <h2>Which reconstruction should the React force channel use?</h2>
 <p>Calibration-free, decided on React's own calibration objects: held out by
 press position, ρ&nbsp;0.812 against the LUT's 0.763, MAE 1.024 against
@@ -335,6 +345,7 @@ ASSET_SOURCES = {
                            "force_recovery.mnist_validation figures"),
     "recon_compare.png": (ASSETS, "force_recovery.react_leak_figure"),
     "pred_vs_gt.png": (ASSETS, "force_recovery.pred_vs_gt"),
+    "cross_dataset.png": (ASSETS, "force_recovery.cross_dataset"),
 }
 # A figure drawn before the laws that draw it is a figure of the old laws.
 # These are the modules a reader is looking at when they look at a panel —
