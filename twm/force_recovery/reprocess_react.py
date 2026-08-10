@@ -137,6 +137,18 @@ def _rho_varying(a, b) -> float:
 
 
 def cmd_compare() -> int:
+    """One writer at a time — see `artifact_lock` for why.
+
+    Missed when the other six artifact producers were locked, and promptly
+    proved it was needed: two queued compares were found waiting on the same
+    reprocess, and both would have written REPORT.
+    """
+    from .artifact_lock import one_writer
+    with one_writer(REPORT):
+        return _cmd_compare()
+
+
+def _cmd_compare() -> int:
     from scipy.stats import spearmanr
     rows = []
     for task, date, ep, side in episodes():
@@ -236,6 +248,31 @@ def cmd_promote() -> int:
         for x in (missing + wrong + unversioned + dropped)[:8]:
             print(f"  {x}")
         return 1
+    # BACK UP WHAT IS ABOUT TO BE OVERWRITTEN. The published npz are not in
+    # git and nothing else holds a copy, so before this the only way to undo a
+    # promote was a 90-minute reprocess with FORCE_RECONSTRUCTION flipped back
+    # — recoverable, but only if you still knew that was the way back. The
+    # backup is ~70 MB and makes the irreversible step reversible.
+    #
+    # Refuses rather than overwrites an existing backup: the second promote of
+    # a session would otherwise replace the last copy of the ORIGINAL channel
+    # with a copy of the first promotion's output.
+    backup = OUT_ROOT / "_pre_promote_backup"
+    if backup.exists():
+        print(f"refusing to promote: {backup} already holds a backup. "
+              f"Move or delete it — overwriting it would destroy the last "
+              f"copy of the channel it was taken from.")
+        return 1
+    n_backed = 0
+    for task, date, ep, side in jobs:
+        pub = OUT_ROOT / task / date / f"{ep}_{side}.npz"
+        if pub.exists():
+            dst = backup / task / date
+            dst.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(pub, dst / f"{ep}_{side}.npz")
+            n_backed += 1
+    print(f"backed up {n_backed} published sides -> {backup}")
+
     for task, date, ep, side in jobs:
         src = STAGING / task / date / f"{ep}_{side}.npz"
         shutil.copy2(src, OUT_ROOT / task / date / f"{ep}_{side}.npz")
