@@ -7,7 +7,7 @@ functions themselves — `debug_gallery.stages`, `calib_free.reconstruct`,
 `react_calib.force_stages`, `eval_panel.mesh` — and fails if any improvement is
 not actually in the path a user's frame travels.
 
-Eleven checks, one line of evidence each:
+Twelve checks, one line of evidence each:
 
   1  boundary condition is data-driven          poisson.integrate
   2  marker gel keeps the clamped solver        poisson.free_boundary_ok
@@ -18,6 +18,7 @@ Eleven checks, one line of evidence each:
   7  force comes from the declared recon        react_calib.force_stages
   8  force refuses the wrong reconstruction     react_calib.fit().predict
  8b  the evaluation scores what is deployed     force_recon_matrix._feats
+ 8c  frame draw and reconstruction repeat       force_recon_matrix._rows
   9  mesh shading scales on the imprint         o3d_view.gradient_shade
  10  mesh camera does not crop the pad          o3d_view.render_mesh
 
@@ -151,6 +152,40 @@ def main() -> int:
           "the evaluation scores the deployed feature law",
           f"{sum(same)}/{len(same)} frames identical to the bit between "
           f"force_recon_matrix._feats and react_calib.force_stages")
+
+    # 8c — THE SAME FRAMES, AND THE SAME NUMBERS, EVERY RUN.
+    #
+    # Two runs of `force_recon_matrix` days apart produced materially different
+    # scores from identical code — cnc 0.963 against 0.938, FEATS 0.648 against
+    # 0.706 — which was only noticed because a recompute happened to be
+    # compared against the previous artifact. A published number that cannot be
+    # reproduced is not a measurement.
+    #
+    # The cause was two processes writing one artifact, now prevented by
+    # `artifact_lock`. This checks the other half: that the inputs to the
+    # evaluation are themselves deterministic, so a future divergence means
+    # contamination rather than a seeded sampler drifting. Cheap on purpose —
+    # a guard nobody can afford to run guards nothing.
+    from force_recovery.force_recon_matrix import _feats as ef
+    from force_recovery.force_recon_matrix import _rows
+
+    def sample(n=12):
+        rws, gt = _rows("cnc_mini_26")
+        key = "|".join(str(r.get("path") or r.get("idx") or r.get("key"))
+                       for r in rws[:120])
+        feats = []
+        for fr in rws[:n]:
+            im, rf = gt(fr)
+            feats.append(ef(CF.reconstruct(im, rf), False))
+            feats.append(ef(stages(im, rf), True))
+        return key, np.array(feats)
+
+    k1, f1 = sample()
+    k2, f2 = sample()
+    check(k1 == k2 and np.array_equal(f1, f2),
+          "frame draw and reconstruction are deterministic",
+          f"same frame order: {k1 == k2}; features bit-identical: "
+          f"{np.array_equal(f1, f2)}")
 
     # 9 — shading scaled on the imprint, not the flat gel
     z = np.zeros((240, 320), np.float32)
