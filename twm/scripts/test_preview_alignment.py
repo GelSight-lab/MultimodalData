@@ -44,8 +44,42 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import numpy as np                                              # noqa: E402
 
 RESULTS: list[tuple[bool, str, str]] = []
-TASK, DATE = "motherboard", "2026-05-10"
-EPISODES = ("episode_001", "episode_002", "episode_004")
+
+
+def sample_episodes(task: str, n: int, seed: int = 0):
+    """(date, episode) pairs spread across the task's recording dates.
+
+    NOT a fixed list. The two defects here were found on one date, and a test
+    pinned to that date would prove nothing about the other five — the
+    reference defect in particular is data-dependent (it fires only where a
+    recording starts with the gel already pressed, which is why two of the
+    three original episodes looked clean). Spread the sample over dates and
+    the class of defect has nowhere uniform to hide.
+    """
+    import numpy as np
+
+    from force_recovery.run_episode import DATA_ROOT, STAGE_ROOT
+    dates = sorted(d.name for d in (STAGE_ROOT / task / "meta").iterdir()
+                   if d.is_dir())
+    pairs = []
+    for d in dates:
+        for pqf in sorted((STAGE_ROOT / task / "meta" / d).glob("*.parquet")):
+            if (DATA_ROOT / task / d / f"{pqf.stem}.h5").exists():
+                pairs.append((d, pqf.stem))
+    if not pairs:
+        return []
+    rng = np.random.default_rng(seed)
+    # one per date first, then fill at random — a sample that happened to draw
+    # five episodes of one session would repeat the original blind spot
+    by_date, rest = {}, []
+    for d, e in pairs:
+        (by_date.setdefault(d, e), rest.append((d, e)))
+    picked = [(d, e) for d, e in by_date.items()][:n]
+    pool = [p for p in rest if p not in picked]
+    if len(picked) < n and pool:
+        idx = rng.permutation(len(pool))[:n - len(picked)]
+        picked += [pool[int(i)] for i in idx]
+    return picked
 
 
 def check(ok: bool, name: str, evidence: str) -> None:
@@ -74,22 +108,33 @@ def main() -> int:
           + (f"; row {bad[0]} came back as "
              f"{row_for_h5_frame(trim + bad[0], trim, n_rows)}" if bad else ""))
 
-    # 2 / 3 — ON THE REAL EPISODES.
+    # 2 / 3 — ON THE REAL EPISODES, sampled across dates.
+    import argparse
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--task", default="motherboard")
+    ap.add_argument("--sample", type=int, default=4)
+    args, _ = ap.parse_known_args()
+    TASK = args.task
+    episodes = sample_episodes(TASK, args.sample)
+    if not episodes:
+        check(False, "the preview references a free gel",
+              f"UNVERIFIED: no {TASK} episode with both parquet and H5 here")
+        episodes = []
+
     ref_bad, lag_bad, ev_ref, ev_lag = [], [], [], []
-    for ep in EPISODES:
+    for DATE, ep in episodes:
         pqt = STAGE_ROOT / TASK / "meta" / DATE / f"{ep}.parquet"
         h5p = DATA_ROOT / TASK / DATE / f"{ep}.h5"
-        if not (pqt.exists() and h5p.exists()):
-            check(False, "the preview references a free gel",
-                  f"UNVERIFIED: {ep} not on this disk")
-            return 1
         t = pq.read_table(str(pqt))
         inten = np.asarray(t["tactile_left_intensity"].to_numpy())
         isnew = np.asarray(t["tactile_left_is_new"].to_numpy())
         trim = int(np.asarray(t["source_h5_frame"].to_numpy())[0])
         rows = _reference_rows(inten, isnew)
-        force = np.load(Path("/media/yxma/Disk1/twm/force_recovery") / TASK
-                        / DATE / f"{ep}_left.npz")["force_normal_n"].astype(float)
+        npz = (Path("/media/yxma/Disk1/twm/force_recovery") / TASK / DATE
+               / f"{ep}_left.npz")
+        if not npz.exists():
+            continue
+        force = np.load(npz)["force_normal_n"].astype(float)
 
         with h5py.File(str(h5p), "r") as f:
             fr = f["gelsight/left/frames"]
@@ -120,7 +165,7 @@ def main() -> int:
             in_contact = float((np.abs(ref - truth).max(axis=2) > 8.0).mean())
             ok = in_contact <= 0.01
             ref_bad.append(not ok)
-            ev_ref.append(f"{ep} {in_contact*100:.2f}%")
+            ev_ref.append(f"{DATE[5:]}/{ep[-3:]} {in_contact*100:.2f}%")
 
             # THE FORCE THE RENDERER ACTUALLY OVERLAYS, against the tactile
             # tile it actually shows.
@@ -138,10 +183,22 @@ def main() -> int:
         w = np.abs(k) <= 15
         lag = int(k[w][np.argmax(c[w])]) * 4
         lag_bad.append(abs(lag) > 4)
-        ev_lag.append(f"{ep} {lag:+d}f")
+        ev_lag.append(f"{DATE[5:]}/{ep[-3:]} {lag:+d}f")
 
+    # STATE THE COVERAGE. The sampler skips dates with no episodes on this
+    # disk, which is correct (2026-05-15 was emptied when its orphans were
+    # deleted) and invisible — a check that quietly covers 3 of 4 dates reads
+    # exactly like one that covered all 4.
+    from force_recovery.run_episode import STAGE_ROOT as _SR
+    all_dates = sorted(d.name for d in (_SR / TASK / "meta").iterdir()
+                       if d.is_dir() and any(d.glob("*.parquet")))
+    seen_dates = sorted({d for d, _ in episodes})
+    missed = [d for d in all_dates if d not in seen_dates]
     check(not any(ref_bad), "the preview references a free gel",
-          "pixels already in contact: " + ", ".join(ev_ref) + " (want <=1%)")
+          f"{len(episodes)} episodes over {len(seen_dates)}/{len(all_dates)} "
+          f"populated dates"
+          + (f" (not sampled: {', '.join(missed)})" if missed else "")
+          + "; pixels already in contact: " + ", ".join(ev_ref) + " (want <=1%)")
     check(not any(lag_bad), "the force disc labels the tile beside it",
           "displayed force vs displayed contact: " + ", ".join(ev_lag))
 

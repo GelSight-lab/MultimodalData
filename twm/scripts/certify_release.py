@@ -36,6 +36,8 @@ from pathlib import Path
 import numpy as np
 import pyarrow.parquet as pq
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from twm.react_preprocess import backfill                          # noqa: E402
 from twm.react_preprocess.curation import BAD_KEYS                 # noqa: E402
@@ -161,12 +163,40 @@ def certify_curation(task: str) -> list[str]:
     return errs
 
 
+def certify_previews(task: str, sample: int) -> list[str]:
+    """The preview renderer pairs the right tactile frame with the right force.
+
+    Delegates to `scripts/test_preview_alignment`, which MEASURES it — the
+    reference's contact fraction against an independent estimate of the free
+    gel, and the cross-correlation lag between the displayed contact signal
+    and the displayed force. A static guard cannot do this: the defect it
+    replaces imported the lag constant from its single source and applied it
+    in the wrong place, so every text-level check passed.
+    """
+    import io
+    import contextlib
+    import test_preview_alignment as TPA
+
+    TPA.RESULTS.clear()
+    buf = io.StringIO()
+    argv = sys.argv
+    sys.argv = [argv[0], "--task", task, "--sample", str(sample)]
+    try:
+        with contextlib.redirect_stdout(buf):
+            TPA.main()
+    finally:
+        sys.argv = argv
+    return [f"{name}: {ev}" for ok, name, ev in TPA.RESULTS if not ok]
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--task", choices=("motherboard", "pushT"))
     ap.add_argument("--align-frames", type=int, default=2000,
                     help="rows per episode/side compared against source H5")
     ap.add_argument("--skip-align", action="store_true")
+    ap.add_argument("--preview-sample", type=int, default=4,
+                    help="episodes per task for the derived-artifact check")
     args = ap.parse_args()
 
     tasks = [args.task] if args.task else ["motherboard", "pushT"]
@@ -175,7 +205,14 @@ def main() -> int:
         for name, errs in (
                 ("alignment", [] if args.skip_align
                  else certify_alignment(task, args.align_frames)),
-                ("curation", certify_curation(task))):
+                ("curation", certify_curation(task)),
+                # THE PICTURES, NOT ONLY THE DATA. Both halves above certify
+                # the published parquet against its source H5. Nothing
+                # certified the artifacts DRAWN from it, and that is where the
+                # half-second skew between a tactile tile and the force disc
+                # beside it lived, through every publish, until a reader
+                # watching the videos reported it.
+                ("preview alignment", certify_previews(task, args.preview_sample))):
             total += len(errs)
             print(f"[{'FAIL' if errs else 'ok'}] {task} {name}"
                   + (f": {len(errs)} problem(s)" if errs else ""))

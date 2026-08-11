@@ -427,6 +427,96 @@ def check_scope_filter_independent() -> list[str]:
     return bad
 
 
+def check_no_handwritten_index_conversion() -> list[str]:
+    """Nobody converts between the two index spaces by hand.
+
+    WHY A THIRD LAG CHECK, AFTER TWO THAT BOTH PASSED ON A LIVE BUG
+
+    There are two index spaces in this project: raw HDF5 frames, and release
+    parquet rows. The lag lives on the boundary. Every alignment defect so far
+    has been at a conversion, never inside a space — `showcase` indexes force
+    and tactile by the same row and has never been wrong.
+
+    The two existing checks look at the CONSTANT. `check_single_lag_definition`
+    forbids restating 15; `check_no_raw_gel_indexing` requires a
+    lag-correcting token when indexing gelsight. Both passed for the whole
+    life of the defect that shipped half a second of skew to every published
+    preview, because that code IMPORTED the constant from the single source
+    and then applied it in the wrong place. Worse, the second check treats the
+    token `LEGACY_SHIFT` as evidence of correctness, so the offending line
+    read as already-corrected.
+
+    A guard on the constant cannot see a wrong conversion. This one forbids
+    writing the conversion at all: `trim + row + 15`, `frame - trim - shift`
+    and their kin must go through `tactile_align`, which owns both spaces.
+
+    It caught `verify_force_overlay.py:82` — `fr = int(r) + int(trim_pq) + 15`,
+    a fifth copy of the constant as an inline literal, in the verifier whose
+    job was to check this exact overlay. It had cancelled against the same
+    error in `row_for_h5_frame`, so the verifier rendered the wrong frames and
+    passed.
+
+    THE RULE IT ENFORCES, WHICH IS NARROW ON PURPOSE
+
+    My first version forbade hand-written conversion outright. It flagged 20
+    lines of which roughly one was wrong: `showcase` computing
+    `trim + row + LEGACY_SHIFT` to read GELSIGHT is exactly right, and so is
+    the definition site in `run_episode`. A guard at that precision trains
+    people to skip it, which this file's own comments say elsewhere.
+
+    What separates the correct uses from the defect is not whether the
+    arithmetic is written out — it is WHICH STREAM the result indexes. The lag
+    exists between the camera clock and the gelsight clock, so:
+
+        gelsight[trim + row + lag]   correct — the tactile image of that row
+        realsense[trim + row + lag]  WRONG   — a camera frame half a second on
+        cam_ts  [trim + row + lag]   WRONG   — the same error, as a timestamp
+
+    A camera-space index must carry no lag term. That is the invariant the
+    published previews violated, and it is decidable by reading one line.
+    """
+    bad = []
+    lag_term = re.compile(r"\b(\d{1,3}|\w*(?:SHIFT|shift|lag|LAG)\w*)\b")
+    trimish = re.compile(r"\btrim\w*\b")
+    cam_use = re.compile(r"(realsense/\w+/\w+\"?\]|cam_ts)\s*\[([^\]]+)\]")
+    for p in _py_files():
+        if p.name in ("tactile_align.py", "pipeline_guard.py"):
+            continue
+        lines = p.read_text().splitlines()
+        # variables assigned from `... trim ... + <lag term> ...`
+        lagged = {}
+        for i, line in enumerate(lines, 1):
+            s = line.split("#")[0]
+            m = re.match(r"\s*(\w+)\s*=\s*(.+)$", s)
+            if not m or "==" in s:
+                continue
+            rhs = m.group(2)
+            if trimish.search(rhs) and re.search(
+                    r"[-+]\s*(\d{1,3}\b|\w*(?:SHIFT|shift|lag|LAG)\w*)", rhs):
+                lagged[m.group(1)] = i
+        for i, line in enumerate(lines, 1):
+            s = line.split("#")[0]
+            if OPT_OUT in line:
+                continue
+            for m in cam_use.finditer(s):
+                idx = m.group(2)
+                names = set(re.findall(r"\b\w+\b", idx))
+                hit = names & set(lagged)
+                inline = trimish.search(idx) and lag_term.search(
+                    re.sub(r"\btrim\w*\b", "", idx))
+                if hit:
+                    v = sorted(hit)[0]
+                    bad.append(f"{p.relative_to(ROOT)}:{i}: indexes a CAMERA "
+                               f"stream with {v!r}, which carries a tactile "
+                               f"lag (set at line {lagged[v]}). The lag "
+                               f"belongs on gelsight indices only")
+                elif inline:
+                    bad.append(f"{p.relative_to(ROOT)}:{i}: indexes a CAMERA "
+                               f"stream with a lag-shifted expression. The "
+                               f"lag belongs on gelsight indices only")
+    return bad
+
+
 CHECKS = {
     "single calibration-epoch definition": check_single_calib_epoch,
     "scope filter independent of the reconstruction":
@@ -440,6 +530,8 @@ CHECKS = {
     "no silent fallback in resolvers": check_no_silent_fallback,
     "single tactile-lag definition": check_single_lag_definition,
     "no raw GelSight indexing": check_no_raw_gel_indexing,
+    "no hand-written index conversion":
+        check_no_handwritten_index_conversion,
     "force path free of cosmetic steps": check_force_path_clean,
     "single stiffness definition": check_single_stiffness,
 }

@@ -79,7 +79,16 @@ def main(h5_path: str, n: int = 4):
         rows = np.argsort(arr)[::-1]
         picks, seen = [], set()
         for r in rows:
-            fr = int(r) + int(trim_pq) + 15
+            # CAMERA frame for row r. This read `+ trim_pq + 15` — a fifth
+            # copy of the tactile lag, as an inline literal, in the verifier
+            # whose job is to check this overlay. `fr` indexes `realsense/...`
+            # and `cam_ts`, which are camera-clock; only a gelsight index
+            # carries the lag, and `gel_at(fr)` adds it below.
+            #
+            # It cancelled against the same error in `row_for_h5_frame`, so
+            # the round-trip returned r and the verifier passed — while
+            # rendering frames half a second from the ones it named.
+            fr = int(r) + int(trim_pq)
             if fr >= len(cam_ts) or any(abs(fr - p) < 60 for p in seen):
                 continue
             picks.append(fr); seen.add(fr)
