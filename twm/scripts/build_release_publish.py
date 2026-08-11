@@ -63,7 +63,7 @@ def gate() -> int:
     return rc
 
 
-def check_no_column_loss(api, tasks) -> list[str]:
+def check_no_column_loss(api, tasks, published_only: bool = False) -> list[str]:
     """No upload may leave a published parquet with FEWER columns than it has.
 
     THIS PUBLISHER SILENTLY REVERTED THE FORCE CHANNEL. Two staging trees
@@ -95,7 +95,8 @@ def check_no_column_loss(api, tasks) -> list[str]:
                 continue                      # new file: nothing to lose
             try:
                 old = set(pq.read_schema(hf_hub_download(
-                    REPO, rel, repo_type="dataset")).names)
+                    REPO, rel, repo_type="dataset",
+                    force_download=published_only)).names)
             except Exception as exc:                        # noqa: BLE001
                 bad.append(f"{rel}: cannot read the published schema ({exc}) "
                            f"— refusing rather than guessing")
@@ -106,11 +107,21 @@ def check_no_column_loss(api, tasks) -> list[str]:
             # it of step 1 alone would refuse the correct flow — and a gate
             # that blocks the right answer gets bypassed, which is how the
             # last one stopped being run at all.
-            final = set(pq.read_schema(local).names)
-            forced = FORCE_STAGE / task / local.relative_to(STAGE / task)
-            if forced.exists():
-                final |= set(pq.read_schema(forced).names)
-            lost = old - final
+            if published_only:
+                # AFTER the run: `old` was just re-downloaded, so it IS the
+                # published state. Compare it against what the two staging
+                # trees together say the file should have.
+                want = set(pq.read_schema(local).names)
+                forced = FORCE_STAGE / task / local.relative_to(STAGE / task)
+                if forced.exists():
+                    want |= set(pq.read_schema(forced).names)
+                lost = want - old
+            else:
+                final = set(pq.read_schema(local).names)
+                forced = FORCE_STAGE / task / local.relative_to(STAGE / task)
+                if forced.exists():
+                    final |= set(pq.read_schema(forced).names)
+                lost = old - final
             if lost:
                 bad.append(f"{rel}: would DROP {len(lost)} published "
                            f"column(s): {', '.join(sorted(lost)[:6])}")
@@ -218,16 +229,40 @@ def main():
     # wrong by forgetting a step.
     if not args.dry_run:
         print("[publish] uploading the force channel ...", flush=True)
-        from force_recovery.upload_force_columns import main as force_main
-        import sys as _sys
-        argv = _sys.argv
-        _sys.argv = [argv[0]]
+        # `force_recovery` lives beside this script's parent, not on the path
+        # a bare `python scripts/...` sets up. The first version imported it
+        # inside the function and died with ModuleNotFoundError AFTER step 1
+        # had already replaced the parquet — taking the force channel off the
+        # dataset for the second time in one session.
+        sys.path.insert(0, str(REPO_ROOT.parent))
+        from twm.force_recovery.upload_force_columns import main as force_main
+        argv = sys.argv
+        sys.argv = [argv[0]]
         try:
-            if force_main():
-                raise SystemExit("force channel upload FAILED — the release "
-                                 "on the hub is missing its force columns")
+            rc = force_main()
         finally:
-            _sys.argv = argv
+            sys.argv = argv
+        if rc:
+            raise SystemExit("force channel upload FAILED — the release on "
+                             "the hub is missing its force columns")
+
+        # VERIFY THE END STATE FROM THE REMOTE. The pre-flight check asks
+        # whether the FINAL state loses a column, and computes that final
+        # state as the union of the two staging trees — i.e. it trusts step 4
+        # to run. Step 4 then crashed on an import, the check having already
+        # said "ok", and the columns went. A gate that credits a step which
+        # has not happened yet is not a gate. This one reads what is actually
+        # published, after everything has been uploaded.
+        print("[publish] verifying the published columns ...", flush=True)
+        still = check_no_column_loss(api, TASKS, published_only=True)
+        if still:
+            for b in still[:20]:
+                print("   ", b)
+            raise SystemExit(
+                f"PUBLISHED STATE IS WRONG: {len(still)} file(s) on the hub "
+                f"lost columns during this run. Re-run "
+                f"`python -m force_recovery.upload_force_columns`.")
+        print("[publish] published columns verified: ok", flush=True)
     print("[publish] done", flush=True)
 
 
