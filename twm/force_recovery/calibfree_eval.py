@@ -208,7 +208,13 @@ def main() -> int:
               f"LUT(native)={row['lut_native']['rho']:.4f}  "
               f"calib-free={row['calibfree']['rho']:.4f}", flush=True)
 
-    args.out.write_text(json.dumps(table, indent=1))
+    # One writer at a time — see `artifact_lock`. Around the WRITE:
+    # the destination is an argument, so it is not known until argparse
+    # has run, and a second run of this module racing the first would
+    # otherwise leave a file neither of them computed.
+    from .artifact_lock import one_writer
+    with one_writer(args.out):
+        args.out.write_text(json.dumps(table, indent=1))
     print()
     hdr = (f"{'dataset':38s}{'n':>5}{'LUT rel':>9}{'LUT nat':>9}"
            f"{'calib-free':>11}{'CF MAE':>9}{'shuffle':>9}")

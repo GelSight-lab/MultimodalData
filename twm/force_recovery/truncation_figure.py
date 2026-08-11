@@ -35,6 +35,13 @@ SCAN = 500          # frames measured for the over-gel fraction quoted below
 
 
 def build():
+    """One writer at a time — see `artifact_lock` for why."""
+    from .artifact_lock import one_writer
+    with one_writer(STAT):
+        return _build()
+
+
+def _build():
     import cv2
     import matplotlib
     matplotlib.use("Agg")

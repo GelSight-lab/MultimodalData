@@ -139,7 +139,11 @@ def main() -> int:
     res["cf_range"] = [float(b.min()), float(b.max())]
     worst = np.argsort(-np.abs(a - b))[:12]
     res["worst"] = [fr[i] for i in worst]
-    args.out.write_text(json.dumps(res, indent=1))
+    # One writer at a time — see `artifact_lock`. Around the WRITE because
+    # the destination is an argument and is not known until argparse ran.
+    from .artifact_lock import one_writer
+    with one_writer(args.out):
+        args.out.write_text(json.dumps(res, indent=1))
 
     print()
     print(f"frames compared      {res['n']}")
