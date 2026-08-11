@@ -107,31 +107,13 @@ sub,sup{font-size:var(--s0);line-height:0}
 FLOOR_LIMIT = 0.5
 
 
-def raw_margin(a: dict) -> float:
-    """rho above what a within-group label shuffle already scores."""
-    return float(a["rho"]) - float(a["shuffle_rho"])
-
-
-def kappa_margin(a: dict) -> float:
-    """The same margin as a FRACTION of the margin that was available.
-
-    The raw margin is unfair to whichever arm scores higher, arithmetically
-    and not as a matter of taste: an arm at 0.998 over a floor of 0.930 has
-    0.070 of headroom in total, so it cannot out-margin an arm at 0.900 over
-    the same floor no matter how good it is. Calibration-free lost 2 of 5
-    datasets to precisely that, having beaten the LUT on raw rho in all 5.
-
-    Dividing by what was left is Cohen's kappa applied to rho: "of the
-    distance from the floor to a perfect score, how much did this arm cover".
-    A perfect arm reads 1.0 at any floor; an arm below its own floor stays
-    negative, because a correction that laundered failure into a small
-    positive number would be worse than no correction.
-
-    The floor is clamped at zero — cnc's LUT floor is -0.040 and dividing by
-    1.040 would report 1.04 for a perfect arm. A floor below chance is chance.
-    """
-    floor = max(0.0, float(a["shuffle_rho"]))
-    return (float(a["rho"]) - floor) / max(1.0 - floor, 1e-9)
+# `raw_margin` and `kappa_margin` live in `force_eval_all`, beside `evaluate`
+# which produces the numbers they combine. They were defined HERE first, and
+# within the hour the site was carrying two different margins: this file's
+# kappa in the table, and `pred_vs_gt`'s raw difference annotated on every
+# scatter panel. A quantity the reader compares across figures cannot be owned
+# by the module that draws one of them.
+from .force_eval_all import kappa_margin, raw_margin  # noqa: F401,E402
 
 
 PAGES = [("index.html", "overview"), ("method.html", "method"),
@@ -460,16 +442,17 @@ def page_results() -> str:
                       f"{p['groups_total']}</td></tr>")
         return out
 
-    head = ("<tr><th>dataset</th><th>n</th><th>LUT<br>ρ / margin</th>"
-            "<th>calibration-free<br>ρ / margin</th><th>shuffle floor</th>"
+    head = ("<tr><th>dataset</th><th>n</th><th>LUT<br>ρ / of what was left</th>"
+            "<th>calibration-free<br>ρ / of what was left</th>"
+            "<th>shuffle floor</th>"
             "<th>groups fitted</th></tr>")
     body = f"""
 <h1>Results</h1>
 <p>Both reconstructions through <b>one</b> protocol: half the frames in each
 group fit a 5-feature least squares, half are scored; pooled ρ, five seeds,
-beside a within-group label shuffle. The second number in each cell is ρ minus
-that row's own floor — the comparable one — and bold marks the larger. Only
-the image→gradient step differs.</p>
+beside a within-group label shuffle. The second number is the comparable one —
+the share of the floor-to-perfect distance the arm covered, so a high floor
+cannot cap it. Only the image→gradient step differs.</p>
 
 <h3>Presses the sensor images whole</h3>
 <div class="tablewrap"><table><thead>{head}</thead><tbody>
@@ -478,44 +461,39 @@ the image→gradient step differs.</p>
 {_marker_line()}
 
 <figure><img src="assets/truncation.png" alt="truncated presses">
-<figcaption>A press is <b>truncated</b> when its contact core reaches a border:
-the indentation continues outside the frame, so the free-boundary solve runs
-off the edge with nothing to stop the ramp.
-{tr['over_gel_frac_truncated']*100:.1f}% of them reconstruct deeper than the
+<figcaption>A press is <b>truncated</b> when its contact core reaches a
+border: the free-boundary solve then runs off the edge with nothing to stop the
+ramp, and its depth is not identifiable from the image.
+{tr['over_gel_frac_truncated']*100:.1f}% reconstruct deeper than the
 {GEL_THICKNESS_MM}&nbsp;mm gel, against
 {tr['over_gel_frac_whole']*100:.1f}% of whole presses ({tr['n_truncated']} and
-{tr['n_whole']} frames). Their depth is not identifiable from the
-image.</figcaption></figure>
+{tr['n_whole']} frames).</figcaption></figure>
 
-<p>Excluding them is what the headline row buys: on {m['cnc_mini_26']['label']}
-calibration-free scores ρ&nbsp;{m['cnc_mini_26']['whole']['calibfree']['rho']:.3f}
-on whole presses against
-{m['cnc_mini_26']['all']['calibfree']['rho']:.3f} once truncated frames are
-mixed in. Three datasets reach the 2,000 this table samples; the two that
-cannot have no more presses to give.</p>
+<p>Excluding them is what the headline buys: calibration-free scores
+ρ&nbsp;{m['cnc_mini_26']['whole']['calibfree']['rho']:.3f} on whole presses
+against {m['cnc_mini_26']['all']['calibfree']['rho']:.3f} with truncated frames
+mixed in. Two datasets cannot reach the 2,000 this table samples; they have no
+more presses to give.</p>
 
 <h3>All frames</h3>
-<p class="dim">The same protocol without that exclusion.</p>
 <div class="tablewrap"><table><thead>{head}</thead><tbody>
 {rows_for("all")}</tbody></table></div>
 
-<p class="dim">The shuffle floor is an absolute ρ — what this protocol scores
-with labels permuted inside each group; the margin beside each cell already has
-it subtracted. React's production number adds a fitted position gain field and
+<p class="dim">React's production number adds a fitted position gain field and
 lives on the <a href="method.html">method</a> page.</p>
 
 <figure><img src="assets/pred_vs_gt.png" alt="predicted vs ground-truth force">
-<figcaption>Held-out prediction against ground truth, shared axes per row.
-Each panel carries its shuffle floor and the margin over it.</figcaption>
+<figcaption>Held-out prediction against ground truth, shared axes per row,
+each panel annotated as the table is.</figcaption>
 </figure>
 
 <figure><img src="assets/cross_dataset.png" alt="cross-dataset transfer">
 <figcaption>Fit on one dataset, predict on every other. Read each cell against
-the random-weight baseline under its column: the features are collinear and all
-monotone in contact size, so on an easy target almost any direction ranks
-correctly.</figcaption></figure>
+the random-weight baseline under its column: the features are collinear and
+monotone in contact size, so on an easy target almost any direction
+ranks.</figcaption></figure>
 
-<p>{_oor_line(xd)} — there MAE is extrapolation, not prediction.
+<p>{_oor_line(xd)} Their MAE measures extrapolation, not prediction.
 FeelAnyForce's row goes <i>negative</i>: collinear features let least squares
 cancel opposite-sign terms (<a href="method.html">method</a>). Non-negative
 weights fix it: off-diagonal ρ
@@ -533,17 +511,17 @@ scores ρ&nbsp;{ho['calibfree']['rho']:.3f} against the LUT's
 {ho['lut']['rho']:.3f} on {ho['calibfree']['n_heldout']} held-out presses, but
 a paired bootstrap puts the margin at 95%&nbsp;CI
 [{ho['paired_bootstrap']['d_rho_ci95'][0]:+.3f},
-{ho['paired_bootstrap']['d_rho_ci95'][1]:+.3f}] — a coin flip. Nor does the
-table: calibration-free leads on raw ρ everywhere, but over each row's own
-floor it is {_cf_record(m)}. It ships because it needs no per-sensor lookup
-table, not because it measures force better.</p>
+{ho['paired_bootstrap']['d_rho_ci95'][1]:+.3f}] — a coin flip. The table is
+{_cf_record(m)} once each row's floor is corrected for, but that is a ranking
+over five other sensors, not a test on React. It ships because it needs no
+per-sensor lookup table.</p>
 <p>The two agree at ρ&nbsp;=&nbsp;{ag['spearman']:.3f} over {ag['n']:,} React
 frames, mean difference {ag['mad_n']:.2f}&nbsp;N. {_release_line(rc)}</p>
 
 <h2>Error analysis</h2>
 <p>The ten worst held-out frames reconstruct as well as the five best — same
-gradient dipoles, same compact depth, no ramping. The residual is in the
-depth→force fit, not in image→depth, so a better reconstruction will not move
+dipoles, same compact depth, no ramping. The residual is in the depth→force
+fit, not in image→depth, so a better reconstruction will not move
 them.</p>
 {_error_section()}
 """
@@ -611,18 +589,13 @@ def _marker_line() -> str:
     lows = sorted(m, key=lambda n: m[n]["whole"]["calibfree"]["rho"])
     rank = "lowest" if lows and lows[0] == k else "not the lowest"
     return (
-        f"""<p><b>The one marker gel is the one low row.</b>
-{m[k]['label']} is the only dataset here whose gel carries a printed dot
-lattice — {ds[k]['n_dots_median']} dots counted on its reference frames against
-{max(r['n_dots_max'] for n, r in ds.items() if n in clean)} or fewer on all
-{len(clean)} others, by the same detector the depth path uses to decide whether
-to inpaint. It is also the {rank} calibration-free ρ in the table. The dots
-displace gel and occlude the surface the photometric solve integrates, so a
-loss there is expected rather than surprising — but one markered dataset is one
-data point, and this is a consistent observation, not a controlled comparison.
-The dataset does contain a markerless gel of its own; a 2,000-frame scan across
-its four splits found no force-labelled frame on it, so the controlled
-comparison cannot be run from it either.</p>""")
+        f"""<p><b>The one marker gel is the one low row.</b> FEATS is the only
+gel here with a printed dot lattice — {ds[k]['n_dots_median']} dots counted on
+its references against {max(r['n_dots_max'] for n, r in ds.items() if n in clean)}
+or fewer on the other {len(clean)} — and it holds the {rank} calibration-free ρ.
+Its panel shows why: the dots emboss themselves into the reconstructed surface.
+One markered dataset is one data point, so this is an observation, not a
+controlled comparison.</p>""")
 
 
 def _matrix_rows() -> dict:
@@ -677,9 +650,11 @@ def _error_section() -> str:
                 f'{r["rel_err_median"]*100:.1f}%, p90 '
                 f'{r["rel_err_p90"]*100:.1f}%, worst '
                 f'{r["rel_err_max"]*100:.1f}%.</figcaption></figure>')
-    return ("<p class='dim'>Each panel: the ten worst held-out frames, with the"
-            " five best as a control. Relative error is |pred−true| over the "
-            "dataset's force span.</p>" + out)
+    # The preceding paragraph already says the ten worst reconstruct as well
+    # as the five best, and every caption below carries its own numbers. All
+    # that was left to define is the unit.
+    return ("<p class='dim'>Relative error is |pred−true| over the dataset's "
+            "force span.</p>" + out)
 
 
 def page_gallery() -> str:

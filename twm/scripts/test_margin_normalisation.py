@@ -78,17 +78,27 @@ def main() -> int:
     check(k < 0, "an arm below its own floor stays negative",
           f"rho 0.300 under a 0.600 floor -> kappa {k:.4f}")
 
-    # 6 — SINGLE SOURCE. The table, the headline arm and the win count must all
-    # rank by the same expression. This is not style: the page already shipped
-    # a sentence whose claim came from one formula and a table whose bold came
-    # from another, and the two disagreed on two of five rows.
+    # 6 — SINGLE SOURCE, ACROSS THE WHOLE PACKAGE.
+    #
+    # This grepped `site2.py` alone and passed while the site carried TWO
+    # margins: kappa in the results table, and `pred_vs_gt`'s raw difference
+    # annotated on every scatter panel under the same word. A single-source
+    # check scoped to one file is not a single-source check — it is a check
+    # that one file is self-consistent, which was never in doubt.
+    #
+    # The functions now live in `force_eval_all`, beside the `evaluate` that
+    # produces the numbers they combine, and every caller imports them.
     import re
-    src = Path("force_recovery/site2.py").read_text()
-    body = re.sub(r"def (raw|kappa)_margin.*?(?=\ndef |\nclass |\n[A-Z_]+ =)",
-                  "", src, flags=re.S)
-    stray = re.findall(r'\["rho"\]\s*-\s*\w*\[?"?shuffle_rho', body)
+    stray = []
+    for py in sorted(Path("force_recovery").glob("*.py")):
+        src = py.read_text()
+        body = re.sub(r"def (raw|kappa)_margin.*?(?=\ndef |\nclass |\n[A-Z_]+ =)",
+                      "", src, flags=re.S)
+        for hit in re.findall(r'\[[\'"]rho[\'"]\]\s*-\s*[\w\[\]\'"]*'
+                              r'shuffle(?:_rho)?', body):
+            stray.append(f"{py.name}: {hit}")
     check(not stray, "only one place computes a margin",
-          f"{len(stray)} inline `rho - shuffle_rho` outside the helpers"
+          f"{len(stray)} inline margin(s) outside the helpers"
           + (f": {stray}" if stray else ""))
 
     # 7 — the real artifact, ranked both ways, so the change is visible rather

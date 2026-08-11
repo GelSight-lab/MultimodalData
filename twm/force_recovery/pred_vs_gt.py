@@ -144,10 +144,18 @@ def _main() -> int:
             # — and printing it with a leading + made it read as a change in
             # rho, which is what a reader asked. Shown as a value, with the
             # margin that is the thing actually being claimed.
+            # 净额 is `kappa_margin`, IMPORTED — the results table ranks the
+            # two arms by it, and for about an hour this panel annotated the
+            # raw difference instead, so the same word named two quantities on
+            # two pages of one site. The raw difference also penalises the
+            # better arm for having less headroom left, which is the whole
+            # reason the table stopped using it.
+            from .force_eval_all import kappa_margin
             a.text(0.04, 0.96,
                    f"ρ = {d[arm]['rho']:.4f}\nMAE = {d[arm]['mae']:.3f} N\n"
                    f"打乱标签后 ρ = {d[arm]['shuffle']:.3f}\n"
-                   f"净额 = {d[arm]['rho'] - d[arm]['shuffle']:.3f}\n"
+                   f"净额 = {kappa_margin({'rho': d[arm]['rho'], 'shuffle_rho': d[arm]['shuffle']}):.3f}"
+                   f"（占可得余量）\n"
                    f"n = {len(t)} 帧 / {d['groups']} 组",
                    transform=a.transAxes, va="top", fontsize=8.5,
                    bbox=dict(facecolor="white", alpha=0.75, edgecolor="none"))

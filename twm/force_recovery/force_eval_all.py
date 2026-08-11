@@ -180,6 +180,33 @@ def evaluate(X, f, groups, seeds=SEEDS) -> dict:
             "per_group_rho": pg}
 
 
+def raw_margin(a: dict) -> float:
+    """rho above what a within-group label shuffle already scores."""
+    return float(a["rho"]) - float(a["shuffle_rho"])
+
+
+def kappa_margin(a: dict) -> float:
+    """The same margin as a FRACTION of the margin that was available.
+
+    The raw margin is unfair to whichever arm scores higher, arithmetically
+    and not as a matter of taste: an arm at 0.998 over a floor of 0.930 has
+    0.070 of headroom in total, so it cannot out-margin an arm at 0.900 over
+    the same floor no matter how good it is. Calibration-free lost 2 of 5
+    datasets to precisely that, having beaten the LUT on raw rho in all 5.
+
+    Dividing by what was left is Cohen's kappa applied to rho: "of the
+    distance from the floor to a perfect score, how much did this arm cover".
+    A perfect arm reads 1.0 at any floor; an arm below its own floor stays
+    negative, because a correction that laundered failure into a small
+    positive number would be worse than no correction.
+
+    The floor is clamped at zero — cnc's LUT floor is -0.040 and dividing by
+    1.040 would report 1.04 for a perfect arm. A floor below chance is chance.
+    """
+    floor = max(0.0, float(a["shuffle_rho"]))
+    return (float(a["rho"]) - floor) / max(1.0 - floor, 1e-9)
+
+
 def _basis(x, y):
     return np.column_stack([np.ones_like(x), x, y, x * x, y * y, x * y])
 
