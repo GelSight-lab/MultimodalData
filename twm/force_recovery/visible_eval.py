@@ -79,18 +79,80 @@ def in_fov(fr) -> bool:
     return bool(lo_x < x < hi_x and lo_y < y < hi_y)
 
 
-def visible(img: np.ndarray, ref: np.ndarray) -> bool:
-    """Is the whole contact inside the frame? Decided on the raw dI only."""
+# HOW MUCH BORDER A PRESS MAY TOUCH BEFORE IT COUNTS AS TRUNCATED.
+#
+# Zero: a single core pixel on any border rejects the frame. That looks
+# indefensibly strict — measured over cnc_mini_26, the in-field-of-view frames
+# it rejects put a median of 0.08% of their core on the border, slivers — and
+# it was put to the test rather than defended. It won; the measurements are
+# below, and this constant is expressed as a threshold rather than as an
+# `any()` so that re-running that test costs one edit.
+#
+# The quantity compared is `border pixels / sqrt(core area)`, NOT the fraction
+# of the core on the border. The fraction is not monotone in how truncated a
+# press is, and that is not a subtlety — on the synthetic cases in
+# `scripts/test_truncation_tolerance.py` a disc a third outside scores 2.24%
+# while a disc HALF outside scores 2.12%, because the cut grows the border run
+# and the visible area together. Dividing by sqrt(area) instead makes the
+# quantity a length ratio — chord over diameter, up to a constant — which is
+# dimensionless, independent of contact size, and rises monotonically with the
+# overflow: 0.33, 1.30, 1.57, 2.18 for overflows of 1, 28, 60 and 90 px.
+#
+# AND THE ANSWER IS ZERO. THE STRICT RULE SURVIVED ITS OWN TEST.
+#
+# The threshold was gated on the SCORE, not on how many frames it recovers —
+# loosening a validity rule always recovers frames, so "it recovered frames" is
+# not evidence for it. `scripts/truncation_threshold_sweep.py` re-scored every
+# dataset at 0.0 / 0.3 / 0.6 / 1.0 / 1.5 / no limit, both arms, same protocol
+# as the results table. Chance-corrected margin, calibration-free arm:
+#
+#     threshold      0.00    0.30    0.60    1.00    1.50     inf
+#     FeelAnyForce  0.885   0.782   0.740   0.756   0.794   0.768
+#     FoTa cnc        --    0.821   0.646   0.646   0.646   0.646
+#     FEATS         0.651   0.461   0.584   0.567   0.547   0.584
+#
+# Every relaxation is worse on FeelAnyForce (14 captures, the most groups) and
+# on FoTa cnc. FEATS's LUT arm does gain, but its calibration-free arm loses
+# and it is the one dataset with a marker gel. The correction I made to the
+# table's margin the same day mattered here too: the strict subset has a HIGH
+# shuffle floor (0.663 on FeelAnyForce, because fewer frames per group means
+# the group means carry more of the ordering), so a raw-rho comparison would
+# have overstated the strict rule's advantage. It does not reverse it.
+#
+# A second, population-free check agrees rather than objects: reconstructed
+# depth penetrating past the gel — physically impossible, and the signature of
+# an indentation whose ramp runs off the frame — has a median of 0.00% in every
+# chord-ratio bin below 1.0 on all three datasets measured. So the recovered
+# frames are not visibly broken; they simply do not rank.
+#
+# The intuition being tested — "many of these frames are clipped by a hair, it
+# should be fine" — is right about the geometry and wrong about the
+# consequence. Zero it is. `edge_chord_ratio` stays because the quantity is
+# what made the question answerable, and the sweep stays so the next person
+# does not have to take this on trust.
+EDGE_CHORD_RATIO = 0.0
+
+
+def edge_chord_ratio(img: np.ndarray, ref: np.ndarray) -> float:
+    """Border run of the contact core over its diameter. 0.0 if no contact."""
     import cv2
 
     from . import calib_free as CF
     dI = np.asarray(img, np.float32) - np.asarray(ref, np.float32)
     mag = cv2.GaussianBlur(np.abs(dI).max(axis=2), (5, 5), 1.5)
     core = mag > CORE_FACTOR * CF.VALID_DI
-    if not core.any():
-        return False
-    return not (core[0].any() or core[-1].any()
-                or core[:, 0].any() or core[:, -1].any())
+    n = int(core.sum())
+    if not n:
+        return float("nan")             # no contact at all — not a truncation
+    on_edge = int(core[0].sum() + core[-1].sum()
+                  + core[:, 0].sum() + core[:, -1].sum())
+    return on_edge / np.sqrt(n)
+
+
+def visible(img: np.ndarray, ref: np.ndarray) -> bool:
+    """Is the whole contact inside the frame? Decided on the raw dI only."""
+    r = edge_chord_ratio(img, ref)
+    return bool(np.isfinite(r) and r <= EDGE_CHORD_RATIO)
 
 
 def _pool(name: str):
