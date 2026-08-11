@@ -115,7 +115,10 @@ def _build():
         row = ax[i]
         row[0].imshow(show)
         row[1].imshow(EP.diff_rgb(img, ref))
-        row[2].imshow(d / max(d.max(), 1e-12), cmap="inferno")
+        # a surface, not a hue ramp — see `error_analysis`. It matters most
+        # here: this figure's whole claim is that a truncated press RAMPS off
+        # the edge, and a ramp is a shape.
+        row[2].imshow(EP.mesh(d, relative=True))
         # a horizontal slice through the deepest row, so the ramp is visible
         r0 = int(np.argmax(d.max(axis=1)))
         row[3].plot(d[r0] / max(d.max(), 1e-12), lw=1.6,

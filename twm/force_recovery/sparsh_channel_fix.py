@@ -70,11 +70,11 @@ def build():
                      (EP.diff_rgb(img, ref), None, None),
                      (r["gx"], "coolwarm", (-gm, gm)),
                      (r["gy"], "coolwarm", (-gm, gm)),
-                     (r["depth"] / max(r["depth"].max(), 1e-12), "inferno",
-                      None)]
+                     # a surface, not a hue ramp — see `error_analysis`
+                     (EP.mesh(r["depth"], relative=True), None, None)]
             row = ax[2 * i + j]
-            for a, (d, cm, lim) in zip(row, cells):
-                a.imshow(d, cmap=cm, **({} if lim is None
+            for a, (cell, cm, lim) in zip(row, cells):
+                a.imshow(cell, cmap=cm, **({} if lim is None
                                         else {"vmin": lim[0], "vmax": lim[1]}))
                 a.axis("off")
             row[0].text(0.03, 0.96, f"{tag}\n{fr['group']}  F={fr['f']:.2f} N",

@@ -206,9 +206,18 @@ def _panel(img: np.ndarray, depth: np.ndarray, f_pred: float,
         add(V.diff_rgb(st["dI"], 0.0),
             V.diff_caption("difference image  dI = img − ref") + depth_note)
         add(st["valid"], "valid mask  |dI| > 8", cmap="gray")
-        add(st["gmag"], "|LUT surface gradient|", cmap="magma")
-    add(d, f"LUT depth [mm]{depth_note}", cmap="inferno", colorbar=True)
-    add(mesh_view(d), f"3D reconstruction (Open3D mesh){depth_note}")
+        # flat-ok: a gradient MAGNITUDE, not a depth. It has no surface to
+        # render — it is |∇z|, and a mesh of it would be a picture of a
+        # quantity nobody has a height intuition for.
+        add(st["gmag"], "|LUT surface gradient|",
+            cmap="magma")   # flat-ok: see above
+    # The flat `inferno` depth panel that used to sit here rendered the SAME
+    # array `d` as the mesh on the next line, one column apart: the reader was
+    # given the surface and a hue ramp of the surface and asked to compare. Its
+    # colorbar was the only place the absolute millimetres appeared, so the
+    # peak moved into the mesh title rather than being lost with it.
+    add(mesh_view(d), f"3D reconstruction (Open3D mesh)  "
+                      f"peak {float(np.max(d)):.2f} mm{depth_note}")
 
     ax = fig.add_subplot(nrow, ncol, k)
     bars = [("predicted", f_pred, "#d95f02")]

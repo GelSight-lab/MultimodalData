@@ -147,10 +147,20 @@ def figure(name: str, label: str, cap: int) -> dict:
                  (EP.diff_rgb(img, ref), None, None),
                  (cf["gx"], "coolwarm", (-gm, gm)),
                  (cf["gy"], "coolwarm", (-gm, gm)),
-                 (lut, "inferno", None),
-                 (cf["depth"] / max(cf["depth"].max(), 1e-12), "inferno", None)]
-        for a, (d, cm, lim) in zip(ax[r], cells):
-            a.imshow(d, cmap=cm, **({} if lim is None
+                 # DEPTH IS SHOWN AS A SURFACE, NEVER AS A COLOUR RAMP. Both
+                 # of these were `inferno` images, which asks the reader to
+                 # invert a hue ramp by eye to compare two reconstructions —
+                 # and this figure exists precisely to compare them. Same
+                 # renderer as the workbench, so a panel and the interactive
+                 # view of one frame cannot disagree. `relative=True` on the
+                 # calibration-free arm because it has no millimetre scale
+                 # (`calib_free.RETURNS_MILLIMETRES`).
+                 (EP.mesh(lut), None, None),
+                 (EP.mesh(cf["depth"], relative=True), None, None)]
+        # `cell` not `d`: after the depth columns became meshes these hold
+        # RGB renders and gradient fields, never a depth map.
+        for a, (cell, cm, lim) in zip(ax[r], cells):
+            a.imshow(cell, cmap=cm, **({} if lim is None
                                     else {"vmin": lim[0], "vmax": lim[1]}))
             a.axis("off")
         tag = "误差最大" if r < N_WORST else "误差最小"

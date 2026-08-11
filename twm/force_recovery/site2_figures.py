@@ -2,11 +2,14 @@
 
 One figure per dataset, one row per sample, the site's one column convention
 (`eval_panel`): raw, signed colour difference, LUT depth, calibration-free
-depth, LUT mesh, calibration-free mesh.
+depth — the two depth columns rendered as SURFACES through `eval_panel.mesh`,
+the same renderer the interactive workbench uses. No depth on this site is ever
+drawn as a colour ramp; a hue the reader has to invert by eye is not a depth
+map, and a bump and a pit of the same depths draw identically.
 
 Two things this file will not do quietly:
 
-* The calibration-free depth and mesh are drawn RELATIVE, and say so in the
+* The calibration-free depth is drawn RELATIVE, and says so in the
   title. Its scale is not recovered (`calib_free.RETURNS_MILLIMETRES`), and
   the mesh renderer applies a fixed z exaggeration — drawn raw, correct
   geometry renders as a tower. That is not a display preference, it is the
@@ -61,15 +64,13 @@ def _load(name: str):
 # previous Chinese figure on this site shipped as a row of tofu boxes.
 LABELS = {
     "en": {"raw": "raw", "diff": None,
-           "lut_d": "LUT depth  max {:.2f} mm",
-           "cf_d": "calibration-free depth (relative)",
-           "lut_m": "LUT mesh", "cf_m": "calibration-free mesh (relative z)",
+           "lut_m": "LUT depth  peak {:.2f} mm",
+           "cf_m": "calibration-free depth (relative z)",
            "suptitle": "{label}  ·  {gel}  ·  {n} samples",
            "markerless": "markerless", "MARKER": "MARKER"},
     "zh": {"raw": "原图", "diff": "差分图  dI = 当前帧 − 参考帧（彩色）",
-           "lut_d": "LUT 标定深度  峰值 {:.2f} mm",
-           "cf_d": "免标定深度（相对值）",
-           "lut_m": "LUT 标定网格", "cf_m": "免标定网格（相对高度）",
+           "lut_m": "LUT 标定深度  峰值 {:.2f} mm",
+           "cf_m": "免标定深度（相对高度）",
            "suptitle": "{label}  ·  {gel}  ·  {n} 个样本",
            "markerless": "无标记点胶层", "MARKER": "有标记点胶层"},
 }
@@ -100,26 +101,29 @@ def figure(name: str, n: int = 8, seed: int = 0, lang: str = "en") -> dict:
 
     rng = np.random.default_rng(seed)
     sel = [rows[i] for i in rng.permutation(len(rows))[:n]]
-    fig, ax = plt.subplots(len(sel), 6, figsize=(19, 2.55 * len(sel)))
+    fig, ax = plt.subplots(len(sel), 4, figsize=(13, 2.55 * len(sel)))
     ax = np.atleast_2d(ax)
     for i, fr in enumerate(sel):
         img, ref = get(fr)
         lut = stages(img, ref)["depth"]
         cf = CF.reconstruct(img, ref)["depth"]
-        cfn = cf / max(float(cf.max()), 1e-12)
         f_n = fr.get("f")
         tag = f"F={f_n:.1f} N  " if f_n is not None else ""
         cells = [
             (np.clip(img, 0, 255).astype(np.uint8), None,
              f"{L['raw']}  {tag}[{fr.get('group', '?')}]"),
             (EP.diff_rgb(img, ref), None, L["diff"] or EP.diff_caption()),
-            (lut, "inferno", L["lut_d"].format(lut.max())),
-            (cfn, "inferno", L["cf_d"]),
-            (EP.mesh(lut), None, L["lut_m"]),
+            # SIX COLUMNS BECAME FOUR. The two dropped ones were `inferno`
+            # images of the very same `lut` and `cf` arrays the two mesh
+            # columns render, so each reconstruction was drawn twice: once as
+            # a surface and once as a hue ramp the reader has to invert by eye.
+            # The peak millimetre value was the only thing the flat pair
+            # carried that the mesh does not, so it moved into the title.
+            (EP.mesh(lut), None, L["lut_m"].format(lut.max())),
             (EP.mesh(cf, relative=True), None, L["cf_m"]),
         ]
-        for a, (d, cm, t) in zip(ax[i], cells):
-            a.imshow(d, cmap=cm)
+        for a, (cell, cm, t) in zip(ax[i], cells):
+            a.imshow(cell, cmap=cm)
             a.set_title(t, fontsize=8)
             a.axis("off")
     fig.suptitle(L["suptitle"].format(label=spec["label"],
