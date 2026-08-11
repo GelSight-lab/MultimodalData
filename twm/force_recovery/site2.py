@@ -443,14 +443,14 @@ the image→gradient step differs.</p>
 {rows_for("whole")}</tbody></table></div>
 
 <figure><img src="assets/truncation.png" alt="truncated presses">
-<figcaption>What the row above excludes. A press is <b>truncated</b> when its
-contact core reaches an image border: part of the indentation is outside the
-frame, so the free-boundary solve runs off the edge with nothing beyond it to
-stop the ramp. {tr['over_gel_frac_truncated']*100:.1f}% of truncated frames
-reconstruct deeper than the {GEL_THICKNESS_MM}&nbsp;mm gel is thick, against
-{tr['over_gel_frac_whole']*100:.1f}% of frames imaged whole
-({tr['n_truncated']} and {tr['n_whole']} frames). Their depth is not
-identifiable, so no reconstruction can fix them.</figcaption></figure>
+<figcaption>A press is <b>truncated</b> when its contact core reaches a border:
+the indentation continues outside the frame, so the free-boundary solve runs
+off the edge with nothing to stop the ramp.
+{tr['over_gel_frac_truncated']*100:.1f}% of them reconstruct deeper than the
+{GEL_THICKNESS_MM}&nbsp;mm gel, against
+{tr['over_gel_frac_whole']*100:.1f}% of whole presses ({tr['n_truncated']} and
+{tr['n_whole']} frames). Their depth is not identifiable from the
+image.</figcaption></figure>
 
 <p>Excluding them is what the headline row buys: on {m['cnc_mini_26']['label']}
 calibration-free scores ρ&nbsp;{m['cnc_mini_26']['whole']['calibfree']['rho']:.3f}
@@ -498,9 +498,10 @@ scores ρ&nbsp;{ho['calibfree']['rho']:.3f} against the LUT's
 {ho['lut']['rho']:.3f} on {ho['calibfree']['n_heldout']} held-out presses, but
 a paired bootstrap puts the margin at 95%&nbsp;CI
 [{ho['paired_bootstrap']['d_rho_ci95'][0]:+.3f},
-{ho['paired_bootstrap']['d_rho_ci95'][1]:+.3f}] — a coin flip. The reason to
-deploy it is the table above: real newtons, {_n_range(m)} presses each,
-calibration-free {_cf_record(m)}.</p>
+{ho['paired_bootstrap']['d_rho_ci95'][1]:+.3f}] — a coin flip. Nor does the
+table: calibration-free leads on raw ρ everywhere, but over each row's own
+floor it is {_cf_record(m)}. It ships because it needs no per-sensor lookup
+table, not because it measures force better.</p>
 <p>The two agree at ρ&nbsp;=&nbsp;{ag['spearman']:.3f} over {ag['n']:,} React
 frames, mean difference {ag['mad_n']:.2f}&nbsp;N. {_release_line(rc)}</p>
 
