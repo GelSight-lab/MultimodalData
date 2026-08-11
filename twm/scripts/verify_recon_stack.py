@@ -155,17 +155,25 @@ def main() -> int:
 
     # 8c — THE SAME FRAMES, AND THE SAME NUMBERS, EVERY RUN.
     #
-    # Two runs of `force_recon_matrix` days apart produced materially different
-    # scores from identical code — cnc 0.963 against 0.938, FEATS 0.648 against
-    # 0.706 — which was only noticed because a recompute happened to be
-    # compared against the previous artifact. A published number that cannot be
-    # reproduced is not a measurement.
+    # Two runs of `force_recon_matrix` produced different calibration-free
+    # scores — cnc 0.963 against 0.938, FEATS 0.648 against 0.706 — and I first
+    # blamed contamination, because that run had genuinely had two processes
+    # writing one artifact. That was WRONG, and the arms said so: the LUT
+    # column was identical to four decimals on all five datasets while every
+    # calibration-free cell moved. Contamination perturbs both arms; a
+    # single-arm shift is a change to that arm's law.
     #
-    # The cause was two processes writing one artifact, now prevented by
-    # `artifact_lock`. This checks the other half: that the inputs to the
-    # evaluation are themselves deterministic, so a future divergence means
-    # contamination rather than a seeded sampler drifting. Cheap on purpose —
-    # a guard nobody can afford to run guards nothing.
+    # It was: `120f1e3` replaced the calibration-free contact decision (5% of
+    # the frame's peak) with the deployed contact mask, and said so — "every
+    # calibration-free number here predating 2026-08-10 was that model". The
+    # first run predated it. The freshness gate had flagged the artifact as
+    # stale and I overrode it as an over-broad dependency; it was right.
+    #
+    # This check does not verify reproducibility across code changes — nothing
+    # can. It verifies the inputs are deterministic, so that the NEXT time two
+    # runs disagree, "the sampler drifted" is already excluded and the search
+    # starts at the laws. Cheap on purpose: a guard nobody can afford to run
+    # guards nothing.
     from force_recovery.force_recon_matrix import _feats as ef
     from force_recovery.force_recon_matrix import _rows
 
