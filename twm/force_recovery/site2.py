@@ -106,6 +106,34 @@ sub,sup{font-size:var(--s0);line-height:0}
 # same column as Sparsh's 0.966 with a floor of 0.736 against 0.072.
 FLOOR_LIMIT = 0.5
 
+
+def raw_margin(a: dict) -> float:
+    """rho above what a within-group label shuffle already scores."""
+    return float(a["rho"]) - float(a["shuffle_rho"])
+
+
+def kappa_margin(a: dict) -> float:
+    """The same margin as a FRACTION of the margin that was available.
+
+    The raw margin is unfair to whichever arm scores higher, arithmetically
+    and not as a matter of taste: an arm at 0.998 over a floor of 0.930 has
+    0.070 of headroom in total, so it cannot out-margin an arm at 0.900 over
+    the same floor no matter how good it is. Calibration-free lost 2 of 5
+    datasets to precisely that, having beaten the LUT on raw rho in all 5.
+
+    Dividing by what was left is Cohen's kappa applied to rho: "of the
+    distance from the floor to a perfect score, how much did this arm cover".
+    A perfect arm reads 1.0 at any floor; an arm below its own floor stays
+    negative, because a correction that laundered failure into a small
+    positive number would be worse than no correction.
+
+    The floor is clamped at zero — cnc's LUT floor is -0.040 and dividing by
+    1.040 would report 1.04 for a perfect arm. A floor below chance is chance.
+    """
+    floor = max(0.0, float(a["shuffle_rho"]))
+    return (float(a["rho"]) - floor) / max(1.0 - floor, 1e-9)
+
+
 PAGES = [("index.html", "overview"), ("method.html", "method"),
          ("results.html", "results"), ("sensors.html", "sensors"),
          ("gallery.html", "gallery"), ("workbench.html", "3D workbench")]
@@ -224,7 +252,7 @@ def page_index() -> str:
              if r.get("available") and r.get("whole", {}).get("scored")]
     arms = [a for p in whole for a in (p["lut"], p["calibfree"])
             if a["shuffle_rho"] <= FLOOR_LIMIT]
-    best = max(arms, key=lambda a: a["rho"] - a["shuffle_rho"])["rho"]
+    best = max(arms, key=kappa_margin)["rho"]
     body = f"""
 <h1>Contact force from a GelSight image,<br>with no force sensor</h1>
 <p>React records tactile images and sensor pose. It has no load cell, so the
@@ -401,7 +429,12 @@ def page_results() -> str:
             # captures each having its own force range. Ranking the two arms by
             # raw rho would also pick the wrong winner wherever the floors
             # differ between them, which they do.
-            cells = {k: (p[j]["rho"], p[j]["rho"] - p[j]["shuffle_rho"])
+            #
+            # The margin shown is CHANCE-CORRECTED — see `kappa_margin`. The
+            # raw difference penalises the better arm for having less room
+            # left, and it was doing so here: calibration-free beat the LUT on
+            # raw rho in 5 of 5 datasets and lost 2 of them on raw margin.
+            cells = {k: (p[j]["rho"], kappa_margin(p[j]))
                      for k, j in (("LUT", "lut"), ("calib-free", "calibfree"))}
             best = max(cells, key=lambda k: cells[k][1])
             floored = max(p[j]["shuffle_rho"] for j in ("lut", "calibfree")) > FLOOR_LIMIT
@@ -441,6 +474,8 @@ the image→gradient step differs.</p>
 <h3>Presses the sensor images whole</h3>
 <div class="tablewrap"><table><thead>{head}</thead><tbody>
 {rows_for("whole")}</tbody></table></div>
+
+{_marker_line()}
 
 <figure><img src="assets/truncation.png" alt="truncated presses">
 <figcaption>A press is <b>truncated</b> when its contact core reaches a border:
@@ -533,18 +568,66 @@ def _cf_record(m: dict) -> str:
     """Calibration-free's record against the LUT, BY MARGIN, counted here.
 
     Written out longhand it was "ahead on all five", which is true of raw ρ and
-    false of the margin the table now ranks by — Sparsh's LUT clears its floor
-    by 0.909 against 0.894. A sentence that contradicts the table above it is
-    worse than no sentence, and the only way it cannot is if it counts.
+    was false of the RAW margin this used to count — Sparsh's LUT cleared its
+    floor by 0.909 against 0.894. A sentence that contradicts the table above
+    it is worse than no sentence, and the only way it cannot is if it counts
+    the same quantity the table ranks by. That is now `kappa_margin`, so this
+    counts `kappa_margin`; if the table's ranking changes again, so does this.
     """
     scored = [r["whole"] for r in m.values()
               if r.get("whole", {}).get("scored")]
-    def marg(p, arm):
-        return p[arm]["rho"] - p[arm]["shuffle_rho"]
-    win = sum(marg(p, "calibfree") > marg(p, "lut") for p in scored)
+    win = sum(kappa_margin(p["calibfree"]) > kappa_margin(p["lut"])
+              for p in scored)
     n = len(scored)
     return ("ahead on all " + "five four three two one".split()[5 - n]
             if win == n else f"ahead on {win} of {n}")
+
+
+def _marker_line() -> str:
+    """The one sentence about marker gels, built from the measured count.
+
+    Not typed, and this is not fussiness: the marker/markerless split was
+    asserted wrongly twice here — once from FEATS's own `markered` column,
+    which labels its markerless gel_5 as markered, and once from a blob
+    detector that invents dots on smooth images. `gel_type` counts them with
+    the detector the depth path already uses, and the count separates cleanly
+    or `scripts/test_gel_type_measured.py` fails before this is quoted.
+
+    The claim is deliberately weak. One markered dataset is one data point;
+    it is consistent with the mechanism and it is not an experiment, and the
+    sentence says which of those it is.
+    """
+    try:
+        g = json.loads((OUT_ROOT / "feature_cache" / "gel_type.json").read_text())
+    except Exception:                                           # noqa: BLE001
+        return ""
+    ds = {r["dataset"]: r for r in g["datasets"] if r.get("available")}
+    marked = sorted(k for k, r in ds.items() if r["n_dots_median"] > 0)
+    clean = sorted(k for k, r in ds.items() if r["n_dots_median"] == 0)
+    if len(marked) != 1 or not clean:
+        return ""
+    k = marked[0]
+    m = _matrix_rows()
+    lows = sorted(m, key=lambda n: m[n]["whole"]["calibfree"]["rho"])
+    rank = "lowest" if lows and lows[0] == k else "not the lowest"
+    return (
+        f"""<p><b>The one marker gel is the one low row.</b>
+{m[k]['label']} is the only dataset here whose gel carries a printed dot
+lattice — {ds[k]['n_dots_median']} dots counted on its reference frames against
+{max(r['n_dots_max'] for n, r in ds.items() if n in clean)} or fewer on all
+{len(clean)} others, by the same detector the depth path uses to decide whether
+to inpaint. It is also the {rank} calibration-free ρ in the table. The dots
+displace gel and occlude the surface the photometric solve integrates, so a
+loss there is expected rather than surprising — but one markered dataset is one
+data point, and this is a consistent observation, not a controlled comparison.
+The dataset does contain a markerless gel of its own; a 2,000-frame scan across
+its four splits found no force-labelled frame on it, so the controlled
+comparison cannot be run from it either.</p>""")
+
+
+def _matrix_rows() -> dict:
+    return {r["dataset"]: r for r in _artifact("force_recon_matrix.json")
+            if r.get("available") and r.get("whole", {}).get("scored")}
 
 
 def _avail(m: dict) -> str:
