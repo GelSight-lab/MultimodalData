@@ -14,14 +14,26 @@ were proportional to force would exaggerate large forces roughly quadratically.
 `radius ∝ √F` makes the *area* linear in force, which is what a reader
 actually reads off the screen.
 
-FRAME ALIGNMENT — the part that is easy to get silently wrong.
+FRAME ALIGNMENT — the part that is easy to get silently wrong, and did.
 The force arrays are indexed by release-parquet row; the preview iterates raw
-HDF5 frame indices. `run_episode` reads frame `trim + row + LEGACY_SHIFT`
-(LEGACY_SHIFT = 15) where `trim = source_h5_frame[0]` from the parquet, while
-the preview's own `_get_trim_offset` reads a different field that is often
-absent (it then falls back to 0). Using the preview's trim would put the force
-~15 frames — half a second at 30 fps — away from the picture it labels, so
-`row_for_h5_frame` below deliberately re-derives the mapping from the parquet.
+HDF5 frame indices. `trim = source_h5_frame[0]` comes from the parquet, not
+from the preview's own `_get_trim_offset`, which reads a different field that
+is often absent and then falls back to 0.
+
+The mapping is `row = h5_frame - trim`, and NOT `- LEGACY_SHIFT` on top of it.
+This subtracted the shift as well, on the reasoning that `run_episode` reads
+frame `trim + row + LEGACY_SHIFT`. It does — but that +15 is how you reach the
+GELSIGHT frame row r was computed from, and the gelsight stream lags the
+cameras by exactly that much, so gelsight[trim + r + 15] is the tactile image
+of CAMERA frame trim + r. The row a camera frame belongs to is unaffected.
+
+The cost was the defect this docstring warned about, produced by the line that
+was supposed to prevent it: in one panel the tactile tile showed gelsight
+frame i+15 while the disc showed the force of gelsight frame i. Half a second
+apart, on every published preview. Cross-correlating the displayed contact
+signal against the displayed force peaked at -16 frames on three episodes of
+motherboard/2026-05-10, and at 0 once the extra subtraction was removed
+(`scripts/test_preview_alignment.py`).
 """
 from __future__ import annotations
 
@@ -59,18 +71,14 @@ def radius_px(force_n: float) -> float:
     return R_MIN_PX + (R_MAX_PX - R_MIN_PX) * np.sqrt(min(f, F_FULL_N) / F_FULL_N)
 
 
-def row_for_h5_frame(h5_frame: int, trim_parquet: int, n_rows: int,
-                     legacy_shift: int | None = None) -> int | None:
-    """Release-parquet row that produced this HDF5 frame, or None if outside.
+def row_for_h5_frame(h5_frame: int, trim_parquet: int, n_rows: int) -> int | None:
+    """Release-parquet row annotating this CAMERA frame, or None if outside.
 
-    The shift defaults to `tactile_align.LEGACY_SHIFT` rather than a literal.
-    It sat here as `legacy_shift: int = 15` — a fourth copy of the one fact
-    `tactile_align` exists to own, and one the guard could not see, because a
-    default argument is not an assignment. The guard now looks for both.
+    No lag term: see the module docstring. The parameter is gone rather than
+    defaulted to zero, so a caller that still believes a shift belongs here
+    fails loudly instead of passing one that is silently ignored.
     """
-    if legacy_shift is None:
-        legacy_shift = LEGACY_SHIFT
-    row = int(h5_frame) - int(trim_parquet) - int(legacy_shift)
+    row = int(h5_frame) - int(trim_parquet)
     return row if 0 <= row < n_rows else None
 
 

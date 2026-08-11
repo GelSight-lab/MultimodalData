@@ -145,6 +145,62 @@ from twm.force_overlay import (draw_legend, load_forces,
 FORCE_ROOT = Path("/media/yxma/Disk1/twm/force_recovery")
 
 
+def preview_reference(h5file, side: str, task: str, date: str, ep: str):
+    """The no-contact gel this episode's diff tiles are drawn against.
+
+    THE SAME POOL THE FORCE CHANNEL USES, imported rather than re-decided:
+    `run_episode._reference_rows` takes the 15 lowest-intensity fresh rows at
+    least a second apart, and the reference is the median of twelve of them.
+
+    What was here was `sample_idx[0]` — whatever frame the recording happened
+    to start on — with the comment "use the first sampled frame's gelsight as
+    the static diff reference". On a recording that starts with the gel
+    already pressed that is a press, and the whole episode's difference image
+    is then referenced against it. Measured against an independent estimate of
+    the free gel (the per-pixel median over the entire recording), as the
+    fraction of the reference's own pixels already in contact:
+
+        motherboard/2026-05-10     first frame     this pool
+        episode_001                   0.21%          0.11%
+        episode_002                   0.25%          0.12%
+        episode_004                  12.98%          0.05%
+
+    A single frame is also fragile where a median of twelve is not: one noisy
+    frame moves it, and nothing downstream can tell.
+
+    Falls back to the first frame ONLY if the release parquet is missing, and
+    says so, because a preview quietly drawn against a different reference
+    than the force channel is the defect this exists to remove.
+    """
+    import numpy as np
+
+    from force_recovery.lut_calibration import crop
+    from force_recovery.run_episode import STAGE_ROOT, _reference_rows
+    from twm.tactile_align import gel_lag_frames
+
+    frames = h5file[f"gelsight/{side}/frames"]
+    n = len(frames)
+    lag = gel_lag_frames(h5file)
+    p = STAGE_ROOT / task / "meta" / date / f"{ep}.parquet"
+    if not p.exists():
+        print(f"    ! {ep}: no release parquet — diff reference falls back "
+              f"to the first frame", flush=True)
+        return frames[min(lag, n - 1)]
+    import pyarrow.parquet as pq
+    t = pq.read_table(str(p))
+    inten = np.asarray(t[f"tactile_{side}_intensity"].to_numpy())
+    is_new = np.asarray(t[f"tactile_{side}_is_new"].to_numpy())
+    trim = int(np.asarray(t["source_h5_frame"].to_numpy())[0])
+    rows = _reference_rows(inten, is_new)
+    stack = np.stack([np.asarray(frames[min(trim + int(r) + lag, n - 1)])
+                      for r in rows[:12]])
+    # uint8 back out: the panel builder differences raw frames, and `crop` is
+    # applied downstream by whoever needs it — this must stay the same dtype
+    # and shape as the `frames[i]` it replaces.
+    assert crop is not None
+    return np.median(stack, 0).astype(stack.dtype)
+
+
 def _parquet_trim_and_rows(task, date, ep):
     """Where this episode starts in the H5, and how many rows it has.
 
@@ -221,13 +277,13 @@ def build_one_preview(h5_path: Path, out_mp4: Path,
         ot_lookup = load_optitrack(f)
         _apply_world_offset(ot_lookup, dx, dy, dz)
 
-        # Use the first sampled frame's gelsight as the static diff reference
         gel_lag = gel_lag_frames(f)
         n_gel = len(f["gelsight/left/frames"])
         gel_at = lambda i: min(int(i) + gel_lag, n_gel - 1)  # noqa: E731
-        ref_idx = int(sample_idx[0])
-        gs_ref_L = f["gelsight/left/frames"][gel_at(ref_idx)]
-        gs_ref_R = f["gelsight/right/frames"][gel_at(ref_idx)]
+        gs_ref_L = preview_reference(f, "left", task_name, date_name,
+                                     h5_path.stem)
+        gs_ref_R = preview_reference(f, "right", task_name, date_name,
+                                     h5_path.stem)
 
         calib_note = calib_describe(task_name, date_name, h5_path.stem)
         forces = load_forces(task_name, date_name, h5_path.stem, FORCE_ROOT)

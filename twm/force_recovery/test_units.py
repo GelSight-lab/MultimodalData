@@ -125,12 +125,27 @@ def test_force_dot_area_is_linear_in_force():
 
 
 def test_force_row_mapping_uses_parquet_trim():
-    """Off-by-15 here would put the dot half a second from its own frame."""
+    """Off-by-15 here puts the dot half a second from its own frame.
+
+    THIS TEST USED TO ASSERT THE OFF-BY-15. Its docstring named the failure
+    exactly — and then required `row_for_h5_frame(16, 1, 100) == 0`, which is
+    16 - 1 - 15, the very mapping it warned about. Every published preview
+    carried a half-second lag between the tactile tile and the force disc
+    beside it, and this passed on all of them; a reader watching the videos
+    found it.
+
+    A test written from the implementation asks "what does this do", so it
+    agrees with the code by construction. The corrected values below come from
+    the DATA instead: row r of the release parquet is camera frame trim + r,
+    which `scripts/test_preview_alignment.py` verifies end to end by
+    cross-correlating the displayed contact signal against the displayed
+    force on three real episodes.
+    """
     from twm.force_overlay import row_for_h5_frame
-    assert row_for_h5_frame(16, 1, 100) == 0
-    assert row_for_h5_frame(15, 1, 100) is None      # before the first row
-    assert row_for_h5_frame(115, 1, 100) == 99
-    assert row_for_h5_frame(116, 1, 100) is None     # past the last row
+    assert row_for_h5_frame(1, 1, 100) == 0          # trim itself is row 0
+    assert row_for_h5_frame(0, 1, 100) is None       # before the first row
+    assert row_for_h5_frame(100, 1, 100) == 99
+    assert row_for_h5_frame(101, 1, 100) is None     # past the last row
 
 
 def test_tactile_lag_matches_the_published_dataset_contract():
