@@ -217,6 +217,16 @@ def build_side(task: str, date: str, ep: str, side: str, table: pa.Table,
     with np.load(npz_path) as d:
         force = np.asarray(d["force_normal_n"], np.float64)
         max_depth = np.asarray(d["max_depth_mm"], np.float64)
+        # THE FRAME EACH NUMBER CAME FROM. Recorded by `run_episode` at the
+        # read, not recomputed here — recomputing it would only prove that
+        # two copies of one formula agree, which is precisely the arrangement
+        # that produced three alignment defects in a day.
+        if "source_frame" not in d:
+            raise ValueError(
+                f"{npz_path}: no source_frame array. Reprocess with the "
+                f"current `run_episode`; a force value that cannot name its "
+                f"tactile frame is not exportable.")
+        source_frame = np.asarray(d["source_frame"], np.int64)
         # WHICH calibration produced these newtons, carried in the artifact.
         # The old field was a single float `scale_n_per_mm3`, which could only
         # describe a one-number map; the current estimator is a gain field plus
@@ -300,6 +310,7 @@ def build_side(task: str, date: str, ep: str, side: str, table: pa.Table,
         f"force_{side}_penetration_mm": pa.array(
             penetration.astype(np.float32)),
         f"force_{side}_target_pose": _list_column(target),
+        f"force_{side}_source_frame": pa.array(source_frame.astype(np.int32)),
     }
     return columns, diag
 
@@ -319,6 +330,15 @@ def _field_meta(name: str, stiffness: float) -> dict:
         common |= {"twm.units": "mm",
                    "twm.desc": "force / stiffness; ASSUMED stiffness, see "
                                "twm.stiffness_n_per_mm"}
+    elif name.endswith("_source_frame"):
+        common |= {"twm.units": "index",
+                   "twm.desc": "index into gelsight/<side>/frames of the "
+                               "SOURCE H5 that this row's force was computed "
+                               "from, recorded at the read. Held rows repeat "
+                               "it, so rows sharing one tactile image are "
+                               "explicit rather than inferred from is_new. "
+                               "Re-reading that frame reproduces the force to "
+                               "the bit (scripts/test_force_names_its_frame)"}
     else:
         common |= {"twm.units": "m,m,m,quat(xyzw)",
                    "twm.desc": "DexForce virtual target: observed pose with "

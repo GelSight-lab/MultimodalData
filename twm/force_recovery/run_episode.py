@@ -117,16 +117,40 @@ def process_side(task: str, date: str, ep: str, side: str, *,
         # depth has no millimetre scale. Two reconstructions, two purposes,
         # both named in the metadata below.
         from .react_calib import force_stages
+        # WHICH FRAME EACH NUMBER CAME FROM, recorded AT THE READ.
+        #
+        # Force and the tactile columns agree on the frame today — measured,
+        # lag 0 on 24 side-episodes — but only because two modules evaluate
+        # `trim + row + LEGACY_SHIFT` and get the same answer. Nothing in the
+        # data says so, and a reader cannot check it without reading us.
+        #
+        # That arrangement failed three times in one session: the preview's
+        # force disc landed half a second from its own tile, the verifier
+        # hard-coded the shift inline and rendered frames it did not name, and
+        # the unit test asserted the wrong mapping while its docstring named
+        # the failure. Each was an index re-derived at the point of use.
+        #
+        # This is not a re-derivation. `f_idx` is the integer actually passed
+        # to `frames[...]`, captured on the line that reads it, and held
+        # across duplicate rows exactly as the estimate is. A formula cannot
+        # agree with it by accident, so
+        # `scripts/test_force_names_its_frame.py` can re-read the frame and
+        # reproduce the force to the bit.
+        src_idx = np.zeros(T, np.int32)
         last = None
+        last_idx = -1
         for row in range(T):
             if is_new[row] or last is None:
-                img = crop(frames[src(row)]).astype(np.float32)
+                last_idx = src(row)
+                img = crop(frames[last_idx]).astype(np.float32)
                 st_mm = stages(img, ref)
                 ft = st_mm["feats"]
                 last = (predict_force(force_stages(img, ref)),
                         ft["vol"], ft["area"], ft["maxd"])
+            src_idx[row] = last_idx
             for key, value in zip(FIELDS, last):
                 out[key][row] = value
+        out["source_frame"] = src_idx
 
         # re-run the strongest rows with the depth map kept, for figures
         top = np.argsort(out["force_normal_n"])[::-1][:keep_top_depths]
