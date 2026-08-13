@@ -61,6 +61,7 @@ def _done(job) -> bool:
     resume that trusts the filename would skip it and carry the damage into
     `promote`. Cheap to check — the header and one array are enough.
     """
+    from .run_episode import PIPELINE_VERSION
     p = STAGING / job[0] / job[1] / f"{job[2]}_{job[3]}.npz"
     if not p.exists():
         return False
@@ -68,6 +69,20 @@ def _done(job) -> bool:
         with np.load(p, allow_pickle=True) as d:
             len(d["force_normal_n"])
             str(d["force_calibration"])
+            # AND WRITTEN BY THE CURRENT PIPELINE. Readable is not the same
+            # as current: a staging tree left by an earlier run of this same
+            # command is complete, undamaged, and stale. It happened
+            # immediately — 72 files staged before `source_frame` existed, and
+            # the resume reported "nothing to do" on a run whose entire
+            # purpose was to add that array. `exists()` was already known to
+            # be too weak (a truncated npz exists); so is "loads".
+            version = int(d["pipeline_version"]) if "pipeline_version" in d else 0
+            if version < PIPELINE_VERSION or "source_frame" not in d:
+                print(f"  re-doing stale staged file (v{version}, "
+                      f"source_frame={'source_frame' in d}): {p.name}",
+                      flush=True)
+                p.unlink(missing_ok=True)
+                return False
         return True
     except Exception:                                          # noqa: BLE001
         print(f"  re-doing damaged staged file: {p.name}", flush=True)
