@@ -90,12 +90,31 @@ TARGET_BGR = (255, 0, 220)
 # force has radius 16.9 px, so the target ring sat entirely inside it: 112
 # magenta pixels in a 1280x480 frame.
 #
-# 20x puts the p90 gap at about 20 px, just outside that disc — chosen against
-# the disc radius rather than by eye. It multiplies the drawn OFFSET only; the
-# stiffness stays `dexforce.STIFFNESS_N_PER_M`, the one the published
+# I FIRST WROTE 20x AND JUSTIFIED IT WRONGLY. The note here said "20x puts the
+# p90 gap at about 20 px, just outside that disc", extrapolated from an earlier
+# measurement of "p90 = 1.00 px". That 1.00 was `_scale_to_thumb`'s ROUNDED
+# value, not the sub-pixel gap, so multiplying it by the gain overestimated by
+# about 5x. Measured properly, over 199 contact frames of
+# motherboard/2026-05-10/episode_004:
+#
+#     gain    p50    p90    max     ring outside the force disc
+#       20    2.0    4.1   10.0                0.0%
+#       40    3.2    7.3   19.1                0.4%
+#       80    5.8   13.4   34.1                5.3%
+#      160   10.6   23.0   56.2               28.8%
+#
+# So 20x never cleared the disc at all. 40x is what it is because it was asked
+# for, and it is visibly larger; it still sits inside the disc on 99.6% of
+# frames, which is a property of the picture worth knowing rather than a
+# defect — the disc is where the sensor is, and the ring is a few millimetres
+# past it, exaggerated. Clearing the disc reliably needs 120-160x, at which
+# point the gap is no longer readable as "a small offset".
+#
+# The gain multiplies the drawn OFFSET only. The stiffness stays
+# `dexforce.STIFFNESS_N_PER_M`, the one the published
 # `force_<side>_target_pose` column uses, because a second stiffness would put
 # two different DexForce targets on one dataset.
-TARGET_GAIN = 20.0
+TARGET_GAIN = 40.0
 AXIS_LABELS = ["X", "Y", "Z"]
 
 
