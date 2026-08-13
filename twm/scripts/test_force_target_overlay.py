@@ -12,11 +12,15 @@ are about provenance, not about pixels being present:
   1  no force, no gap. When force is 0 the target IS the observed pose
      (asserted in the exporter), so the overlay must add nothing at all —
      a marker hovering over a sensor in free space would read as contact.
-  2  the marker sits at `project_gel_pose(target)`, computed by the SAME
-     function that places the sensor dot. A second projection would drift
-     from the first and the drift would look like a calibration error rather
-     than a drawing bug — which is why `draw_force_halo` already shares this
-     centre.
+  2  the marker sits on the ray from the sensor to the target, at
+     `TARGET_GAIN` times the true offset, projected by the SAME function that
+     places the sensor dot. The gain exists because at true scale the gap is
+     sub-pixel — measured p50 0.00 px, max 1.41 px on a real episode, against
+     a force disc of radius 16.9 px — so the ring sat inside the disc and the
+     picture said nothing. The exaggeration is applied to the world-space
+     OFFSET before projection, so the ring stays on the pressing direction;
+     scaling projected pixels would swing it off that line under an oblique
+     camera.
   3  the gap grows with force, monotonically, at the shipped stiffness.
 
     python scripts/test_force_target_overlay.py
@@ -116,7 +120,10 @@ def main() -> int:
     got = render(target=tgt, force=6.0)
     diff = np.abs(got.astype(int) - base_f.astype(int)).sum(axis=2)
     ys, xs = np.nonzero(diff > 20)
-    exp = viz.project_gel_pose(tgt, gel, cam[0]["T_mocap_to_cam"],
+    # where the marker MUST be: offset exaggerated in world mm, then projected
+    shown = tgt.copy()
+    shown[:3] = pose[:3] + viz.TARGET_GAIN * (tgt[:3] - pose[:3])
+    exp = viz.project_gel_pose(shown, gel, cam[0]["T_mocap_to_cam"],
                                cam[0]["intrinsics"])
     if exp is None or len(xs) == 0:
         check(False, "the marker sits at the projected target",
@@ -130,7 +137,7 @@ def main() -> int:
         err = float(np.hypot(xs[far] - ex, ys[far] - ey))
         check(err <= 8.0, "the marker sits at the projected target",
               f"farthest new ink at ({xs[far]}, {ys[far]}), "
-              f"project_gel_pose(target) at ({ex:.1f}, {ey:.1f}), "
+              f"expected (gain {viz.TARGET_GAIN}x) at ({ex:.1f}, {ey:.1f}), "
               f"error {err:.1f} px")
 
     # 3 — the gap must grow with force, at the shipped k.

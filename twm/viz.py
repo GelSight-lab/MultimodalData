@@ -80,6 +80,22 @@ AXIS_BGR = [(0, 0, 255), (0, 255, 0), (255, 128, 0)]
 # gel dots, because its job is to be told apart from the pose it is drawn
 # next to. Magenta is unused elsewhere on this panel.
 TARGET_BGR = (255, 0, 220)
+# DRAWING-ONLY EXAGGERATION OF THE VIRTUAL-TARGET GAP, and it is printed on
+# the panel so nobody reads the drawn gap as the real one.
+#
+# At true scale the picture does not exist. The displacement is force / k —
+# millimetres — while a camera thumbnail spans about a metre, so on
+# motherboard/2026-05-10/episode_004 the projected gap over 199 contact frames
+# measures p50 0.00 px, p90 1.00 px, max 1.41 px. The force disc at the same
+# force has radius 16.9 px, so the target ring sat entirely inside it: 112
+# magenta pixels in a 1280x480 frame.
+#
+# 20x puts the p90 gap at about 20 px, just outside that disc — chosen against
+# the disc radius rather than by eye. It multiplies the drawn OFFSET only; the
+# stiffness stays `dexforce.STIFFNESS_N_PER_M`, the one the published
+# `force_<side>_target_pose` column uses, because a second stiffness would put
+# two different DexForce targets on one dataset.
+TARGET_GAIN = 20.0
 AXIS_LABELS = ["X", "Y", "Z"]
 
 
@@ -455,7 +471,15 @@ def draw_projection_overlay(panel: np.ndarray,
             if tgt7 is not None and not np.allclose(
                     np.asarray(tgt7, float)[:3],
                     np.asarray(pose_tuple[1], float)[:3]):
-                tres = project_gel_pose(tgt7, gel, pc["T_mocap_to_cam"],
+                # Exaggerate the OFFSET, in world millimetres, before
+                # projecting — so the ring stays on the ray the real target
+                # lies on and only its distance along that ray is scaled.
+                # Scaling the projected pixels instead would move it off the
+                # pressing direction wherever the camera is oblique.
+                obs7 = np.asarray(pose_tuple[1], float)
+                shown7 = np.asarray(tgt7, float).copy()
+                shown7[:3] = obs7[:3] + TARGET_GAIN * (shown7[:3] - obs7[:3])
+                tres = project_gel_pose(shown7, gel, pc["T_mocap_to_cam"],
                                         pc["intrinsics"],
                                         axis_len_mm=axis_len_mm)
                 if tres is not None:

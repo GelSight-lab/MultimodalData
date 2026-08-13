@@ -62,6 +62,9 @@ R_MIN_PX = 3.0
 # 74 px radius covered the workpiece the video exists to show.
 R_MAX_PX = 22.0
 COLOR_BGR = (60, 120, 255)                        # orange, matches site accent
+# Mirrors `viz.TARGET_BGR`; the legend must not be able to key a colour
+# the overlay does not draw.
+TARGET_RING_BGR = (255, 0, 220)
 ALPHA = 0.42
 
 
@@ -216,3 +219,21 @@ def draw_legend(panel: np.ndarray, x: int, y: int,
                     cv2.FONT_HERSHEY_SIMPLEX, 0.36, (210, 210, 210), 1,
                     cv2.LINE_AA)
         cursor += 2 * r + max(14, tw - 2 * r + 6)   # never let labels collide
+
+    # THE VIRTUAL TARGET, AND ITS EXAGGERATION, STATED ON THE PANEL.
+    #
+    # The magenta ring is where a stiffness controller would have been
+    # commanded — observed pose + force/k along the pressing direction. At true
+    # scale that offset is millimetres and projects to under one pixel here
+    # (measured p50 0.00, max 1.41 px over 199 contact frames), so it is drawn
+    # exaggerated. An unlabelled exaggeration is a lie about a distance, and
+    # this panel is read as measurement, so the factor and the stiffness are
+    # printed next to the key that uses them.
+    from twm.viz import TARGET_GAIN
+    from force_recovery.dexforce import STIFFNESS_N_PER_M
+    cv2.circle(panel, (x + 7, baseline + 16), 6, TARGET_RING_BGR, 2,
+               cv2.LINE_AA)
+    cv2.putText(panel,
+                f"target (k={STIFFNESS_N_PER_M/1000:g} N/mm, gap x{TARGET_GAIN:g})",
+                (x + 20, baseline + 21), cv2.FONT_HERSHEY_SIMPLEX, 0.36,
+                (210, 210, 210), 1, cv2.LINE_AA)
