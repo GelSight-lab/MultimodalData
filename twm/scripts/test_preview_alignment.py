@@ -122,6 +122,7 @@ def main() -> int:
         episodes = []
 
     ref_bad, lag_bad, ev_ref, ev_lag = [], [], [], []
+    tgt_bad, ev_tgt = [], []
     for DATE, ep in episodes:
         pqt = STAGE_ROOT / TASK / "meta" / DATE / f"{ep}.parquet"
         h5p = DATA_ROOT / TASK / DATE / f"{ep}.h5"
@@ -175,6 +176,25 @@ def main() -> int:
             shown = np.array([
                 force[r] if (r := row_for_h5_frame(int(i), trim, len(force)))
                 is not None else np.nan for i in cam])
+            # AND THE VIRTUAL TARGET, measured the same way. It is drawn from
+            # the same row as the disc, but "same row by construction" is an
+            # argument; this is a measurement. The quantity is the target's
+            # displacement from the observed pose — which is force/k, so it
+            # must track the displayed contact signal at lag 0 exactly as the
+            # force does.
+            import build_episode_previews as _BEP
+            from force_overlay import load_targets as _lt
+            poses = _BEP._release_poses(TASK, DATE, ep)
+            tg = _lt(TASK, DATE, ep, Path("/media/yxma/Disk1/twm/force_recovery"),
+                     poses).get("left")
+            if tg is not None and "left" in poses:
+                gap = np.linalg.norm(tg[:, :3] - poses["left"][:len(tg), :3],
+                                     axis=1) * 1000.0
+                shown_t = np.array([
+                    gap[r] if (r := row_for_h5_frame(int(i), trim, len(gap)))
+                    is not None else np.nan for i in cam])
+            else:
+                shown_t = np.full(len(cam), np.nan)
 
         m = np.isfinite(sig) & np.isfinite(shown)
         a, b = sig[m] - sig[m].mean(), shown[m] - shown[m].mean()
@@ -184,6 +204,15 @@ def main() -> int:
         lag = int(k[w][np.argmax(c[w])]) * 4
         lag_bad.append(abs(lag) > 4)
         ev_lag.append(f"{DATE[5:]}/{ep[-3:]} {lag:+d}f")
+        mt = np.isfinite(sig) & np.isfinite(shown_t)
+        if mt.sum() > 50 and shown_t[mt].std() > 1e-9:
+            at, bt = sig[mt] - sig[mt].mean(), shown_t[mt] - shown_t[mt].mean()
+            ct = np.correlate(at, bt, "full")
+            kt = np.arange(-len(bt) + 1, len(at))
+            wt = np.abs(kt) <= 15
+            lt_ = int(kt[wt][np.argmax(ct[wt])]) * 4
+            tgt_bad.append(abs(lt_) > 4)
+            ev_tgt.append(f"{DATE[5:]}/{ep[-3:]} {lt_:+d}f")
 
     # STATE THE COVERAGE. The sampler skips dates with no episodes on this
     # disk, which is correct (2026-05-15 was emptied when its orphans were
@@ -201,6 +230,10 @@ def main() -> int:
           + "; pixels already in contact: " + ", ".join(ev_ref) + " (want <=1%)")
     check(not any(lag_bad), "the force disc labels the tile beside it",
           "displayed force vs displayed contact: " + ", ".join(ev_lag))
+    check(bool(ev_tgt) and not any(tgt_bad),
+          "the virtual target labels the tile beside it",
+          ("displayed target gap vs displayed contact: " + ", ".join(ev_tgt))
+          if ev_tgt else "UNVERIFIED: no target computed on any sample")
 
     width = max(len(x) for _, x, _ in RESULTS)
     print()

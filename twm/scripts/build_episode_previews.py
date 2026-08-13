@@ -139,7 +139,7 @@ def _load_proj_calibs(task: str):
 from twm.tactile_align import describe as gel_describe, gel_lag_frames
 from twm.calib_epoch import (calib_dir, check_epoch, epoch_of,
                              world_offset_m, describe as calib_describe)
-from twm.force_overlay import (draw_legend, load_forces,
+from twm.force_overlay import (draw_legend, load_forces, load_targets,
                                row_for_h5_frame)
 
 FORCE_ROOT = Path("/media/yxma/Disk1/twm/force_recovery")
@@ -228,6 +228,29 @@ def _parquet_trim_and_rows(task, date, ep):
     return int(_np.asarray(t["source_h5_frame"].to_numpy())[0]), t.num_rows
 
 
+def _release_poses(task: str, date: str, ep: str) -> dict:
+    """Row-indexed observed sensor poses, from the release parquet.
+
+    THE SAME SOURCE `export_force_columns` reads. The DexForce target is
+    `observed + (F/k) n_hat`; if the renderer took `observed` from the raw
+    OptiTrack stream while the published column took it from the parquet, the
+    drawn target and the shipped target would differ by whatever the
+    resampling does — a discrepancy that would look like a calibration error.
+    """
+    from react_preprocess.config import STAGE_ROOT as _SR
+    import numpy as _np
+    import pyarrow.parquet as pq
+    f = _SR / task / "meta" / date / f"{ep}.parquet"
+    if not f.exists():
+        return {}
+    cols = [c for c in ("sensor_left_pose", "sensor_right_pose")
+            if c in pq.read_schema(str(f)).names]
+    if not cols:
+        return {}
+    t = pq.read_table(str(f), columns=cols).to_pydict()
+    return {c.split("_")[1]: _np.asarray([x for x in t[c]], float) for c in cols}
+
+
 def _flagged_intervals(task: str, date: str, ep: str) -> list[tuple[int, int, str]]:
     """Curation intervals for this episode, in episode-frame coords.
 
@@ -287,6 +310,12 @@ def build_one_preview(h5_path: Path, out_mp4: Path,
 
         calib_note = calib_describe(task_name, date_name, h5_path.stem)
         forces = load_forces(task_name, date_name, h5_path.stem, FORCE_ROOT)
+        # The DexForce virtual target, row-aligned with `forces` by
+        # construction (same arrays, same indices) rather than by a second
+        # lookup that has to agree with the first.
+        targets = load_targets(task_name, date_name, h5_path.stem, FORCE_ROOT,
+                               _release_poses(task_name, date_name,
+                                              h5_path.stem))
 
         panels = []
         overlay_errors = 0
@@ -343,12 +372,17 @@ def build_one_preview(h5_path: Path, out_mp4: Path,
             # Force for THIS frame, per side, resolved before drawing: the
             # disc is rendered inside draw_projection_overlay so it lands on
             # the same projected sensor centre as the pose axes.
-            frame_forces = {}
+            # ONE ROW LOOKUP FOR BOTH. The disc and the virtual target are two
+            # views of the same row; resolving them separately is how the disc
+            # ended up half a second from its own tactile tile.
+            frame_forces, frame_targets = {}, {}
             if forces and trim_pq is not None:
                 row = row_for_h5_frame(f_idx_int, trim_pq, n_rows)
                 if row is not None:
                     frame_forces = {s: float(a[row]) for s, a in forces.items()
                                     if row < len(a)}
+                    frame_targets = {s: a[row] for s, a in targets.items()
+                                     if row < len(a)}
 
             if project_cams:
                 try:
@@ -357,6 +391,7 @@ def build_one_preview(h5_path: Path, out_mp4: Path,
                         project_cams,
                         gel_center_left, gel_center_right,
                         forces_n=frame_forces or None,
+                        targets_7=frame_targets or None,
                     )
                 except Exception as e:
                     # Was `except Exception: pass`. A frame that failed to

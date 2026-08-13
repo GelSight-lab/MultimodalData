@@ -93,6 +93,47 @@ def load_forces(task: str, date: str, episode: str,
     return out
 
 
+def load_targets(task: str, date: str, episode: str, out_root: Path,
+                 poses_7: dict) -> dict[str, np.ndarray]:
+    """Per-side DexForce virtual target pose (7-vec), row-aligned with force.
+
+    ONE LAW, IMPORTED. The target is `pipeline.virtual_target` — the same
+    function `export_force_columns` calls to build the published
+    `force_<side>_target_pose` column, at the same stiffness, with the same
+    pressing direction `R(q) @ dexforce.gel_axis`. The renderer does not
+    restate `observed + (F/k) * n_hat` anywhere. Checked, not assumed: on
+    motherboard/2026-05-10/episode_004 this reproduces the published column to
+    5.6e-17, which is float noise.
+
+    That is not tidiness. Every alignment defect in this project came from a
+    law re-derived at the point of use, and a preview that drew its own
+    DexForce target would put two different targets on one dataset — the video
+    saying one thing and the parquet column another, with nothing to catch it.
+
+    `poses_7` is {side: (T, 7) observed pose array} in the SAME row indexing as
+    the force arrays, so target[r] and force[r] are the same row by
+    construction rather than by two lookups agreeing.
+    """
+    from force_recovery.dexforce import gel_axis, quat_to_matrix
+    from force_recovery.pipeline import virtual_target
+
+    forces = load_forces(task, date, episode, out_root)
+    out = {}
+    for side, f in forces.items():
+        pose = poses_7.get(side)
+        if pose is None:
+            continue
+        pose = np.asarray(pose, float)
+        n = min(len(pose), len(f))
+        n_hat = quat_to_matrix(pose[:n, 3:7]) @ gel_axis(task, side)
+        pos_mm = virtual_target(pose[:n, :3] * 1000.0, f[:n], n_hat)
+        tgt = np.empty((n, 7), float)
+        tgt[:, :3] = pos_mm / 1000.0        # back to metres, the pose7 unit
+        tgt[:, 3:] = pose[:n, 3:7]          # quaternion copied, as the export does
+        out[side] = tgt
+    return out
+
+
 def draw_force_halo(canvas: np.ndarray, xy: tuple[float, float],
                     force_n: float, *, scale: int = 1, label: bool = True,
                     bounds: tuple[int, int, int, int] | None = None) -> None:

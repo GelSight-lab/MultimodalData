@@ -76,6 +76,10 @@ GEL_DOT_BGR: dict[str, tuple[int, int, int]] = {
 }
 FROZEN_BGR: tuple[int, int, int] = (0, 0, 255)
 AXIS_BGR = [(0, 0, 255), (0, 255, 0), (255, 128, 0)]
+# DexForce virtual target: distinct from every axis colour and from the two
+# gel dots, because its job is to be told apart from the pose it is drawn
+# next to. Magenta is unused elsewhere on this panel.
+TARGET_BGR = (255, 0, 220)
 AXIS_LABELS = ["X", "Y", "Z"]
 
 
@@ -346,6 +350,7 @@ def draw_projection_overlay(panel: np.ndarray,
                              *,
                              frozen_side: Optional[str] = None,
                              forces_n: Optional[dict] = None,
+                             targets_7: Optional[dict] = None,
                              axis_len_mm: float = 120.0) -> None:
     """Draw GelSight projection (center dot + 3 axis tips) on each cam thumb.
 
@@ -366,6 +371,30 @@ def draw_projection_overlay(panel: np.ndarray,
     disagreement would look like a calibration error rather than a drawing
     bug. Drawn before the axes so the crisp pose marker stays readable
     through it.
+
+    `targets_7` = {"left": pose7, "right": pose7} adds the DexForce VIRTUAL
+    TARGET: a hollow ring at where a stiffness controller would have been
+    commanded, joined to the sensor dot by a line. The gap between the two is
+    the force, drawn in the units and the view of the motion — which is the
+    whole point of the picture, and the reason it is worth showing beside a
+    disc whose area already encodes the same newtons.
+
+    Projected by the SAME `project_gel_pose` call that places the sensor,
+    with the target pose substituted. The target shares the observed
+    quaternion (the exporter copies it), so this is one function evaluated at
+    two positions rather than two functions that must be kept in agreement.
+
+    In free space the exporter sets target == pose exactly, so nothing is
+    drawn there: a marker hovering over a sensor that is touching nothing
+    would read as contact.
+
+    The stiffness behind the gap is `dexforce.STIFFNESS_N_PER_M`, the same one
+    the published `force_<side>_target_pose` column uses. A second stiffness
+    for the picture would put two different DexForce targets on one project.
+    Measured over the release, that k also puts the gap on the scale of the
+    motion it sits beside: per row, along the pressing direction, contact
+    frames give |dp.n| p90 2.51 mm and p95 3.72 mm against force/k p90 3.65
+    and p95 3.94.
 
     Modifies `panel` in place.
     """
@@ -415,6 +444,28 @@ def draw_projection_overlay(panel: np.ndarray,
                 if 0 <= tx < W and 0 <= ty < H:
                     cv2.putText(big, al, (tx_b + 6, ty_b - 6),
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.64, ac, 2, cv2.LINE_AA)
+            # DexForce virtual target: same projection, target pose.
+            tgt7 = (targets_7 or {}).get(side)
+            # NO CONTACT IS DECIDED ON THE POSE, NOT ON PIXELS. The exporter
+            # guarantees target == observed pose exactly when force == 0, so
+            # equality is the honest test. A pixel threshold was the first
+            # version and it is wrong in the direction that matters: a real
+            # 1 N press at a metre projects to under a pixel and would have
+            # been silently drawn as free space.
+            if tgt7 is not None and not np.allclose(
+                    np.asarray(tgt7, float)[:3],
+                    np.asarray(pose_tuple[1], float)[:3]):
+                tres = project_gel_pose(tgt7, gel, pc["T_mocap_to_cam"],
+                                        pc["intrinsics"],
+                                        axis_len_mm=axis_len_mm)
+                if tres is not None:
+                    tx, ty = _scale_to_thumb(tres[0][0], tres[0][1])
+                    tx += x_offset
+                    tx_b, ty_b = tx * SCALE, ty * SCALE
+                    cv2.line(big, (cx_b, cy_b), (tx_b, ty_b),
+                             TARGET_BGR, 3, cv2.LINE_AA)
+                    cv2.circle(big, (tx_b, ty_b), 7, TARGET_BGR, 3,
+                               cv2.LINE_AA)
             # Dot (effective: inner r=2, outer r=3 -> doubled to 4 / 6 on 2x canvas)
             dot = GEL_DOT_BGR[side]
             cv2.circle(big, (cx_b, cy_b), 4, dot, -1, cv2.LINE_AA)
