@@ -40,6 +40,22 @@ ov  = T.contact_overlay(frames[100], ref)
 cal = T.load_calibration("data/motherboard")                # after snapshot_download of calibration/
 uv  = T.project_gel_to_pixel(meta["sensor_left_pose"][100], cal["gel_left"], cal["cams"]["middle"])
 
+# 5b) SEE it land — a coordinate cannot tell you whether it is on the sensor,
+#     and every projection defect this dataset has shipped was obvious in a
+#     picture and invisible in a number (21-36 px, 35-73 px, 155-223 px, all
+#     of them shaped like a slightly miscalibrated rig).
+img = T.draw_projection(cam_frame, meta["sensor_left_pose"][100],
+                        cal["gel_left"], cal["cams"]["middle"],
+                        force_n=meta["force_left_normal_n"][100],
+                        target_pose7=meta["force_left_target_pose"][100])
+
+# 5c) or check it without looking: every episode's parquet declares the world
+#     frame its poses are in, and carries a projection fingerprint you can
+#     recompute. A pose array in the wrong frame misses it by 150+ px.
+dec = T.read_world_frame(episode_parquet)     # {"world_frame", "raw_h5_offset_m", "fingerprint"}
+err = T.verify_world_frame(meta["sensor_left_pose"], "left", "motherboard", dec)
+assert err < 6.0, f"poses are not in the declared frame: {err:.1f} px off"
+
 # 6) derive actions from handheld poses
 act   = T.next_state_action(meta["sensor_left_pose"])       # next-frame absolute state
 delta = T.delta_pose_action(meta["sensor_left_pose"])       # frame-to-frame delta
