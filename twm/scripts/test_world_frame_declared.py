@@ -62,7 +62,9 @@ def main() -> int:
     from twm.world_frame import (fingerprint, read_declaration,
                                  verify_fingerprint)
 
-    rel = Path("/media/yxma/Disk1/twm/release/motherboard/meta")
+    # release_force/, not release/: the declaration is written by the
+    # force exporter, and `release/` holds the pre-force parquet.
+    rel = Path("/media/yxma/Disk1/twm/release_force/motherboard/meta")
     cases = [("2026-05-11", "episode_003"), ("2026-05-19", "episode_002")]
 
     # 1 — every episode declares its frame, in the file itself
@@ -85,7 +87,7 @@ def main() -> int:
             continue
         t = pq.read_table(p).to_pydict()
         pose = np.asarray([x for x in t["sensor_left_pose"]], float)
-        err = verify_fingerprint(pose, "left", "motherboard", d["fingerprint"])
+        err = verify_fingerprint(pose, "left", "motherboard", d["fingerprint"]["left"])
         if err > TOL_PX:
             bad.append(f"{date}/{ep}: {err:.1f} px")
     check(not bad, "the poses reproduce their own fingerprint",
@@ -101,7 +103,7 @@ def main() -> int:
         pose = np.asarray([x for x in t["sensor_left_pose"]], float)
         raw = pose.copy()
         raw[:, :3] -= np.asarray(d.get("raw_h5_offset_m") or [0, 0, 0], float)
-        err = verify_fingerprint(raw, "left", "motherboard", d["fingerprint"])
+        err = verify_fingerprint(raw, "left", "motherboard", d["fingerprint"]["left"])
         check(err > 50.0, "a raw-H5 pose array is rejected",
               f"un-offset poses miss the fingerprint by {err:.1f} px "
               f"(tolerance {TOL_PX})")

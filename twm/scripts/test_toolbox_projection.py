@@ -49,9 +49,13 @@ def main() -> int:
     # release path, found no files, and reported the bug's own symptom
     # ([0,0,0]) for an entirely different reason — a test that fails for the
     # wrong reason is indistinguishable from one that fails for the right one.
-    cdir = Path("/home/yxma/MultimodalData/twm/calibration/result backup")
-    root = cdir.parent
-    task = cdir.name
+    # THROUGH calib_epoch, not by naming the directory. `pipeline_guard`
+    # caught the hard-coded path here and was right to: five files once named
+    # their own calibration directory and one of them named the wrong epoch,
+    # publishing every motherboard preview with pushT extrinsics.
+    from twm.calib_epoch import calib_dir
+    task = "motherboard"
+    cdir = calib_dir(task)
 
     # 1 — the gel centre must be the measured one, not a zero that looks valid
     # load_calibration expects <root>/calibration/, so hand it the parent of
