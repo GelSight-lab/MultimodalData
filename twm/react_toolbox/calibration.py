@@ -38,10 +38,44 @@ def load_calibration(task_root):
     for side in ("left", "right"):
         p = cdir / f"T_gel_to_rigid_{side}.json"
         if p.exists():
-            d = json.loads(p.read_text())
-            T = np.array(d.get("T_gel_to_rigid", d.get("T")), np.float64)
-            out[f"gel_{side}"] = T[:3, 3] if T.shape == (4, 4) else np.array(d.get("gel_center_mm", [0, 0, 0]))
+            out[f"gel_{side}"] = _gel_center(p)
     return out
+
+
+def _gel_center(path) -> np.ndarray:
+    """The measured gel centre in rigid-body millimetres. RAISES if absent.
+
+    This read three keys that do not exist in any published file —
+    `T_gel_to_rigid`, `T`, `gel_center_mm` — and fell through to a default of
+    `[0, 0, 0]`. The real key is `gel_center_in_rigid_mm`, and it is present in
+    all four published files of both tasks.
+
+    Zero is the worst possible default here because it is a VALID-LOOKING
+    offset: it says "the gel centre is the rigid-body origin", so nothing
+    downstream can tell it from a real answer. Every projection the toolbox
+    produced was of the rigid body, off by the real offset — measured on
+    motherboard/2026-05-11/episode_003, median over the episode: 35.8 px
+    (left camera), 20.8 (middle), 28.0 (right), against a calibration rmse of
+    4.75 mm ~ 3 px. Seven to twelve times the rig's own error, and still
+    shaped like a slightly miscalibrated rig rather than like a bug.
+
+    So: no fallback. A calibration file that cannot say where the gel is stops
+    the caller, because a projection of the wrong point is worse than none.
+    """
+    d = json.loads(Path(path).read_text())
+    for key in ("gel_center_in_rigid_mm", "gel_center_mm"):
+        if key in d:
+            return np.asarray(d[key], np.float64)
+    T = d.get("T_gel_to_rigid", d.get("T"))
+    if T is not None:
+        T = np.asarray(T, np.float64)
+        if T.shape == (4, 4):
+            return T[:3, 3]
+    raise KeyError(
+        f"{path}: no gel centre. Looked for gel_center_in_rigid_mm, "
+        f"gel_center_mm, T_gel_to_rigid, T. Refusing to assume [0,0,0] — "
+        f"that is a valid-looking offset and would silently project the "
+        f"rigid-body origin instead of the gel.")
 
 
 def pose7_to_matrix(pose7):

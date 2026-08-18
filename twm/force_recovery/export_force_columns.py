@@ -387,6 +387,24 @@ def export_episode(task: str, date: str, ep: str, stiffness: float,
     }
     meta = dict(table.schema.metadata or {})
     meta[b"twm.force_export"] = json.dumps(header).encode()
+
+    # WHICH WORLD FRAME THESE POSES ARE IN, stated in the file that carries
+    # them. It used to live in one sentence of `calibration.json` — "05-19 has
+    # a redefined OptiTrack world origin; offset (0.23,0,0.175)m baked into
+    # poses" — which a machine cannot read, which states a difference without
+    # a direction (I read it backwards), and which nothing can check.
+    #
+    # The declaration also carries a projection fingerprint, so a consumer can
+    # verify their own pose array rather than trust the label. See
+    # `twm.world_frame`.
+    import sys as _sys
+    _sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+    from twm.world_frame import build_declaration
+    poses = {s: np.asarray([x for x in table[f"sensor_{s}_pose"].to_pylist()],
+                           float) for s in SIDES
+             if f"sensor_{s}_pose" in table.column_names}
+    meta[b"twm.world_frame"] = json.dumps(
+        build_declaration(task, date, ep, poses)).encode()
     out_table = pa.Table.from_arrays(arrays, schema=pa.schema(fields, meta))
 
     dst = root / task / "meta" / date / f"{ep}.parquet"
