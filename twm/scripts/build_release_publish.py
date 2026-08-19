@@ -22,6 +22,9 @@ REPO = "yxma/React"
 STAGE = Path("/media/yxma/Disk1/twm/release")
 # The force channel's staging tree. Same repo paths, six more columns.
 FORCE_STAGE = Path("/media/yxma/Disk1/twm/release_force")
+# The toolbox users actually run. Published from the repo, not from a
+# staging copy, so a fix cannot be published and forgotten locally.
+TOOLBOX_SRC = Path("/home/yxma/MultimodalData/twm/react_toolbox")
 REPO_ROOT = Path("/home/yxma/MultimodalData/twm")
 TASKS = ("motherboard", "pushT")
 
@@ -195,6 +198,24 @@ def main():
         api.create_commit(repo_id=REPO, repo_type="dataset", operations=ops,
                           commit_message="Multi-task video release: README + ReactVideoDataset loader")
 
+    # 2b. THE TOOLBOX. It was published once and then never again by this
+    # script, so a fix to it could not reach users through the normal path.
+    # `toolbox/calibration.py` shipped for months returning a gel centre of
+    # [0, 0, 0] — projecting the rigid-body origin, 21-36 px off — and the fix
+    # sat in git with no way out. A release pipeline that cannot publish its
+    # own toolbox will publish a stale one indefinitely.
+    print("[publish] uploading toolbox/ ...", flush=True)
+    if not TOOLBOX_SRC.is_dir():
+        print(f"    ! toolbox source {TOOLBOX_SRC} is absent — NOT uploaded",
+              flush=True)
+    elif not args.dry_run:
+        api.upload_folder(repo_id=REPO, repo_type="dataset",
+                          folder_path=str(TOOLBOX_SRC),
+                          path_in_repo="toolbox",
+                          ignore_patterns=["__pycache__/*", "*.pyc"],
+                          commit_message="toolbox: projection rendering + "
+                                         "world-frame check; gel centre fix")
+
     # 3. Delete old .pt release paths
     if not args.no_delete:
         print("[publish] deleting old .pt release paths ...", flush=True)
@@ -253,6 +274,35 @@ def main():
         # said "ok", and the columns went. A gate that credits a step which
         # has not happened yet is not a gate. This one reads what is actually
         # published, after everything has been uploaded.
+        # THE TOOLBOX, READ BACK. Same reasoning as the columns: the only
+        # trustworthy statement about a published artifact is one fetched from
+        # where it is published. `toolbox/calibration.py` was wrong on the hub
+        # for months while the repo copy was fine.
+        print("[publish] verifying the published toolbox ...", flush=True)
+        import hashlib
+        from huggingface_hub import hf_hub_download
+        drift = []
+        for lp in sorted(TOOLBOX_SRC.rglob("*.py")):
+            rel = "toolbox/" + str(lp.relative_to(TOOLBOX_SRC))
+            if "__pycache__" in rel:
+                continue
+            try:
+                rp = hf_hub_download(REPO, rel, repo_type="dataset",
+                                     force_download=True)
+            except Exception as exc:                        # noqa: BLE001
+                drift.append(f"{rel}: not on the hub ({type(exc).__name__})")
+                continue
+            if (hashlib.sha256(Path(rp).read_bytes()).digest()
+                    != hashlib.sha256(lp.read_bytes()).digest()):
+                drift.append(f"{rel}: published copy differs from the repo")
+        if drift:
+            for d in drift[:12]:
+                print("   ", d)
+            raise SystemExit(
+                f"PUBLISHED TOOLBOX IS WRONG: {len(drift)} file(s) differ "
+                f"from {TOOLBOX_SRC}.")
+        print("[publish] published toolbox verified: ok", flush=True)
+
         print("[publish] verifying the published columns ...", flush=True)
         still = check_no_column_loss(api, TASKS, published_only=True)
         if still:
