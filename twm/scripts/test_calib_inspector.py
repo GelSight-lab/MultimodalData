@@ -196,6 +196,48 @@ def main() -> int:
           f"{big:g} mm typed into the box lands {e4:.2f} px from the library's "
           f"answer (the slider itself stops at {d['world_range_mm']})")
 
+    # THE ROTATION CONTROL IS A RIGID TRANSFORM, not a nudge of the position.
+    # A world-frame correction turns the ORIENTATION too; rotating only the
+    # position would move the dot plausibly while leaving the triad pointing
+    # the old way, and would look fine on a still frame.
+    from scipy.spatial.transform import Rotation
+
+    async def rotated(url, rv):
+        from playwright.async_api import async_playwright
+        async with async_playwright() as pw:
+            b = await pw.chromium.launch(); pg = await b.new_page()
+            await pg.goto(url, wait_until="load")
+            await pg.wait_for_function("() => typeof window.__probe === 'function'")
+            for ax, v in zip("xyz", rv):
+                await pg.eval_on_selector(
+                    f"#r{ax}n", f"e => {{ e.value = {v}; e.dispatchEvent(new Event('input')); }}")
+            out = [await pg.evaluate(f"window.__probe({i}, '{v}', '{s_}')")
+                   for i, v, s_ in calls]
+            await b.close()
+            return out
+    RV = np.asarray(d["tilt_fix_deg"], float)
+    Rd = Rotation.from_rotvec(np.radians(RV))
+    got5 = asyncio.run(rotated(url, RV))
+    bad5, n5 = [], 0
+    for (i, v, s_), g in zip(calls, got5):
+        p_ = np.asarray(d["frames"][i]["pose"][s_], float).copy()
+        q = np.concatenate([Rd.apply(p_[:3]),
+                            (Rd * Rotation.from_quat(p_[3:7])).as_quat()])
+        want = project_gel_frame(q, cal[f"gel_{s_}"], cal["cams"][v])
+        if want is None or g is None:
+            continue
+        n5 += 1
+        e = float(np.hypot(g[0]-want["centre"][0], g[1]-want["centre"][1]))
+        if e > TOL_PX:
+            bad5.append(f"f{i}/{v}/{s_}: {e:.2f} px")
+    moved5 = [float(np.hypot(a[0]-b[0], a[1]-b[1])) for a, b in zip(got, got5) if a and b]
+    check(not bad5 and n5 == len(calls),
+          "the rotation control applies a full rigid transform",
+          f"{n5}/{len(calls)} match scipy rotating BOTH position and "
+          f"orientation; the measured tilt moves the marker "
+          f"{min(moved5):.0f}-{max(moved5):.0f} px"
+          + (f"; worst {bad5[:3]}" if bad5 else ""))
+
     w = max(len(x) for _, x, _ in RESULTS)
     print()
     for ok, name, ev in RESULTS:

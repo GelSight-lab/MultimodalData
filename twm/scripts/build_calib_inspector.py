@@ -53,6 +53,36 @@ VIEWS = ("left", "middle", "right")
 # the 288 mm an uncorrected frame would show.
 WORLD_RANGE_MM = 300
 GEL_RANGE_MM = 100
+ROT_RANGE_DEG = 10
+
+# THE MEASURED RESIDUAL ROTATION of 2026-05-19's world frame, as a rotation
+# VECTOR in degrees (axis * angle), applied about the mocap origin.
+#
+# `calib_epoch` maps the whole motherboard task to one camera epoch (2026-05-12)
+# and patches 2026-05-19 with a TRANSLATION ONLY, (230, 0, 175) mm. Re-running
+# an OptiTrack calibration changes the world frame by a full rigid transform,
+# so any rotation is left uncorrected — and every self-consistency check in this
+# project is invariant to a shared world transform, which is why nothing caught
+# it.
+#
+# Measured from the table: the board lies on the same physical plane every
+# session, so its normal in world coordinates must agree across dates.
+#     05-10 vs 05-11   0.29 deg   <- the reproducibility of the measurement
+#     05-10 vs 05-19   3.35 deg
+#     05-11 vs 05-19   3.60 deg
+# Effect, measured rather than derived: the sensor position moves 18-30 mm
+# (median 27), and the projected marker moves 0.9-12.4 px (median 9.4) across
+# the 30 tile-sensors of batch A, with 67% above the ~4 px camera rmse.
+#
+# My first statement of this was 23 px, computed from the distance to the mocap
+# ORIGIN. The rotation axis is nearly +x, so the lever arm is the perpendicular
+# distance to that AXIS, not to the origin — and a displacement pointing along a
+# camera's viewing ray costs almost no pixels. Both make the real figure
+# smaller. It is a genuine bias well above the noise, not a gross error.
+#
+# This fixes the TILT only: a table normal constrains two of three rotational
+# degrees of freedom. Yaw about that normal is NOT determined by it.
+TILT_FIX_DEG = [3.598, -0.018, -0.126]
 
 BATCHES = {
     "a": [("episode_000", 657), ("episode_000", 180), ("episode_000", 520),
@@ -91,6 +121,7 @@ def main() -> int:
         "world_offset_mm": [round(v*1000.0, 1) for v in
                             world_offset_m("motherboard", args.date, BATCHES[args.batch][0][0])],
         "world_range_mm": WORLD_RANGE_MM, "gel_range_mm": GEL_RANGE_MM,
+        "rot_range_deg": ROT_RANGE_DEG, "tilt_fix_deg": TILT_FIX_DEG,
         "frames": [],
     }
 
@@ -170,6 +201,17 @@ dialog::backdrop{background:rgba(0,0,0,.8)}
 <p>__N__ timestamps &times; 3 camera views. The overlay is computed in this page from the
 published pose, <code>T_mocap_to_cam</code> and <code>gel_center_in_rigid_mm</code> &mdash; the same
 numbers the library uses &mdash; so the sliders below move every tile at once.</p>
+<p><b>Measured, and it is a rotation.</b> The board lies on the same physical table
+every session, so its normal in world coordinates must agree across dates:
+05&#8209;10 vs 05&#8209;11 is 0.29&deg; (that is the reproducibility), while 05&#8209;19
+differs by 3.35&ndash;3.60&deg;. The release patches this date with a
+<b>translation only</b>, so that rotation is uncorrected &mdash; and every
+self-consistency check in the pipeline is invariant to a shared world transform,
+which is why none of them caught it. Measured effect on these fifteen tiles: the sensor moves
+18&ndash;30&nbsp;mm and the marker moves <b>0.9&ndash;12.4&nbsp;px</b> (median
+9.4), with 67% above the ~4&nbsp;px camera rmse &mdash; a real bias, not a gross
+error. Press <i>apply measured tilt</i> and judge whether it helps. It corrects the TILT only:
+a table normal fixes two rotational degrees of freedom, not the yaw about it.</p>
 <p><b>The two hypotheses look different.</b> A wrong WORLD frame is a fixed 3&#8209;D shift:
 it moves both sensors together and the apparent pixel shift changes with depth and view.
 A wrong GEL offset lives in each sensor's own rigid frame, so it swings as that hand
@@ -192,6 +234,12 @@ rotates and does not touch the other hand. Camera reprojection rmse is __RMSE__&
 <label>x<input type="range" id="gx" min="-__GR__" max="__GR__" step="1" value="0"><input type="number" class="num" id="gxn" value="0"></label>
 <label>y<input type="range" id="gy" min="-__GR__" max="__GR__" step="1" value="0"><input type="number" class="num" id="gyn" value="0"></label>
 <label>z<input type="range" id="gz" min="-__GR__" max="__GR__" step="1" value="0"><input type="number" class="num" id="gzn" value="0"></label>
+</div>
+<div class="grp"><b>world rotation about the mocap origin (deg) &mdash; rotation vector</b>
+<label>x<input type="range" id="rx" min="-__RR__" max="__RR__" step="0.05" value="0"><input type="number" class="num" id="rxn" value="0" step="0.05"></label>
+<label>y<input type="range" id="ry" min="-__RR__" max="__RR__" step="0.05" value="0"><input type="number" class="num" id="ryn" value="0" step="0.05"></label>
+<label>z<input type="range" id="rz" min="-__RR__" max="__RR__" step="0.05" value="0"><input type="number" class="num" id="rzn" value="0" step="0.05"></label>
+<button id="pTilt">apply measured tilt (3.60&deg;)</button>
 </div>
 <div class="grp"><b>this date's own offset: __WOFF__ mm</b>
 <button id="pAdd">apply +once more</button><button id="pSub">undo it (&minus;)</button>
@@ -226,7 +274,16 @@ function project(Xw, cam){               // world mm -> pixel
   if(c[2]<=1) return null;
   return [cam.fx*c[0]/c[2]+cam.ppx, cam.fy*c[1]/c[2]+cam.ppy, c[2]];
 }
-const KEYS=["wx","wy","wz","gx","gy","gz"];
+const KEYS=["wx","wy","wz","gx","gy","gz","rx","ry","rz"];
+function rodrigues(dv){                  // rotation vector in DEGREES -> matrix
+  const th=Math.hypot(dv[0],dv[1],dv[2])*Math.PI/180;
+  if(th<1e-12) return [[1,0,0],[0,1,0],[0,0,1]];
+  const k=dv.map(v=>v*Math.PI/180/th), c=Math.cos(th), s=Math.sin(th), t=1-c;
+  return [[t*k[0]*k[0]+c,       t*k[0]*k[1]-s*k[2], t*k[0]*k[2]+s*k[1]],
+          [t*k[0]*k[1]+s*k[2],  t*k[1]*k[1]+c,      t*k[1]*k[2]-s*k[0]],
+          [t*k[0]*k[2]-s*k[1],  t*k[1]*k[2]+s*k[0], t*k[2]*k[2]+c]];
+}
+function mm(A,B){return A.map((r,i)=>[0,1,2].map(j=>A[i][0]*B[0][j]+A[i][1]*B[1][j]+A[i][2]*B[2][j]));}
 // The typed box is authoritative: a slider cannot express a value past its own
 // max, and the setting most worth trying here is 230 mm.
 function val(k){return +document.getElementById(k+"n").value||0;}
@@ -235,14 +292,22 @@ function setVal(k,v){document.getElementById(k+"n").value=v;
 function S(){return {
   ov:ov.checked, L:sL.checked, R:sR.checked, ax:ax.checked, st:st.checked, gh:gh.checked,
   world:[val("wx"),val("wy"),val("wz")], side:gs.value,
+  rot:[val("rx"),val("ry"),val("rz")],
   gel:[val("gx"),val("gy"),val("gz")]};}
 
 function points(fr, side, view, s, useDelta){
   const cam=D.cams[view], p=fr.pose[side];
-  const R=quatMat(p.slice(3,7));
+  let R=quatMat(p.slice(3,7));
   const wd = useDelta ? s.world : [0,0,0];
+  const rv = useDelta ? s.rot : [0,0,0];
   const gd = (useDelta && s.side===side) ? s.gel : [0,0,0];
-  const org=[p[0]*1000+wd[0], p[1]*1000+wd[1], p[2]*1000+wd[2]];
+  // A world-frame correction is a RIGID transform about the mocap origin:
+  // it turns the orientation as well as moving the position. Rotating only
+  // the position would be a different, unphysical thing.
+  const Rd=rodrigues(rv);
+  const pw=mv(Rd,[p[0]*1000,p[1]*1000,p[2]*1000]);
+  R=mm(Rd,R);
+  const org=[pw[0]+wd[0], pw[1]+wd[1], pw[2]+wd[2]];
   const gel=D.gel[side].map((v,i)=>v+gd[i]);
   const add=(a,b)=>[a[0]+b[0],a[1]+b[1],a[2]+b[2]];
   const out={centre:project(add(org,mv(R,gel)),cam), origin:project(org,cam), tips:[]};
@@ -310,6 +375,7 @@ document.getElementById("reset").onclick=()=>{KEYS.forEach(k=>setVal(k,0));redra
 const WOFF=D.world_offset_mm;
 pAdd.onclick=()=>{["wx","wy","wz"].forEach((k,i)=>setVal(k,val(k)+WOFF[i]));redraw();};
 pSub.onclick=()=>{["wx","wy","wz"].forEach((k,i)=>setVal(k,val(k)-WOFF[i]));redraw();};
+pTilt.onclick=()=>{["rx","ry","rz"].forEach((k,i)=>setVal(k,D.tilt_fix_deg[i]));redraw();};
 KEYS.forEach(k=>{
   document.getElementById(k).addEventListener("input",e=>{
     document.getElementById(k+"n").value=e.target.value;redraw();});
@@ -331,6 +397,7 @@ window.__probe=(i,view,side)=>{const r=points(D.frames[i],side,view,S(),true);
         .replace("__N__", str(n)).replace("__RMSE__", rm) \
         .replace("__WR__", str(d["world_range_mm"])) \
         .replace("__GR__", str(d["gel_range_mm"])) \
+        .replace("__RR__", str(d["rot_range_deg"])) \
         .replace("__WOFF__", ", ".join(f"{v:g}" for v in d["world_offset_mm"]))
 
 
