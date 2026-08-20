@@ -107,6 +107,25 @@ def project_gel_to_pixel(sensor_pose7, gel_center_mm, cam_calib):
     return float(u), float(v)
 
 
+def project_rigid_origin(pose7, cam_calib):
+    """The OptiTrack rigid-body origin -> pixel. The BACK of the tool.
+
+    Exposed because the gel centre alone is ambiguous on screen: the marker
+    cluster sits 52 mm behind the gel, which projects a median 21 px away, and
+    a viewer with no stem drawn between them reads that gap as a calibration
+    error. It is the length of the tool.
+    """
+    import numpy as _np
+    p = _np.asarray(pose7, float)
+    T = _np.asarray(cam_calib["T_mocap_to_cam"], float)
+    X = T[:3, :3] @ (p[:3] * 1000.0) + T[:3, 3]
+    if X[2] <= 1.0:
+        return None
+    K = cam_calib["intrinsics"]
+    return _np.array([K["fx"] * X[0] / X[2] + K["ppx"],
+                      K["fy"] * X[1] / X[2] + K["ppy"]])
+
+
 def project_gel_frame(sensor_pose7, gel_center_mm, cam_calib,
                       axis_len_mm: float = 60.0):
     """Project the gel centre AND its three body axes. Perspective is real.

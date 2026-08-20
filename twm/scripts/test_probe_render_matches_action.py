@@ -63,6 +63,16 @@ def drawn_origin(img_before, img_after):
     return np.array([xs.mean(), ys.mean()])
 
 
+def project_origin_longhand(pose7, cam):
+    """The OptiTrack rigid-body origin -> pixel, longhand."""
+    p = np.asarray(pose7, float)
+    T = np.asarray(cam["T_mocap_to_cam"], float)
+    X = T[:3, :3] @ (p[:3] * 1000.0) + T[:3, 3]
+    K = cam["intrinsics"]
+    return np.array([K["fx"] * X[0] / X[2] + K["ppx"],
+                     K["fy"] * X[1] / X[2] + K["ppy"]])
+
+
 def _pose_projecting_to(uv, depth_mm, cam, gel_mm):
     """A pose whose GEL CENTRE lands on pixel `uv` at `depth_mm`.
 
@@ -166,6 +176,39 @@ def main() -> int:
     check(not bad, "a translation clip moves where the action says",
           f"6/6 within 2 px of the longhand displacement"
           if not bad else f"{bad}")
+
+    # 5 — THE OVERLAY SHOWS THE TOOL, NOT ONLY ITS TIP.
+    #     The marker is the GEL CONTACT FACE. The body of the tool extends
+    #     52 mm back from it to the reference ball, which on this rig projects
+    #     to a median 21 px (p90 28 px) away from the marker — while the whole
+    #     camera-calibration error budget is 4 px at 800 mm. So a viewer
+    #     comparing the marker against the middle of the visible tool sees a
+    #     20 px gap that is geometry, not error, and has nothing on screen
+    #     telling them so. Drawing the stem back to the rigid-body origin says
+    #     which end of the tool the marker is.
+    stem = draw_sensor_frame(blank, start, gel, cam, stem=True)
+    plain = draw_sensor_frame(blank, start, gel, cam)
+    extra = np.abs(stem.astype(int) - plain.astype(int)).sum(2) > 25
+    org = project_origin_longhand(start, cam)
+    # Measured as: does the stem REACH the projected rigid origin, and does it
+    # SPAN the gap. My first version took the changed pixel farthest from the
+    # image centre and compared that to the origin — which fails by exactly the
+    # radius of the tick mark drawn at the base (2.7 px against a 2 px tick).
+    # That was the estimator inheriting the drawing, not the drawing being
+    # wrong, so the estimator is what changed.
+    gelpx = project_longhand(start, gel, cam)
+    if extra.sum():
+        ys, xs = np.nonzero(extra)
+        pts = np.stack([xs, ys], 1).astype(float)
+        reach = float(np.min(np.linalg.norm(pts - org, axis=1)))
+        span = float(np.max(np.linalg.norm(pts - gelpx, axis=1)))
+    else:
+        reach, span = float("inf"), 0.0
+    want = float(np.linalg.norm(org - gelpx))
+    check(extra.sum() > 10 and reach < 1.5 and abs(span - want) < 3.0,
+          "the overlay draws the tool body back to the marker cluster",
+          f"stem adds {int(extra.sum())} px, reaches to {reach:.1f} px of the "
+          f"projected rigid origin, and spans {span:.1f} px of the {want:.1f} px gap")
 
     w = max(len(x) for _, x, _ in RESULTS)
     print()

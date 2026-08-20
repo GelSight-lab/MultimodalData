@@ -76,7 +76,7 @@ def _render_probe(frame_rgb, probe, cal, cam, out_mp4, hud, held_pose,
     # the held hand and its circle never change: draw once, reuse
     base = draw_collision_circle(frame_rgb, held_pose, gel_o, cam,
                                  collision_m, (120, 120, 120))
-    base = draw_sensor_frame(base, held_pose, gel_o, cam,
+    base = draw_sensor_frame(base, held_pose, gel_o, cam, stem=True,
                              label=other[0].upper(), dim=True)
 
     from react_toolbox.calibration import project_gel_frame
@@ -93,7 +93,8 @@ def _render_probe(frame_rgb, probe, cal, cam, out_mp4, hud, held_pose,
         if trail:
             cv2.circle(img, trail[0], 3, (200, 200, 200), 1, cv2.LINE_AA)
         img = draw_collision_circle(img, q, gel_m, cam, collision_m, col)
-        img = draw_sensor_frame(img, q, gel_m, cam, label=side[0].upper())
+        img = draw_sensor_frame(img, q, gel_m, cam, stem=True,
+                                label=side[0].upper())
         cv2.rectangle(img, (0, 0), (w, 18), (0, 0, 0), -1)
         cv2.putText(img, f"{hud}  t={i/FPS:4.2f}s  sep={probe['min_separation_m']:.2f}m",
                     (4, 13), cv2.FONT_HERSHEY_SIMPLEX, 0.38, col, 1, cv2.LINE_AA)
