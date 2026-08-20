@@ -153,3 +153,165 @@ def draw_projection(frame_rgb, sensor_pose7, gel_center_mm, cam_calib,
                     cv2.FONT_HERSHEY_SIMPLEX, 0.42, (0, 200, 255), 1,
                     cv2.LINE_AA)
     return out
+
+
+def draw_probe(frame_rgb, probe, gel_center_mm, cam_calib, color=None,
+               every: int = 6, label=True):
+    """Overlay one synthetic probe's FUTURE trajectory on the start frame.
+
+    The whole evaluation protocol for these probes is "look at it": there is
+    no ground-truth future image, so a human compares the model's rollout
+    against where the sensor WOULD be. That comparison needs the ground truth
+    drawn in the same pixels, which is this.
+
+    Start is a filled dot, end is a ring, and the path between them is a
+    polyline sampled every `every` steps — dense enough to show curvature
+    under perspective, sparse enough that the workpiece stays visible.
+
+    Steps whose projection leaves the image are DROPPED from the polyline
+    rather than clamped to the border. A clamped point is a position the
+    sensor never occupies, and a line drawn to it says the trajectory went
+    somewhere it did not.
+    """
+    import cv2
+
+    from .calibration import project_gel_to_pixel
+
+    out = np.ascontiguousarray(frame_rgb).copy()
+    h, w = out.shape[:2]
+    col = color or ((0, 220, 255) if probe.get("kind") == "translation"
+                    else (255, 100, 220))
+
+    pts = []
+    for i, q in enumerate(np.asarray(probe["poses"], float)):
+        if i % every and i != len(probe["poses"]) - 1:
+            continue
+        uv = project_gel_to_pixel(q, gel_center_mm, cam_calib)
+        if uv is None or not (0 <= uv[0] < w and 0 <= uv[1] < h):
+            continue                      # dropped, never clamped
+        pts.append((int(round(uv[0])), int(round(uv[1]))))
+
+    for a, b in zip(pts, pts[1:]):
+        cv2.line(out, a, b, col, 1, cv2.LINE_AA)
+    if pts:
+        cv2.circle(out, pts[0], 4, (255, 255, 255), -1, cv2.LINE_AA)
+        cv2.circle(out, pts[0], 4, col, 1, cv2.LINE_AA)
+        cv2.circle(out, pts[-1], 6, col, 2, cv2.LINE_AA)
+        if label:
+            amp = (f"{probe['amplitude_m']*100:.0f}cm"
+                   if probe.get("kind") == "translation"
+                   else f"{probe['amplitude_deg']:.0f}deg")
+            cv2.putText(out, f"{probe['name']} {amp}",
+                        (pts[-1][0] + 8, pts[-1][1] + 4),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.38, col, 1, cv2.LINE_AA)
+    return out
+
+
+def probe_contact_sheet(frame_rgb, probes, gel_center_mm, cam_calib,
+                        cols: int = 4, tile=(320, 240)):
+    """One tile per probe, plus the numbers a human needs to judge it.
+
+    A single frame with all twelve overlaid was the first version and it does
+    not work: every trajectory starts at the same pixel, so the labels stack
+    into an unreadable knot and no probe can be assessed on its own. The point
+    of this picture is per-probe comparison against a model rollout, and that
+    needs one probe per tile.
+
+    Each tile prints the amplitude, the horizon and the speed percentile,
+    because "is this like the dataset" is the first question a reader asks and
+    it should not require opening the metadata.
+    """
+    import cv2
+
+    tw, th = tile
+    n = len(probes)
+    rows = int(np.ceil(n / cols))
+    sheet = np.zeros((rows * th, cols * tw, 3), np.uint8)
+    for i, p in enumerate(probes):
+        img = draw_probe(frame_rgb, p, gel_center_mm, cam_calib, label=False)
+        img = cv2.resize(img, (tw, th), interpolation=cv2.INTER_AREA)
+        amp = (f"{p['amplitude_m']*100:.0f}cm" if p["kind"] == "translation"
+               else f"{p['amplitude_deg']:.0f}deg")
+        tag = (f"{p['name']}  {amp}  {p['horizon_s']:.1f}s  "
+               f"p{p['speed_percentile']:.0f}")
+        col = (0, 220, 255) if p["kind"] == "translation" else (255, 100, 220)
+        cv2.rectangle(img, (0, 0), (tw - 1, 14), (0, 0, 0), -1)
+        cv2.putText(img, tag, (3, 11), cv2.FONT_HERSHEY_SIMPLEX, 0.34, col, 1,
+                    cv2.LINE_AA)
+        if not p.get("in_view", True):
+            cv2.rectangle(img, (0, 0), (tw - 1, th - 1), (0, 0, 255), 2)
+            cv2.putText(img, "LEAVES VIEW", (3, th - 6),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.36, (0, 0, 255), 1,
+                        cv2.LINE_AA)
+        r, c = divmod(i, cols)
+        sheet[r*th:(r+1)*th, c*tw:(c+1)*tw] = img
+    return sheet
+
+
+AXIS_BGR_RGB = ((255, 60, 60), (60, 255, 60), (80, 160, 255))   # x, y, z
+
+
+def draw_sensor_frame(frame_rgb, sensor_pose7, gel_center_mm, cam_calib,
+                      axis_len_mm: float = 60.0, label=None, dim=False):
+    """Draw the sensor's gel centre and its three body axes, in perspective.
+
+    The axis tips are placed in 3D and projected, so the triad shrinks with
+    distance and foreshortens with orientation — the same convention the
+    React dataset previews use. A dot would show position and hide
+    orientation, which makes the six ROTATION probes unreadable: under a pure
+    rotation about the gel centre the dot does not move at all.
+
+    `dim` draws the held (non-moving) hand: same geometry, muted, so a viewer
+    can see BOTH hands and judge the collision clearance that the sampler
+    enforced numerically.
+    """
+    import cv2
+
+    from .calibration import project_gel_frame
+
+    out = np.ascontiguousarray(frame_rgb).copy()
+    r = project_gel_frame(sensor_pose7, gel_center_mm, cam_calib, axis_len_mm)
+    if r is None:
+        return out
+    h, w = out.shape[:2]
+    cx, cy = int(round(r["centre"][0])), int(round(r["centre"][1]))
+    if not (0 <= cx < w and 0 <= cy < h):
+        return out
+    for tip, col in zip(r["tips"], AXIS_BGR_RGB):
+        if tip is None:
+            continue
+        tx, ty = int(round(tip[0])), int(round(tip[1]))
+        c = tuple(int(v * 0.45) for v in col) if dim else col
+        cv2.line(out, (cx, cy), (tx, ty), c, 1 if dim else 2, cv2.LINE_AA)
+    ring = (150, 150, 150) if dim else (255, 255, 255)
+    cv2.circle(out, (cx, cy), 3, ring, -1, cv2.LINE_AA)
+    if label:
+        cv2.putText(out, str(label), (cx + 7, cy - 7),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.40, ring, 1, cv2.LINE_AA)
+    return out
+
+
+def draw_collision_circle(frame_rgb, sensor_pose7, gel_center_mm, cam_calib,
+                          diameter_m: float = 0.12, color=(255, 200, 80)):
+    """The exclusion circle around a gel, drawn at its own depth.
+
+    Radius in PIXELS is derived from the radius in METRES at this gel's
+    depth — fx * r / z — so the circle shrinks with distance like everything
+    else. A fixed-pixel circle would claim a constant physical size at every
+    depth, which is the opposite of what it is for.
+    """
+    import cv2
+
+    from .calibration import project_gel_frame
+
+    out = np.ascontiguousarray(frame_rgb).copy()
+    r = project_gel_frame(sensor_pose7, gel_center_mm, cam_calib)
+    if r is None:
+        return out
+    K = cam_calib["intrinsics"]
+    rad_px = float(K["fx"] * (diameter_m / 2.0 * 1000.0) / max(r["depth_mm"], 1e-6))
+    cx, cy = int(round(r["centre"][0])), int(round(r["centre"][1]))
+    h, w = out.shape[:2]
+    if 0 <= cx < w and 0 <= cy < h and rad_px < max(w, h):
+        cv2.circle(out, (cx, cy), int(round(rad_px)), color, 1, cv2.LINE_AA)
+    return out

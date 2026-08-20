@@ -105,3 +105,40 @@ def project_gel_to_pixel(sensor_pose7, gel_center_mm, cam_calib):
     u = K["fx"] * p_cam[0] / p_cam[2] + K["ppx"]
     v = K["fy"] * p_cam[1] / p_cam[2] + K["ppy"]
     return float(u), float(v)
+
+
+def project_gel_frame(sensor_pose7, gel_center_mm, cam_calib,
+                      axis_len_mm: float = 60.0):
+    """Project the gel centre AND its three body axes. Perspective is real.
+
+    Returns {"centre": (u, v), "tips": [x_tip, y_tip, z_tip], "depth_mm": z}
+    or None when the gel centre is behind the camera. A tip that falls behind
+    the camera is None; the centre being visible does not guarantee the tips
+    are.
+
+    THE AXIS TIPS ARE PLACED IN 3D AND THEN PROJECTED, at a fixed millimetre
+    length, so the drawn triad shrinks with distance and foreshortens with
+    orientation. Drawing a fixed PIXEL length instead would assert that two
+    sensors at different depths are the same size — the one thing a projection
+    exists to tell you apart. It also makes the six rotation probes readable:
+    a dot barely moves under rotation, a triad turns.
+    """
+    T_rigid = pose7_to_matrix(sensor_pose7)
+    R = T_rigid[:3, :3]
+    p_gel = (T_rigid @ np.array([*gel_center_mm, 1.0]))[:3]
+
+    def _proj(P_mocap_mm):
+        pc = (cam_calib["T_mocap_to_cam"] @ np.array([*P_mocap_mm, 1.0]))[:3]
+        if pc[2] <= 0:
+            return None, pc[2]
+        K = cam_calib["intrinsics"]
+        return (float(K["fx"] * pc[0] / pc[2] + K["ppx"]),
+                float(K["fy"] * pc[1] / pc[2] + K["ppy"])), pc[2]
+
+    centre, depth = _proj(p_gel)
+    if centre is None:
+        return None
+    tips = [_proj(p_gel + R @ (axis_len_mm * e))[0]
+            for e in (np.array([1.0, 0, 0]), np.array([0, 1.0, 0]),
+                      np.array([0, 0, 1.0]))]
+    return {"centre": centre, "tips": tips, "depth_mm": float(depth)}
