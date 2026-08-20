@@ -186,8 +186,15 @@ font-variant-numeric:tabular-nums}th{color:var(--dim);font-weight:600}
 figure{margin:0;background:var(--card);border:1px solid var(--line);border-radius:9px;padding:7px}
 figcaption{color:var(--dim);font-size:12px;margin-top:5px}
 .tile{position:relative;line-height:0;cursor:zoom-in}
-.tile img,.tile canvas{width:100%;border-radius:5px;display:block}
-.tile canvas{position:absolute;inset:0}
+/* height:auto is REQUIRED. The width/height HTML attributes act as CSS
+   presentational hints, so overriding only `width` left the image at
+   height:480px — 464x480, stretched off 4:3 — while the canvas resolved to
+   464x348. The overlay was then scaled 0.725 in y against the photo it
+   annotates, and the enlarged view (which happened to lay out correctly)
+   disagreed with the tile. */
+.tile img{width:100%;height:auto;border-radius:5px;display:block}
+.tile canvas{position:absolute;inset:0;width:100%;height:100%;
+border-radius:5px;display:block}
 .hdr{display:flex;justify-content:space-between;align-items:baseline;gap:10px}
 .hdr small{color:var(--dim)}
 dialog{background:var(--card);color:var(--fg);border:1px solid var(--line);

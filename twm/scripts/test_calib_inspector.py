@@ -238,6 +238,137 @@ def main() -> int:
           f"{min(moved5):.0f}-{max(moved5):.0f} px"
           + (f"; worst {bad5[:3]}" if bad5 else ""))
 
+    # THE OVERLAY MUST SIT ON THE PHOTO. Every check above calls
+    # window.__probe, which works in CANVAS coordinates — so they all passed
+    # while the canvas was a different size from the image underneath it and
+    # the drawn marker sat somewhere else on screen. Measured: tile <img> was
+    # 464x480 while its <canvas> was 464x348, because the width/height HTML
+    # attributes act as CSS presentational hints and the stylesheet overrode
+    # only `width`. Every overlay y was scaled by 0.725 against the photo, and
+    # the photo itself was stretched off 4:3.
+    #
+    # This is layout, not arithmetic, so it is measured from the rendered
+    # boxes rather than from the numbers.
+    async def boxes(url):
+        from playwright.async_api import async_playwright
+        async with async_playwright() as pw:
+            b = await pw.chromium.launch()
+            pg = await b.new_page(viewport={"width": 1500, "height": 1000})
+            await pg.goto(url, wait_until="load")
+            await pg.wait_for_function("() => typeof window.__probe === 'function'")
+            await pg.wait_for_timeout(400)
+            tiles = await pg.evaluate("""(()=>[...document.querySelectorAll('.tile')].map(t=>{
+                const i=t.querySelector('img').getBoundingClientRect();
+                const c=t.querySelector('canvas').getBoundingClientRect();
+                return [i.x,i.y,i.width,i.height,c.x,c.y,c.width,c.height];}))()""")
+            await pg.click(".tile"); await pg.wait_for_timeout(600)
+            z = await pg.evaluate("""(()=>{const i=document.getElementById('zimg')
+                .getBoundingClientRect(), c=document.getElementById('zcv')
+                .getBoundingClientRect();
+                return [i.x,i.y,i.width,i.height,c.x,c.y,c.width,c.height];})()""")
+            await b.close()
+            return tiles, z
+
+    tiles, z = asyncio.run(boxes(url))
+    def gap(r):
+        return max(abs(r[0]-r[4]), abs(r[1]-r[5]), abs(r[2]-r[6]), abs(r[3]-r[7]))
+    worst_t = max(gap(r) for r in tiles)
+    check(worst_t <= 1.0, "the overlay canvas covers its photo exactly (tiles)",
+          f"{len(tiles)} tiles, worst image/canvas box mismatch {worst_t:.1f} px "
+          f"(img {tiles[0][2]:.0f}x{tiles[0][3]:.0f}, canvas "
+          f"{tiles[0][6]:.0f}x{tiles[0][7]:.0f})")
+    check(gap(z) <= 1.0, "...and in the enlarged view",
+          f"mismatch {gap(z):.1f} px (img {z[2]:.0f}x{z[3]:.0f}, "
+          f"canvas {z[6]:.0f}x{z[7]:.0f})")
+
+    # and the photo is not stretched off its own aspect ratio
+    ar = [r[2]/r[3] for r in tiles] + [z[2]/z[3]]
+    want = d["frames"][0]["w"] / d["frames"][0]["h"]
+    check(max(abs(a-want) for a in ar) < 0.01,
+          "the photo keeps its 4:3 aspect ratio",
+          f"displayed {min(ar):.3f}-{max(ar):.3f} vs {want:.3f}")
+
+    # READ THE MARKER BACK OUT OF THE RENDERED PIXELS, in both the tile and
+    # the enlarged view. The box-geometry check above would have caught the
+    # layout defect, but only this one proves the thing a reader actually
+    # looks at is in the right place — and the defect it is guarding against
+    # (image and canvas scaled differently) left every arithmetic check green
+    # while putting the marker ~93 image px from the sensor.
+    async def shots(url):
+        from playwright.async_api import async_playwright
+        async with async_playwright() as pw:
+            b = await pw.chromium.launch()
+            pg = await b.new_page(viewport={"width": 1500, "height": 1000})
+            await pg.goto(url, wait_until="load")
+            await pg.wait_for_function("() => typeof window.__probe === 'function'")
+            for cid in ("sR", "ax", "st", "gh"):
+                await pg.eval_on_selector(
+                    f"#{cid}", "e=>{e.checked=false;e.dispatchEvent(new Event('change'))}")
+            await pg.wait_for_timeout(400)
+            tiles = await pg.query_selector_all(".tile")
+            out = [await tiles[k].screenshot() for k in range(3)]
+            await tiles[1].click(); await pg.wait_for_timeout(700)
+            out.append(await (await pg.query_selector("#zcv")).screenshot())
+            # A SECOND shot with the axes back ON. The four above deliberately
+            # hide them so the marker dot is the only coloured thing; sampling
+            # axis colours from those hit the dark board and reported every
+            # axis as blue — a defect in the test, not the page.
+            await pg.eval_on_selector(
+                "#ax", "e=>{e.checked=true;e.dispatchEvent(new Event('change'))}")
+            await pg.wait_for_timeout(400)
+            out.append(await (await pg.query_selector("#zcv")).screenshot())
+            await b.close()
+            return out
+
+    import cv2
+    def centroid(png, rgb=(255, 210, 63), tol=40):
+        a = cv2.imdecode(np.frombuffer(png, np.uint8), cv2.IMREAD_COLOR)[:, :, ::-1].astype(int)
+        m = np.abs(a - np.array(rgb)).max(2) < tol
+        if m.sum() < 4:
+            return None, a.shape
+        ys, xs = np.nonzero(m)
+        return np.array([xs.mean(), ys.mean()]), a.shape
+
+    pngs = asyncio.run(shots(url))
+    errs, miss = [], []
+    for k, v in enumerate(VIEWS + ("middle",)):
+        got, shape = centroid(pngs[k])
+        if got is None:
+            miss.append(v); continue
+        want = project_gel_frame(d["frames"][0]["pose"]["left"],
+                                 cal["gel_left"], cal["cams"][v])["centre"]
+        errs.append(float(np.linalg.norm(got / (shape[1]/640.0) - np.asarray(want))))
+    check(not miss and errs and max(errs) < 2.0,
+          "the DRAWN marker is on the sensor, in tiles and enlarged",
+          f"read back from pixels: {min(errs):.2f}-{max(errs):.2f} px from the "
+          f"library's answer (3 tiles + the enlarged view)"
+          + (f"; not found in {miss}" if miss else ""))
+
+    # PARITY WITH THE PREVIEW. The page must not merely be self-consistent; it
+    # must agree with `react_toolbox.viz.draw_sensor_frame`, which is what the
+    # published clips use. Geometry is shared via project_gel_frame, so what is
+    # left to diverge is which colour goes on which axis.
+    from react_toolbox.viz import AXIS_BGR_RGB
+    r0 = project_gel_frame(d["frames"][0]["pose"]["left"], cal["gel_left"],
+                           cal["cams"]["middle"])
+    c0 = np.asarray(r0["centre"])
+    a = cv2.imdecode(np.frombuffer(pngs[4], np.uint8), cv2.IMREAD_COLOR)[:, :, ::-1]
+    sc = a.shape[1] / 640.0
+    order, bad6 = [], []
+    for ti, tip in enumerate(r0["tips"]):
+        p_ = (c0 + 0.72 * (np.asarray(tip) - c0)) * sc
+        x_, y_ = int(round(p_[0])), int(round(p_[1]))
+        patch = a[max(0, y_-3):y_+4, max(0, x_-3):x_+4].reshape(-1, 3).astype(int)
+        px_ = patch[int(np.argmax(patch.max(1) - patch.min(1)))]
+        dom = int(np.argmax(px_))
+        want_dom = int(np.argmax(AXIS_BGR_RGB[ti]))
+        order.append("xyz"[ti] + "=" + "RGB"[dom])
+        if dom != want_dom:
+            bad6.append(f"axis {'xyz'[ti]}: page {'RGB'[dom]}, preview {'RGB'[want_dom]}")
+    check(not bad6, "axis colours match the published preview overlay",
+          f"{' '.join(order)} — same mapping as viz.AXIS_BGR_RGB"
+          + (f"; {bad6}" if bad6 else ""))
+
     w = max(len(x) for _, x, _ in RESULTS)
     print()
     for ok, name, ev in RESULTS:
