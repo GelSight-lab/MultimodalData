@@ -35,7 +35,7 @@ import numpy as np                                             # noqa: E402
 import pyarrow.parquet as pq                                   # noqa: E402
 
 from react_toolbox.calibration import load_calibration          # noqa: E402
-from twm.calib_epoch import calib_dir                           # noqa: E402
+from twm.calib_epoch import calib_dir, world_offset_m            # noqa: E402
 
 REL = Path("/media/yxma/Disk1/twm/release_force/motherboard/meta")
 H5R = Path("/media/yxma/Disk1/twm/data/motherboard")
@@ -45,6 +45,15 @@ VIEWS = ("left", "middle", "right")
 # Two disjoint sets of five. Batch A is shown first; B is held back so the
 # offset you settle on gets checked against frames it was not tuned on —
 # picking the number and validating it on the same five would prove nothing.
+# THE CONTROL MUST REACH THE HYPOTHESIS. The first version capped the world
+# slider at +/-60 mm while the offset this date actually carries is
+# (230, 0, 175) mm — so the one setting worth testing was off the end of the
+# scale, and a range that cannot express the question looks exactly like a
+# range that answers it "no". Sized to 300 mm: comfortably past 230, and past
+# the 288 mm an uncorrected frame would show.
+WORLD_RANGE_MM = 300
+GEL_RANGE_MM = 100
+
 BATCHES = {
     "a": [("episode_000", 657), ("episode_000", 180), ("episode_000", 520),
           ("episode_000", 900), ("episode_000", 1290)],
@@ -79,6 +88,9 @@ def main() -> int:
         "gel": {s: np.asarray(cal[f"gel_{s}"], float).tolist() for s in ("left", "right")},
         "refball": {s: raw[s]["refball_center_in_rigid_mm"] for s in ("left", "right")},
         "gel_axis": {s: raw[s]["gel_axis_in_rigid"] for s in ("left", "right")},
+        "world_offset_mm": [round(v*1000.0, 1) for v in
+                            world_offset_m("motherboard", args.date, BATCHES[args.batch][0][0])],
+        "world_range_mm": WORLD_RANGE_MM, "gel_range_mm": GEL_RANGE_MM,
         "frames": [],
     }
 
@@ -129,8 +141,10 @@ border-bottom:1px solid var(--line);padding:12px 0;backdrop-filter:blur(6px)}
 .grp{background:var(--card);border:1px solid var(--line);border-radius:9px;padding:8px 12px}
 .grp b{font-size:12px;color:var(--accent);display:block;margin-bottom:4px}
 label{font-size:13px;color:var(--dim);margin-right:10px;white-space:nowrap}
-input[type=range]{vertical-align:middle;width:120px}
-.val{display:inline-block;min-width:44px;font-variant-numeric:tabular-nums;color:var(--fg)}
+input[type=range]{vertical-align:middle;width:150px}
+.num{width:66px;background:#0d1526;color:var(--fg);border:1px solid var(--line);
+border-radius:5px;padding:2px 5px;margin-left:6px;font-variant-numeric:tabular-nums;
+font-size:13px}
 button{background:#1b2embed;background:#1b2a46;color:var(--fg);border:1px solid var(--line);
 border-radius:7px;padding:6px 12px;cursor:pointer;font-size:13px}
 button:hover{border-color:var(--accent)}
@@ -169,17 +183,19 @@ rotates and does not touch the other hand. Camera reprojection rmse is __RMSE__&
 <label><input type="checkbox" id="st" checked> stem</label>
 <label><input type="checkbox" id="gh" checked> ghost&nbsp;(uncorrected)</label>
 </div>
-<div class="grp"><b>world offset applied to both sensors (mm)</b>
-<label>x<input type="range" id="wx" min="-60" max="60" step="1" value="0"><span class="val" id="wxv">0</span></label>
-<label>y<input type="range" id="wy" min="-60" max="60" step="1" value="0"><span class="val" id="wyv">0</span></label>
-<label>z<input type="range" id="wz" min="-60" max="60" step="1" value="0"><span class="val" id="wzv">0</span></label>
+<div class="grp"><b>world offset applied to both sensors (mm) &mdash; range &plusmn;__WR__</b>
+<label>x<input type="range" id="wx" min="-__WR__" max="__WR__" step="1" value="0"><input type="number" class="num" id="wxn" value="0"></label>
+<label>y<input type="range" id="wy" min="-__WR__" max="__WR__" step="1" value="0"><input type="number" class="num" id="wyn" value="0"></label>
+<label>z<input type="range" id="wz" min="-__WR__" max="__WR__" step="1" value="0"><input type="number" class="num" id="wzn" value="0"></label>
 </div>
-<div class="grp"><b>gel offset, <select id="gs"><option value="left">left</option><option value="right">right</option></select> rigid frame (mm)</b>
-<label>x<input type="range" id="gx" min="-30" max="30" step="1" value="0"><span class="val" id="gxv">0</span></label>
-<label>y<input type="range" id="gy" min="-30" max="30" step="1" value="0"><span class="val" id="gyv">0</span></label>
-<label>z<input type="range" id="gz" min="-30" max="30" step="1" value="0"><span class="val" id="gzv">0</span></label>
+<div class="grp"><b>gel offset, <select id="gs"><option value="left">left</option><option value="right">right</option></select> rigid frame (mm) &mdash; range &plusmn;__GR__</b>
+<label>x<input type="range" id="gx" min="-__GR__" max="__GR__" step="1" value="0"><input type="number" class="num" id="gxn" value="0"></label>
+<label>y<input type="range" id="gy" min="-__GR__" max="__GR__" step="1" value="0"><input type="number" class="num" id="gyn" value="0"></label>
+<label>z<input type="range" id="gz" min="-__GR__" max="__GR__" step="1" value="0"><input type="number" class="num" id="gzn" value="0"></label>
 </div>
-<button id="reset">reset</button><button id="copy">copy settings</button>
+<div class="grp"><b>this date's own offset: __WOFF__ mm</b>
+<button id="pAdd">apply +once more</button><button id="pSub">undo it (&minus;)</button>
+<button id="reset">reset</button><button id="copy">copy settings</button></div>
 </div></div>
 <div id="tiles"></div>
 <dialog id="dlg"><div class="zoomwrap"><img id="zimg"><canvas id="zcv"></canvas></div>
@@ -210,10 +226,16 @@ function project(Xw, cam){               // world mm -> pixel
   if(c[2]<=1) return null;
   return [cam.fx*c[0]/c[2]+cam.ppx, cam.fy*c[1]/c[2]+cam.ppy, c[2]];
 }
+const KEYS=["wx","wy","wz","gx","gy","gz"];
+// The typed box is authoritative: a slider cannot express a value past its own
+// max, and the setting most worth trying here is 230 mm.
+function val(k){return +document.getElementById(k+"n").value||0;}
+function setVal(k,v){document.getElementById(k+"n").value=v;
+  document.getElementById(k).value=Math.max(-1e9,Math.min(1e9,v));}
 function S(){return {
   ov:ov.checked, L:sL.checked, R:sR.checked, ax:ax.checked, st:st.checked, gh:gh.checked,
-  world:[+wx.value,+wy.value,+wz.value], side:gs.value,
-  gel:[+gx.value,+gy.value,+gz.value]};}
+  world:[val("wx"),val("wy"),val("wz")], side:gs.value,
+  gel:[val("gx"),val("gy"),val("gz")]};}
 
 function points(fr, side, view, s, useDelta){
   const cam=D.cams[view], p=fr.pose[side];
@@ -274,8 +296,6 @@ function build(){
 }
 function redraw(){
   const s=S();
-  ["wx","wy","wz","gx","gy","gz"].forEach(k=>
-    document.getElementById(k+"v").textContent=document.getElementById(k).value);
   cvs.forEach(o=>drawOn(o.cv,o.fr,o.view,s,1));
   if(dlg.open&&dlg._fr) drawZoom();
 }
@@ -286,14 +306,21 @@ function zoom(fr,v){dlg._fr=fr;dlg._v=v;zimg.src=fr.img[v];
   dlg.showModal();}
 function drawZoom(){drawOn(zcv,dlg._fr,dlg._v,S(),1);}
 zclose.onclick=()=>dlg.close();
-document.getElementById("reset").onclick=()=>{
-  ["wx","wy","wz","gx","gy","gz"].forEach(k=>document.getElementById(k).value=0);redraw();};
+document.getElementById("reset").onclick=()=>{KEYS.forEach(k=>setVal(k,0));redraw();};
+const WOFF=D.world_offset_mm;
+pAdd.onclick=()=>{["wx","wy","wz"].forEach((k,i)=>setVal(k,val(k)+WOFF[i]));redraw();};
+pSub.onclick=()=>{["wx","wy","wz"].forEach((k,i)=>setVal(k,val(k)-WOFF[i]));redraw();};
+KEYS.forEach(k=>{
+  document.getElementById(k).addEventListener("input",e=>{
+    document.getElementById(k+"n").value=e.target.value;redraw();});
+  document.getElementById(k+"n").addEventListener("input",e=>{
+    document.getElementById(k).value=e.target.value;redraw();});});
 document.getElementById("copy").onclick=()=>{
   const s=S();navigator.clipboard.writeText(JSON.stringify(
     {date:D.date,batch:D.batch,world_offset_mm:s.world,gel_side:s.side,gel_delta_mm:s.gel}));
   document.getElementById("copy").textContent="copied";
   setTimeout(()=>document.getElementById("copy").textContent="copy settings",1200);};
-document.querySelectorAll("input,select").forEach(e=>{
+document.querySelectorAll("input[type=checkbox],select").forEach(e=>{
   e.addEventListener("input",redraw);e.addEventListener("change",redraw);});
 build(); redraw();
 window.__probe=(i,view,side)=>{const r=points(D.frames[i],side,view,S(),true);
@@ -301,7 +328,10 @@ window.__probe=(i,view,side)=>{const r=points(D.frames[i],side,view,S(),true);
 </script></body></html>""" \
         .replace("__DATA__", json.dumps(d)) \
         .replace("__DATE__", d["date"]).replace("__BATCH__", d["batch"].upper()) \
-        .replace("__N__", str(n)).replace("__RMSE__", rm)
+        .replace("__N__", str(n)).replace("__RMSE__", rm) \
+        .replace("__WR__", str(d["world_range_mm"])) \
+        .replace("__GR__", str(d["gel_range_mm"])) \
+        .replace("__WOFF__", ", ".join(f"{v:g}" for v in d["world_offset_mm"]))
 
 
 if __name__ == "__main__":

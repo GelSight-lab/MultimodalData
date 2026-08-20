@@ -130,6 +130,72 @@ def main() -> int:
           f"{D:g} mm moves the marker {min(moved):.1f}-{max(moved):.1f} px "
           f"across the {len(moved)} tile-sensors")
 
+    # THE CONTROL MUST REACH THE HYPOTHESIS IT EXISTS TO TEST. The first
+    # version capped the world slider at +/-60 mm while this date's own offset
+    # is (230, 0, 175) mm, so the single most relevant setting was off the end
+    # of the scale. A range that cannot express the question is indistinguishable
+    # from a range that answers it "no".
+    woff = np.asarray(d["world_offset_mm"], float)
+    reach = float(np.max(np.abs(woff)))
+    check(d["world_range_mm"] >= reach,
+          "the world control reaches this date's own offset",
+          f"slider spans +/-{d['world_range_mm']} mm; the offset baked into "
+          f"{d['date']} is {list(woff)} mm (needs {reach:g})")
+
+    # ...and the preset button applies exactly that offset, not something near it.
+    async def preset(url):
+        from playwright.async_api import async_playwright
+        async with async_playwright() as pw:
+            b = await pw.chromium.launch(); pg = await b.new_page()
+            await pg.goto(url, wait_until="load")
+            await pg.wait_for_function("() => typeof window.__probe === 'function'")
+            await pg.click("#pAdd")
+            got = [await pg.evaluate(f"window.__probe({i}, '{v}', '{s_}')")
+                   for i, v, s_ in calls]
+            await b.close()
+            return got
+    got3 = asyncio.run(preset(url))
+    bad3, n3 = [], 0
+    for (i, v, s_), g in zip(calls, got3):
+        p_ = np.asarray(d["frames"][i]["pose"][s_], float).copy()
+        p_[:3] += woff / 1000.0
+        want = project_gel_frame(p_, cal[f"gel_{s_}"], cal["cams"][v])
+        if want is None or g is None:
+            continue
+        n3 += 1
+        e = float(np.hypot(g[0] - want["centre"][0], g[1] - want["centre"][1]))
+        if e > TOL_PX:
+            bad3.append(f"f{i}/{v}/{s_}: {e:.2f} px")
+    moved3 = [float(np.hypot(a[0]-b[0], a[1]-b[1])) for a, b in zip(got, got3) if a and b]
+    check(not bad3 and n3 == len(calls),
+          "the preset applies exactly that offset",
+          f"{n3}/{len(calls)} match the library for a pose shifted by the "
+          f"published offset; it moves the marker "
+          f"{min(moved3):.0f}-{max(moved3):.0f} px"
+          + (f"; worst {bad3[:3]}" if bad3 else ""))
+
+    # a typed value beyond the slider's max must still take effect
+    async def typed(url, v):
+        from playwright.async_api import async_playwright
+        async with async_playwright() as pw:
+            b = await pw.chromium.launch(); pg = await b.new_page()
+            await pg.goto(url, wait_until="load")
+            await pg.wait_for_function("() => typeof window.__probe === 'function'")
+            await pg.eval_on_selector("#wxn",
+                f"e => {{ e.value = {v}; e.dispatchEvent(new Event('input')); }}")
+            out = await pg.evaluate("window.__probe(0, 'middle', 'left')")
+            await b.close()
+            return out
+    big = d["world_range_mm"] + 250.0
+    g4 = asyncio.run(typed(url, big))
+    p4 = np.asarray(d["frames"][0]["pose"]["left"], float).copy()
+    p4[0] += big / 1000.0
+    w4 = project_gel_frame(p4, cal["gel_left"], cal["cams"]["middle"])
+    e4 = float(np.hypot(g4[0]-w4["centre"][0], g4[1]-w4["centre"][1])) if g4 else float("inf")
+    check(e4 < TOL_PX, "a typed value past the slider's end still applies",
+          f"{big:g} mm typed into the box lands {e4:.2f} px from the library's "
+          f"answer (the slider itself stops at {d['world_range_mm']})")
+
     w = max(len(x) for _, x, _ in RESULTS)
     print()
     for ok, name, ev in RESULTS:
