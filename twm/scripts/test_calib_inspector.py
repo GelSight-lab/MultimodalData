@@ -82,6 +82,10 @@ def main() -> int:
     url = (root / "index.html").resolve().as_uri()
 
     got, errs = asyncio.run(probe(url, calls))
+    # Bound to its own name: `got` gets reused further down for a pixel
+    # centroid, and a later block silently zipped a 2-element array against a
+    # 60-element list.
+    BASE = list(got)
     bad, n_ok = [], 0
     for (i, v, s), g in zip(calls, got):
         want = project_gel_frame(d["frames"][i]["pose"][s], cal[f"gel_{s}"],
@@ -368,6 +372,58 @@ def main() -> int:
     check(not bad6, "axis colours match the published preview overlay",
           f"{' '.join(order)} — same mapping as viz.AXIS_BGR_RGB"
           + (f"; {bad6}" if bad6 else ""))
+
+    # THE FRAME-OFFSET CONTROL USES THE NEIGHBOURING ROW'S POSE. Not "moves
+    # the marker" — any slider does that. It must reproduce the library's
+    # answer for the pose at row + k, or it is a nudge dressed up as a timing
+    # experiment.
+    async def shifted(url, k):
+        from playwright.async_api import async_playwright
+        async with async_playwright() as pw:
+            b = await pw.chromium.launch(); pg = await b.new_page()
+            await pg.goto(url, wait_until="load")
+            await pg.wait_for_function("() => typeof window.__probe === 'function'")
+            await pg.eval_on_selector(
+                "#fon", f"e => {{ e.value = {k}; e.dispatchEvent(new Event('input')); }}")
+            out = [await pg.evaluate(f"window.__probe({i}, '{v}', '{s_}')")
+                   for i, v, s_ in calls]
+            lbl = await pg.inner_text("#foms")
+            await b.close()
+            return out, lbl
+
+    import pyarrow.parquet as pq
+    REL = Path("/media/yxma/Disk1/twm/release_force/motherboard/meta")
+    bad7, n7, moved7 = [], 0, []
+    for k in (+4, -7):
+        got7, lbl = asyncio.run(shifted(url, k))
+        for (i, v, s_), g in zip(calls, got7):
+            fr = d["frames"][i]
+            t = pq.read_table(REL/d["date"]/f"{fr['episode']}.parquet",
+                              columns=[f"sensor_{s_}_pose"]).to_pydict()
+            pose_k = np.asarray([x for x in t[f"sensor_{s_}_pose"]], float)[fr["row"]+k]
+            want = project_gel_frame(pose_k, cal[f"gel_{s_}"], cal["cams"][v])
+            if want is None or g is None:
+                continue
+            n7 += 1
+            e = float(np.hypot(g[0]-want["centre"][0], g[1]-want["centre"][1]))
+            if e > TOL_PX:
+                bad7.append(f"k={k} f{i}/{v}/{s_}: {e:.2f} px")
+        moved7 += [float(np.hypot(x[0]-y[0], x[1]-y[1]))
+                   for x, y in zip(BASE, got7) if x and y]
+    check(not bad7 and n7 == 2*len(calls),
+          "the frame-offset control uses the neighbouring row's pose",
+          f"{n7}/{2*len(calls)} match the library for the pose at row+k "
+          f"(k = +4 and -7); marker moves {min(moved7):.0f}-{max(moved7):.0f} px"
+          + (f"; worst {bad7[:3]}" if bad7 else ""))
+
+    # ...and its label states this episode's OWN period, not an assumed 30 Hz.
+    per = sorted({f["period_ms"] for f in d["frames"]})
+    _, lbl4 = asyncio.run(shifted(url, 4))
+    want_ms = f"{4*per[0]:.0f}"
+    check(want_ms in lbl4 and abs(per[0] - 33.5) > 5,
+          "the offset is labelled in this session's real milliseconds",
+          f"period {per} ms ({1000/per[0]:.1f} Hz, not 30); +4 frames reads "
+          f"{lbl4!r}")
 
     w = max(len(x) for _, x, _ in RESULTS)
     print()

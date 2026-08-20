@@ -54,6 +54,7 @@ VIEWS = ("left", "middle", "right")
 WORLD_RANGE_MM = 300
 GEL_RANGE_MM = 100
 ROT_RANGE_DEG = 10
+FRAME_RANGE = 10          # +/- rows of pose-vs-image offset the control spans
 
 # THE MEASURED RESIDUAL ROTATION of 2026-05-19's world frame, as a rotation
 # VECTOR in degrees (axis * angle), applied about the mocap origin.
@@ -122,6 +123,7 @@ def main() -> int:
                             world_offset_m("motherboard", args.date, BATCHES[args.batch][0][0])],
         "world_range_mm": WORLD_RANGE_MM, "gel_range_mm": GEL_RANGE_MM,
         "rot_range_deg": ROT_RANGE_DEG, "tilt_fix_deg": TILT_FIX_DEG,
+        "frame_range": FRAME_RANGE,
         "frames": [],
     }
 
@@ -129,8 +131,25 @@ def main() -> int:
         p = REL / args.date / f"{ep}.parquet"
         t = pq.read_table(p).to_pydict()
         trim = int(np.asarray(t["source_h5_frame"])[0])
+        ts = np.asarray(t["timestamp"], float)
+        n_rows = len(ts)
+        # THIS EPISODE'S OWN FRAME PERIOD, not an assumed 30 Hz. 2026-05-19 was
+        # recorded at 11.7-12.6 Hz while every other date is 29.9 Hz, so a
+        # one-frame offset means 86 ms there and 33 ms elsewhere. A control
+        # labelled only in frames would mean different things on different tabs.
+        period_ms = float(np.median(np.diff(ts))) * 1000.0
+        ks = list(range(-FRAME_RANGE, FRAME_RANGE + 1))
+        seq, dts = {}, []
+        for sd in ("left", "right"):
+            P = np.asarray([y for y in t[f"sensor_{sd}_pose"]], float)
+            seq[sd] = [([float(x) for x in P[row + k]]
+                        if 0 <= row + k < n_rows else None) for k in ks]
+        dts = [(round((ts[row + k] - ts[row]) * 1000.0, 1)
+                if 0 <= row + k < n_rows else None) for k in ks]
         rec = {"episode": ep, "row": row, "h5_frame": trim + row,
-               "t_s": round(row / 30.0, 2), "img": {},
+               "t_s": round(float(ts[row] - ts[0]), 2), "img": {},
+               "period_ms": round(period_ms, 1),
+               "pose_seq": seq, "dt_ms": dts,
                "pose": {s: [float(x) for x in
                             np.asarray([y for y in t[f"sensor_{s}_pose"]], float)[row]]
                         for s in ("left", "right")},
@@ -208,6 +227,13 @@ dialog::backdrop{background:rgba(0,0,0,.8)}
 <p>__N__ timestamps &times; 3 camera views. The overlay is computed in this page from the
 published pose, <code>T_mocap_to_cam</code> and <code>gel_center_in_rigid_mm</code> &mdash; the same
 numbers the library uses &mdash; so the sliders below move every tile at once.</p>
+<p><b>Pose and image are the same instant by construction.</b>
+<code>source_h5_frame == trim + row</code> exactly, and the parquet timestamp equals
+the displayed camera frame's timestamp to <b>0.0000&nbsp;ms</b>, on all four episodes
+checked. A timestamp cannot reveal a constant capture latency, though, so the
+<i>pose vs image</i> control shifts the pose by whole frames. Note the period: this
+session ran at <b>11.7&ndash;12.6&nbsp;Hz</b> while every other date is 29.9&nbsp;Hz,
+so one frame here is ~86&nbsp;ms, not 33.</p>
 <p><b>Measured, and it is a rotation.</b> The board lies on the same physical table
 every session, so its normal in world coordinates must agree across dates:
 05&#8209;10 vs 05&#8209;11 is 0.29&deg; (that is the reproducibility), while 05&#8209;19
@@ -241,6 +267,10 @@ rotates and does not touch the other hand. Camera reprojection rmse is __RMSE__&
 <label>x<input type="range" id="gx" min="-__GR__" max="__GR__" step="1" value="0"><input type="number" class="num" id="gxn" value="0"></label>
 <label>y<input type="range" id="gy" min="-__GR__" max="__GR__" step="1" value="0"><input type="number" class="num" id="gyn" value="0"></label>
 <label>z<input type="range" id="gz" min="-__GR__" max="__GR__" step="1" value="0"><input type="number" class="num" id="gzn" value="0"></label>
+</div>
+<div class="grp"><b>pose vs image: shift the POSE by whole frames</b>
+<label><input type="range" id="fo" min="-__FR__" max="__FR__" step="1" value="0"><input type="number" class="num" id="fon" value="0"></label>
+<span id="foms" style="color:var(--dim);font-size:12px"></span>
 </div>
 <div class="grp"><b>world rotation about the mocap origin (deg) &mdash; rotation vector</b>
 <label>x<input type="range" id="rx" min="-__RR__" max="__RR__" step="0.05" value="0"><input type="number" class="num" id="rxn" value="0" step="0.05"></label>
@@ -281,7 +311,7 @@ function project(Xw, cam){               // world mm -> pixel
   if(c[2]<=1) return null;
   return [cam.fx*c[0]/c[2]+cam.ppx, cam.fy*c[1]/c[2]+cam.ppy, c[2]];
 }
-const KEYS=["wx","wy","wz","gx","gy","gz","rx","ry","rz"];
+const KEYS=["wx","wy","wz","gx","gy","gz","rx","ry","rz","fo"];
 function rodrigues(dv){                  // rotation vector in DEGREES -> matrix
   const th=Math.hypot(dv[0],dv[1],dv[2])*Math.PI/180;
   if(th<1e-12) return [[1,0,0],[0,1,0],[0,0,1]];
@@ -299,11 +329,17 @@ function setVal(k,v){document.getElementById(k+"n").value=v;
 function S(){return {
   ov:ov.checked, L:sL.checked, R:sR.checked, ax:ax.checked, st:st.checked, gh:gh.checked,
   world:[val("wx"),val("wy"),val("wz")], side:gs.value,
-  rot:[val("rx"),val("ry"),val("rz")],
+  rot:[val("rx"),val("ry"),val("rz")], fo:Math.round(val("fo")),
   gel:[val("gx"),val("gy"),val("gz")]};}
 
 function points(fr, side, view, s, useDelta){
-  const cam=D.cams[view], p=fr.pose[side];
+  const cam=D.cams[view];
+  // The pose used for THIS tile, optionally taken from a neighbouring row.
+  // Timestamps say the pairing is exact (parquet ts == camera frame ts to
+  // 0.0000 ms, and source_h5_frame == trim + row), but a timestamp cannot
+  // reveal a constant capture latency, so the offset is left adjustable.
+  const k=(useDelta? s.fo:0)+D.frame_range;
+  const p=(fr.pose_seq && fr.pose_seq[side] && fr.pose_seq[side][k]) || fr.pose[side];
   let R=quatMat(p.slice(3,7));
   const wd = useDelta ? s.world : [0,0,0];
   const rv = useDelta ? s.rot : [0,0,0];
@@ -368,6 +404,10 @@ function build(){
 }
 function redraw(){
   const s=S();
+  const per=[...new Set(D.frames.map(f=>f.period_ms))];
+  const ms=per.map(v=>(s.fo*v).toFixed(0)).join(" / ");
+  document.getElementById("foms").textContent =
+    s.fo===0 ? `0 frames (period ${per.join(" / ")} ms)` : `${s.fo>0?"+":""}${s.fo} frames = ${ms} ms`;
   cvs.forEach(o=>drawOn(o.cv,o.fr,o.view,s,1));
   if(dlg.open&&dlg._fr) drawZoom();
 }
@@ -405,6 +445,7 @@ window.__probe=(i,view,side)=>{const r=points(D.frames[i],side,view,S(),true);
         .replace("__WR__", str(d["world_range_mm"])) \
         .replace("__GR__", str(d["gel_range_mm"])) \
         .replace("__RR__", str(d["rot_range_deg"])) \
+        .replace("__FR__", str(d["frame_range"])) \
         .replace("__WOFF__", ", ".join(f"{v:g}" for v in d["world_offset_mm"]))
 
 
