@@ -382,7 +382,7 @@ rotates and does not touch the other hand. Camera reprojection rmse is __RMSE__&
 <label><input type="range" id="fo" min="-__FR__" max="__FR__" step="1" value="0"><input type="number" class="num" id="fon" value="0"></label>
 <span id="foms" style="color:var(--dim);font-size:12px"></span>
 </div>
-<div class="grp"><b>world rotation about the mocap origin (deg) &mdash; rotation vector</b>
+<div class="grp"><b>world rotation about the RAW mocap origin (deg) &mdash; rotation vector</b>
 <label>x<input type="range" id="rx" min="-__RR__" max="__RR__" step="0.05" value="0"><input type="number" class="num" id="rxn" value="0" step="0.05"></label>
 <label>y<input type="range" id="ry" min="-__RR__" max="__RR__" step="0.05" value="0"><input type="number" class="num" id="ryn" value="0" step="0.05"></label>
 <label>z<input type="range" id="rz" min="-__RR__" max="__RR__" step="0.05" value="0"><input type="number" class="num" id="rzn" value="0" step="0.05"></label>
@@ -458,10 +458,24 @@ function points(fr, side, view, s, useDelta){
   // A world-frame correction is a RIGID transform about the mocap origin:
   // it turns the orientation as well as moving the position. Rotating only
   // the position would be a different, unphysical thing.
-  const Rd=rodrigues(rv);
-  const pw=mv(Rd,[p[0]*1000,p[1]*1000,p[2]*1000]);
+  // PIVOT ON THE RAW MOCAP ORIGIN, not on the published one.
+  //
+  // The published 2026-05-19 poses already carry the baked translation t =
+  // (230, 0, 175) mm. The true relation is p_pre = R p_raw + t_true, so
+  // rotating the PUBLISHED pose computes R(p_raw + t) = R p_raw + R t and
+  // drags the baked translation through the rotation with it. Measured, that
+  // spurious term is R t - t = (-0.1, -11.5, -0.3) mm — 11.5 mm of pure
+  // artefact that the world-offset slider then had to cancel, so part of any
+  // translation dialled in here was correcting the tool, not the rig.
+  //
+  // Undo t, rotate about the raw origin, put t back. R = identity leaves the
+  // pose exactly unchanged, and on a pre-reset page t is zero so nothing
+  // changes at all.
+  const Rd=rodrigues(rv), T=D.world_offset_mm;
+  const raw=[p[0]*1000-T[0], p[1]*1000-T[1], p[2]*1000-T[2]];
+  const pw=mv(Rd,raw);
   R=mm(Rd,R);
-  const org=[pw[0]+wd[0], pw[1]+wd[1], pw[2]+wd[2]];
+  const org=[pw[0]+T[0]+wd[0], pw[1]+T[1]+wd[1], pw[2]+T[2]+wd[2]];
   const gel=D.gel[side].map((v,i)=>v+gd[i]);
   const add=(a,b)=>[a[0]+b[0],a[1]+b[1],a[2]+b[2]];
   const out={centre:project(add(org,mv(R,gel)),cam), origin:project(org,cam), tips:[]};

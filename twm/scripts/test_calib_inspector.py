@@ -243,11 +243,15 @@ def main() -> int:
             return out
     RV = np.asarray(d["tilt_fix_deg"], float)
     Rd = Rotation.from_rotvec(np.radians(RV))
+    T_baked = np.asarray(d["world_offset_mm"], float) / 1000.0
     got5 = asyncio.run(rotated(url, RV))
     bad5, n5 = [], 0
     for (i, v, s_), g in zip(calls, got5):
         p_ = np.asarray(d["frames"][i]["pose"][s_], float).copy()
-        q = np.concatenate([Rd.apply(p_[:3]),
+        # rotate about the RAW mocap origin: undo the baked offset, rotate,
+        # put it back. Rotating the published pose instead drags the baked
+        # translation through R and adds a spurious 11.5 mm.
+        q = np.concatenate([Rd.apply(p_[:3] - T_baked) + T_baked,
                             (Rd * Rotation.from_quat(p_[3:7])).as_quat()])
         want = project_gel_frame(q, cal[f"gel_{s_}"], cal["cams"][v])
         if want is None or g is None:
@@ -258,7 +262,7 @@ def main() -> int:
             bad5.append(f"f{i}/{v}/{s_}: {e:.2f} px")
     moved5 = [float(np.hypot(a[0]-b[0], a[1]-b[1])) for a, b in zip(got, got5) if a and b]
     check(not bad5 and n5 == len(calls),
-          "the rotation control applies a full rigid transform",
+          "the rotation pivots on the RAW mocap origin",
           f"{n5}/{len(calls)} match scipy rotating BOTH position and "
           f"orientation; the measured tilt moves the marker "
           f"{min(moved5):.0f}-{max(moved5):.0f} px"
