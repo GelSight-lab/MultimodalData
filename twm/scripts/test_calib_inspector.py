@@ -425,6 +425,35 @@ def main() -> int:
           f"period {per} ms ({1000/per[0]:.1f} Hz, not 30); +4 frames reads "
           f"{lbl4!r}")
 
+    # THE FRAMES ARE ACTUALLY QUIET. This is the check that was missing when
+    # five rows were picked by eye: they turned out to run 5.9-21.9 mm/frame
+    # against a session 10th percentile near 1 mm/frame, and nothing said so.
+    # Scored against the session's OWN distribution, not an absolute number,
+    # because "slow" only means anything relative to how this session moved.
+    from scipy.spatial.transform import Rotation
+    allsp = []
+    for pth in sorted((REL / d["date"]).glob("*.parquet")):
+        tt = pq.read_table(pth).to_pydict()
+        O = np.asarray([x for x in tt["object_pose"]], float)
+        cols = []
+        for sd in ("left", "right"):
+            S = np.asarray([x for x in tt[f"sensor_{sd}_pose"]], float)
+            m = np.isfinite(S).all(1) & (np.linalg.norm(S[:, 3:], axis=1) > .5)
+            R = Rotation.from_quat(np.where(m[:, None], S[:, 3:7], [0, 0, 0, 1.])).as_matrix()
+            g = S[:, :3]*1000.0 + np.einsum("nij,j->ni", R, cal[f"gel_{sd}"])
+            cols.append(np.r_[0, np.linalg.norm(np.diff(g, axis=0), axis=1)])
+        cols.append(np.r_[0, np.linalg.norm(np.diff(O[:, :3]*1000.0, axis=0), axis=1)])
+        w7 = np.ones(7)/7
+        allsp.append(np.stack([np.convolve(c, w7, "same") for c in cols]).max(0))
+    allsp = np.concatenate(allsp)
+    q = [f["quiet_mm_per_frame"] for f in d["frames"]]
+    pct = [float((allsp < v).mean()*100) for v in q]
+    eps = len({f["episode"] for f in d["frames"]})
+    check(max(pct) <= 25.0 and eps >= 3,
+          "the sampled frames are in the session's quietest quarter",
+          f"{min(q):.2f}-{max(q):.2f} mm/frame = session p{min(pct):.0f}-p{max(pct):.0f} "
+          f"(want <= p25), drawn from {eps} episodes")
+
     w = max(len(x) for _, x, _ in RESULTS)
     print()
     for ok, name, ev in RESULTS:

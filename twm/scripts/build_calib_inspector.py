@@ -85,17 +85,82 @@ FRAME_RANGE = 10          # +/- rows of pose-vs-image offset the control spans
 # degrees of freedom. Yaw about that normal is NOT determined by it.
 TILT_FIX_DEG = [3.598, -0.018, -0.126]
 
-BATCHES = {
-    "a": [("episode_000", 657), ("episode_000", 180), ("episode_000", 520),
-          ("episode_000", 900), ("episode_000", 1290)],
-    "b": [("episode_001", 400), ("episode_002", 300), ("episode_002", 950),
-          ("episode_003", 600), ("episode_004", 750)],
-}
+# FRAMES ARE CHOSEN BY MEASURED QUIETNESS, not by hand.
+#
+# The first version used five rows I picked by eye. Measured afterwards they ran
+# at 5.9-21.9 mm per frame while this session's 10th percentile is about 1 mm
+# per frame — 5 to 20 times faster than its quiet moments. That is the wrong
+# test twice over at 11.7 Hz: a fast frame smears the sensor's edges over
+# exactly the distance being judged, and it turns any residual capture latency
+# into apparent misalignment in proportion to speed, so it cannot separate a
+# calibration error from a timing one.
+#
+# Score = the WORST of the two sensors and the board, averaged over +/-3 rows.
+# Worst, because a still hand beside a moving board is not a still scene;
+# averaged, because a single frame can be quiet between two fast ones by luck.
+QUIET_WINDOW = 3
+MIN_ROW_GAP = 60          # so five "quiet" frames are not one quiet second
+MAX_PER_EPISODE = 2
+
+
+def _quiet_rows(date: str, cal, n_wanted: int, skip: int, margin_px=25.0):
+    """The `n_wanted` quietest usable rows on `date`, after skipping `skip`.
+
+    Usable = both sensors tracked, the row window +/-FRAME_RANGE exists (the
+    pose-offset control needs it), and both gel centres project inside the
+    middle view with a margin.
+    """
+    from react_toolbox.calibration import project_gel_to_pixel
+    from scipy.spatial.transform import Rotation
+
+    cand = []
+    for p in sorted((REL / date).glob("*.parquet")):
+        t = pq.read_table(p).to_pydict()
+        O = np.asarray([x for x in t["object_pose"]], float)
+        n = len(O)
+        sp, ok = [], np.ones(n, bool)
+        for sd in ("left", "right"):
+            S = np.asarray([x for x in t[f"sensor_{sd}_pose"]], float)
+            ok &= np.isfinite(S).all(1) & (np.linalg.norm(S[:, 3:], axis=1) > .5)
+            R = Rotation.from_quat(np.where(ok[:, None], S[:, 3:7], [0, 0, 0, 1.])).as_matrix()
+            g = S[:, :3]*1000.0 + np.einsum("nij,j->ni", R, cal[f"gel_{sd}"])
+            sp.append(np.r_[0, np.linalg.norm(np.diff(g, axis=0), axis=1)])
+        ok &= np.isfinite(O).all(1) & (np.linalg.norm(O[:, 3:], axis=1) > .5)
+        sp.append(np.r_[0, np.linalg.norm(np.diff(O[:, :3]*1000.0, axis=0), axis=1)])
+        w = 2*QUIET_WINDOW + 1
+        sm = np.stack([np.convolve(x, np.ones(w)/w, "same") for x in sp]).max(0)
+        K = cal["cams"]["middle"]["intrinsics"]
+        for r in np.argsort(sm):
+            r = int(r)
+            if not ok[r] or r < FRAME_RANGE or r >= n - FRAME_RANGE:
+                continue
+            good = True
+            for sd in ("left", "right"):
+                S = np.asarray([x for x in t[f"sensor_{sd}_pose"]], float)[r]
+                uv = project_gel_to_pixel(S, cal[f"gel_{sd}"], cal["cams"]["middle"])
+                if uv is None or not (margin_px <= uv[0] < 640-margin_px
+                                      and margin_px <= uv[1] < 480-margin_px):
+                    good = False; break
+            if good:
+                cand.append((float(sm[r]), p.stem, r))
+            if len(cand) > 400:
+                break
+    cand.sort()
+    out, per = [], {}
+    for q, ep, r in cand:
+        if per.get(ep, 0) >= MAX_PER_EPISODE:
+            continue
+        if any(e == ep and abs(r - rr) < MIN_ROW_GAP for _, e, rr in out):
+            continue
+        out.append((q, ep, r)); per[ep] = per.get(ep, 0) + 1
+        if len(out) >= skip + n_wanted:
+            break
+    return out[skip:skip + n_wanted]
 
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--batch", default="a", choices=sorted(BATCHES))
+    ap.add_argument("--batch", default="a", choices=("a", "b"))
     ap.add_argument("--date", default="2026-05-19")
     ap.add_argument("--out", default="/media/yxma/Disk1/twm/calib_inspector")
     args = ap.parse_args()
@@ -105,6 +170,13 @@ def main() -> int:
     stage = Path(tempfile.mkdtemp())
     shutil.copytree(calib_dir("motherboard"), stage / "calibration")
     cal = load_calibration(stage)
+    # Batch A is the quietest five; B the next five, held back so a correction
+    # settled on A is checked against frames it was not chosen on.
+    chosen = _quiet_rows(args.date, cal, 5, 0 if args.batch == "a" else 5)
+    print(f"batch {args.batch}: quietest rows on {args.date}")
+    for q, ep, r in chosen:
+        print(f"   {ep} row {r:5d}   {q:5.2f} mm/frame (worst of L/R/board, "
+              f"mean over +/-{QUIET_WINDOW})")
     raw = {s: json.loads((calib_dir("motherboard") / f"T_gel_to_rigid_{s}.json").read_text())
            for s in ("left", "right")}
 
@@ -120,14 +192,14 @@ def main() -> int:
         "refball": {s: raw[s]["refball_center_in_rigid_mm"] for s in ("left", "right")},
         "gel_axis": {s: raw[s]["gel_axis_in_rigid"] for s in ("left", "right")},
         "world_offset_mm": [round(v*1000.0, 1) for v in
-                            world_offset_m("motherboard", args.date, BATCHES[args.batch][0][0])],
+                            world_offset_m("motherboard", args.date, chosen[0][1])],
         "world_range_mm": WORLD_RANGE_MM, "gel_range_mm": GEL_RANGE_MM,
         "rot_range_deg": ROT_RANGE_DEG, "tilt_fix_deg": TILT_FIX_DEG,
         "frame_range": FRAME_RANGE,
         "frames": [],
     }
 
-    for ep, row in BATCHES[args.batch]:
+    for quiet, ep, row in chosen:
         p = REL / args.date / f"{ep}.parquet"
         t = pq.read_table(p).to_pydict()
         trim = int(np.asarray(t["source_h5_frame"])[0])
@@ -147,6 +219,7 @@ def main() -> int:
         dts = [(round((ts[row + k] - ts[row]) * 1000.0, 1)
                 if 0 <= row + k < n_rows else None) for k in ks]
         rec = {"episode": ep, "row": row, "h5_frame": trim + row,
+               "quiet_mm_per_frame": round(quiet, 2),
                "t_s": round(float(ts[row] - ts[0]), 2), "img": {},
                "period_ms": round(period_ms, 1),
                "pose_seq": seq, "dt_ms": dts,
@@ -227,6 +300,13 @@ dialog::backdrop{background:rgba(0,0,0,.8)}
 <p>__N__ timestamps &times; 3 camera views. The overlay is computed in this page from the
 published pose, <code>T_mocap_to_cam</code> and <code>gel_center_in_rigid_mm</code> &mdash; the same
 numbers the library uses &mdash; so the sliders below move every tile at once.</p>
+<p><b>Chosen for stillness.</b> These are the quietest usable rows of the session,
+scored by the worst of the two sensors and the board averaged over &plusmn;3 rows.
+The first version used five rows picked by eye; measured afterwards they ran at
+5.9&ndash;21.9&nbsp;mm per frame against a 10th percentile of about
+1&nbsp;mm. At 11.7&nbsp;Hz a fast frame smears the sensor edges over the very
+distance being judged, and turns any residual latency into apparent
+misalignment &mdash; so it cannot separate a calibration error from a timing one.</p>
 <p><b>Pose and image are the same instant by construction.</b>
 <code>source_h5_frame == trim + row</code> exactly, and the parquet timestamp equals
 the displayed camera frame's timestamp to <b>0.0000&nbsp;ms</b>, on all four episodes
