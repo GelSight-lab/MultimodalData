@@ -164,3 +164,96 @@ def describe(task: str, date: str, episode: str) -> str:
     if any((dx, dy, dz)):
         s += f" world+({dx:g},{dy:g},{dz:g})m"
     return s
+
+# ── the world frame each session is in, as a FULL RIGID TRANSFORM ───────────
+#
+# WHY THIS REPLACES A BARE OFFSET.
+#
+# Re-running an OptiTrack calibration changes the world frame by a rigid
+# transform, rotation included. The release corrected 2026-05-19 with a
+# TRANSLATION ONLY, (230, 0, 175) mm, so its rotation went uncorrected — and
+# every self-consistency check in this project is invariant to a shared world
+# transform, which is why none of them caught it. A three-number offset cannot
+# express the thing it is correcting.
+#
+# REFERENCE FRAME: 2026-05-10. Named, so "aligned" has a referent. Every other
+# session declares the transform onto it, and future motherboard sessions must
+# do the same rather than adding a fourth convention.
+#
+# HOW IT WAS MEASURED. The board lies on the same physical table every session,
+# so the table normal in world coordinates is an invariant:
+#
+#     n_date = median over frames of  R_obj @ n_local
+#     n_local = smallest singular vector of the contact cloud (force > 2 N)
+#               expressed in the board's OWN frame
+#
+# The board frame matters: the board is picked up and tilted (median 3.3-4.2
+# deg off its own median), so fitting a plane to WORLD contacts measures the
+# board's average pose, not the table. Two attempts at that gave 3.24 and
+# 3.76 deg between 05-10 and 05-11 — dates the board-frame method puts at
+# 0.29 deg — and both were discarded.
+#
+#     05-11 vs 05-10   0.29 deg   <- the reproducibility floor
+#     05-19 vs 05-10   3.38 deg
+#
+# stable across quiet-frame thresholds (3.41 / 3.49 / 3.44 / 3.24 / 2.96 deg
+# for the quietest 100 / 50 / 25 / 10 / 5 %).
+#
+# WHAT IS NOT DETERMINED, AND IS THEREFORE NOT INVENTED HERE. A plane normal
+# fixes two rotational degrees of freedom. Yaw about that normal, and the two
+# in-plane translations, are invisible to it — verified: composing the fix with
+# any spin about the normal still aligns the normals exactly. The height along
+# the normal is measurable but marginal (+3.8 mm against a 1.5 mm floor), so it
+# is recorded and NOT applied.
+#
+# PIVOT. The rotation is applied about the WORKSPACE CENTROID, not the mocap
+# origin. Both are valid rigid transforms and they differ by a translation —
+# the one degree of freedom that is undetermined. Pivoting where the data
+# actually is leaves the in-plane position of the workspace unchanged, so the
+# correction alters orientation without moving what was already right.
+WORLD_REF_DATE = "2026-05-10"
+
+WORLD_TRANSFORM = {
+    # date: (rotation vector in DEGREES onto the reference frame,
+    #        pivot in that session's own world mm, note)
+    # Pivot is the MEDIAN CONTACT POSITION IN WORLD MILLIMETRES. My first
+    # value was [363.1, 9.0, -362.2], lifted from a printout where those were
+    # projections onto a rotated basis (e1, e2, n) rather than world xyz — the
+    # z sign was even flipped. It moved the workspace 41 mm, which the
+    # "does not move the workspace" check caught.
+    "2026-05-19": ([3.376, -0.017, -0.118], [363.2, 22.8, 364.0],
+                   "tilt only; yaw and in-plane translation undetermined"),
+}
+# Sessions absent from the table are already in the reference frame to within
+# the 0.29 deg / 1.5 mm floor and get the identity.
+
+WORLD_RESIDUAL = {
+    "2026-05-19": {"tilt_deg": 0.29, "height_mm": 3.8,
+                   "yaw_deg": None, "in_plane_mm": None},
+}
+
+
+def world_transform(task: str, date: str):
+    """(R, t) taking `date`'s world frame onto WORLD_REF_DATE's, in mm.
+
+    Returns numpy arrays; the identity for any session not in the table. Apply
+    as `p_ref = R @ p_session + t`, positions in MILLIMETRES, and rotate the
+    orientation by the same R.
+    """
+    import numpy as _np
+    from scipy.spatial.transform import Rotation as _R
+    if task != "motherboard" or date not in WORLD_TRANSFORM:
+        return _np.eye(3), _np.zeros(3)
+    rv, pivot, _ = WORLD_TRANSFORM[date]
+    R = _R.from_rotvec(_np.radians(_np.asarray(rv, float))).as_matrix()
+    c = _np.asarray(pivot, float)
+    return R, c - R @ c
+
+
+def world_residual(task: str, date: str) -> dict:
+    """What the transform does NOT fix, so a consumer can bound their error."""
+    if task != "motherboard":
+        return {}
+    return dict(WORLD_RESIDUAL.get(date, {"tilt_deg": 0.29, "height_mm": 1.5,
+                                          "yaw_deg": None, "in_plane_mm": None}))
+
