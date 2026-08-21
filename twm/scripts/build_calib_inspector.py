@@ -206,7 +206,7 @@ def main() -> int:
         ts = np.asarray(t["timestamp"], float)
         n_rows = len(ts)
         # THIS EPISODE'S OWN FRAME PERIOD, not an assumed 30 Hz. 2026-05-19 was
-        # recorded at 11.7-12.6 Hz while every other date is 29.9 Hz, so a
+        # recorded at 11.7-23.5 Hz (it varies between its own episodes) while
         # one-frame offset means 86 ms there and 33 ms elsewhere. A control
         # labelled only in frames would mean different things on different tabs.
         period_ms = float(np.median(np.diff(ts))) * 1000.0
@@ -312,8 +312,9 @@ misalignment &mdash; so it cannot separate a calibration error from a timing one
 the displayed camera frame's timestamp to <b>0.0000&nbsp;ms</b>, on all four episodes
 checked. A timestamp cannot reveal a constant capture latency, though, so the
 <i>pose vs image</i> control shifts the pose by whole frames. Note the period: this
-session ran at <b>11.7&ndash;12.6&nbsp;Hz</b> while every other date is 29.9&nbsp;Hz,
-so one frame here is ~86&nbsp;ms, not 33.</p>
+session ran at <b>11.7&ndash;23.5&nbsp;Hz</b>, varying between its OWN episodes
+(85.7 / 83.4 / 79.5 / 42.6&nbsp;ms), while every other date is a steady 29.9&nbsp;Hz.
+One frame here is 43&ndash;86&nbsp;ms, not 33, so the control is labelled per episode.</p>
 <p><b>Measured, and it is a rotation.</b> The board lies on the same physical table
 every session, so its normal in world coordinates must agree across dates:
 05&#8209;10 vs 05&#8209;11 is 0.29&deg; (that is the reproducibility), while 05&#8209;19
@@ -467,7 +468,10 @@ function build(){
   D.frames.forEach((fr,i)=>{
     const sec=document.createElement("section");
     sec.innerHTML=`<h2>t${i+1} &mdash; ${fr.episode}, row ${fr.row} (h5 frame ${fr.h5_frame}, `
-      +`t=${fr.t_s}s) &nbsp; force L ${fr.force.left} N / R ${fr.force.right} N</h2>`;
+      +`t=${fr.t_s}s, ${(1000/fr.period_ms).toFixed(1)} Hz) &nbsp; `
+      +`force L ${fr.force.left} N / R ${fr.force.right} N`
+      +`<span style="color:var(--dim);font-weight:400"> &nbsp; motion `
+      +`${fr.quiet_mm_per_frame} mm/frame</span></h2>`;
     const gr=document.createElement("div"); gr.className="grid";
     VIEWS.forEach(v=>{
       const f=document.createElement("figure");
