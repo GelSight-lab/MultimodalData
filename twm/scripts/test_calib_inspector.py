@@ -142,7 +142,8 @@ def main() -> int:
     woff = np.asarray(d["world_offset_mm"], float)
     reach = float(np.max(np.abs(woff)))
     check(d["world_range_mm"] >= reach,
-          "the world control reaches this date's own offset",
+          "the world control reaches this date's own offset"
+          + (" (zero here)" if not np.any(woff) else ""),
           f"slider spans +/-{d['world_range_mm']} mm; the offset baked into "
           f"{d['date']} is {list(woff)} mm (needs {reach:g})")
 
@@ -158,7 +159,28 @@ def main() -> int:
                    for i, v, s_ in calls]
             await b.close()
             return got
-    got3 = asyncio.run(preset(url))
+    # On a pre-reset page the world offset is zero, so the presets are disabled
+    # on purpose. Clicking them would hang; asserting they are inert is the
+    # right check there, because a dead control that looks live reads as
+    # "tried it, no effect".
+    if not np.any(woff):
+        async def inert(u):
+            from playwright.async_api import async_playwright
+            async with async_playwright() as pw:
+                b = await pw.chromium.launch(); pg = await b.new_page()
+                await pg.goto(u, wait_until="load")
+                await pg.wait_for_function("() => typeof window.__probe === 'function'")
+                r_ = await pg.evaluate(
+                    "({a:pAdd.disabled,b:pSub.disabled,n:wnote.textContent.trim()})")
+                await b.close()
+                return r_
+        z = asyncio.run(inert(url))
+        check(z["a"] and z["b"] and z["n"],
+              "a zero world offset disables its presets and says so",
+              f"buttons disabled {z['a']}/{z['b']}, note {z['n']!r}")
+        got3 = got
+    else:
+        got3 = asyncio.run(preset(url))
     bad3, n3 = [], 0
     for (i, v, s_), g in zip(calls, got3):
         p_ = np.asarray(d["frames"][i]["pose"][s_], float).copy()
@@ -171,7 +193,7 @@ def main() -> int:
         if e > TOL_PX:
             bad3.append(f"f{i}/{v}/{s_}: {e:.2f} px")
     moved3 = [float(np.hypot(a[0]-b[0], a[1]-b[1])) for a, b in zip(got, got3) if a and b]
-    check(not bad3 and n3 == len(calls),
+    check(not bad3 and n3 == len(calls) or not np.any(woff),
           "the preset applies exactly that offset",
           f"{n3}/{len(calls)} match the library for a pose shifted by the "
           f"published offset; it moves the marker "
@@ -417,13 +439,19 @@ def main() -> int:
           + (f"; worst {bad7[:3]}" if bad7 else ""))
 
     # ...and its label states this episode's OWN period, not an assumed 30 Hz.
+    # The label must state EVERY distinct period present, computed from the
+    # data. My first version also asserted the period was not 33.5 ms — true of
+    # 2026-05-19 and simply false of a 29.9 Hz session, so it failed the
+    # pre-reset page for being correct. The claim under test is "the label
+    # reports this session's own rate", not "this session is slow".
     per = sorted({f["period_ms"] for f in d["frames"]})
     _, lbl4 = asyncio.run(shifted(url, 4))
-    want_ms = f"{4*per[0]:.0f}"
-    check(want_ms in lbl4 and abs(per[0] - 33.5) > 5,
+    missing = [f"{4*v:.0f}" for v in per if f"{4*v:.0f}" not in lbl4]
+    check(not missing,
           "the offset is labelled in this session's real milliseconds",
-          f"period {per} ms ({1000/per[0]:.1f} Hz, not 30); +4 frames reads "
-          f"{lbl4!r}")
+          f"periods {per} ms ({', '.join(f'{1000/v:.1f}' for v in per)} Hz); "
+          f"+4 frames reads {lbl4!r}"
+          + (f"; missing {missing}" if missing else ""))
 
     # THE FRAMES ARE ACTUALLY QUIET. This is the check that was missing when
     # five rows were picked by eye: they turned out to run 5.9-21.9 mm/frame

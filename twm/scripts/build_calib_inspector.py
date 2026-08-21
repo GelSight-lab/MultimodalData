@@ -85,6 +85,22 @@ FRAME_RANGE = 10          # +/- rows of pose-vs-image offset the control spans
 # degrees of freedom. Yaw about that normal is NOT determined by it.
 TILT_FIX_DEG = [3.598, -0.018, -0.126]
 
+# THE PRE-RESET CONTROL. 2026-05-11 and 2026-05-10 were recorded before the
+# OptiTrack world was redefined, so they share the release's reference frame
+# and carry a zero world offset.
+#
+# Why a second page matters: a gel-offset error lives in the sensor's own rigid
+# frame and is a property of the SENSOR, so it must appear on every date. A
+# world-frame error is a property of the SESSION, so it appears only after the
+# reset. Dialling a gel correction on one date cannot tell those apart; the same
+# correction tried on both can.
+#
+# On a pre-reset page the 3.60 deg tilt is a NEGATIVE CONTROL: it was measured
+# as 05-19's departure from these dates, so applying it here should make things
+# worse. A correction that improves both pages was never about the reset.
+PRE_RESET_DATES = ("2026-05-11", "2026-05-10")
+POST_RESET_DATES = ("2026-05-19",)
+
 # FRAMES ARE CHOSEN BY MEASURED QUIETNESS, not by hand.
 #
 # The first version used five rows I picked by eye. Measured afterwards they ran
@@ -163,9 +179,11 @@ def main() -> int:
     ap.add_argument("--batch", default="a", choices=("a", "b"))
     ap.add_argument("--date", default="2026-05-19")
     ap.add_argument("--out", default="/media/yxma/Disk1/twm/calib_inspector")
+    ap.add_argument("--slug", default=None,
+                    help="output subdirectory; defaults to the batch letter")
     args = ap.parse_args()
 
-    out = Path(args.out) / args.batch
+    out = Path(args.out) / (args.slug or args.batch)
     (out / "img").mkdir(parents=True, exist_ok=True)
     stage = Path(tempfile.mkdtemp())
     shutil.copytree(calib_dir("motherboard"), stage / "calibration")
@@ -196,6 +214,7 @@ def main() -> int:
         "world_range_mm": WORLD_RANGE_MM, "gel_range_mm": GEL_RANGE_MM,
         "rot_range_deg": ROT_RANGE_DEG, "tilt_fix_deg": TILT_FIX_DEG,
         "frame_range": FRAME_RANGE,
+        "pre_reset": args.date in PRE_RESET_DATES,
         "frames": [],
     }
 
@@ -256,6 +275,11 @@ def _page(d: dict) -> str:
 *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);
 font:15px/1.55 'IBM Plex Sans',system-ui,sans-serif}
 .wrap{max-width:1500px;margin:0 auto;padding:26px 20px 70px}
+.nav{display:flex;gap:10px;margin-bottom:14px}
+.nav a{color:var(--dim);text-decoration:none;font-size:13px;padding:6px 12px;
+border:1px solid var(--line);border-radius:8px;background:var(--card)}
+.nav a:hover{border-color:var(--accent);color:var(--fg)}
+.which{border-left:3px solid var(--accent);padding-left:12px;margin:10px 0 18px}
 h1{font-size:26px;margin:0 0 6px}h2{font-size:16px;color:var(--accent);margin:26px 0 8px}
 p{color:var(--dim);max-width:74ch}
 .panel{position:sticky;top:0;z-index:9;background:rgba(11,16,32,.96);
@@ -296,7 +320,12 @@ dialog::backdrop{background:rgba(0,0,0,.8)}
 .zoomwrap img,.zoomwrap canvas{width:min(1200px,92vw);display:block;border-radius:6px}
 .zoomwrap canvas{position:absolute;inset:0}
 </style></head><body><div class="wrap">
+<div class="nav">
+<a href="../a/index.html">2026-05-19 &mdash; after the mocap reset</a>
+<a href="../pre/index.html">2026-05-11 &mdash; before the reset</a>
+</div>
 <h1>Calibration inspector &mdash; __DATE__, batch __BATCH__</h1>
+<p class="which">__WHICH__</p>
 <p>__N__ timestamps &times; 3 camera views. The overlay is computed in this page from the
 published pose, <code>T_mocap_to_cam</code> and <code>gel_center_in_rigid_mm</code> &mdash; the same
 numbers the library uses &mdash; so the sliders below move every tile at once.</p>
@@ -361,6 +390,7 @@ rotates and does not touch the other hand. Camera reprojection rmse is __RMSE__&
 </div>
 <div class="grp"><b>this date's own offset: __WOFF__ mm</b>
 <button id="pAdd">apply +once more</button><button id="pSub">undo it (&minus;)</button>
+<span id="wnote" style="color:var(--dim);font-size:12px"></span>
 <button id="reset">reset</button><button id="copy">copy settings</button></div>
 </div></div>
 <div id="tiles"></div>
@@ -519,6 +549,12 @@ document.getElementById("copy").onclick=()=>{
   setTimeout(()=>document.getElementById("copy").textContent="copy settings",1200);};
 document.querySelectorAll("input[type=checkbox],select").forEach(e=>{
   e.addEventListener("input",redraw);e.addEventListener("change",redraw);});
+if(!D.world_offset_mm.some(v=>v)){
+  // A zero offset means these buttons are inert. Say so, rather than letting
+  // a dead control read as "tried it, no effect".
+  pAdd.disabled=pSub.disabled=true;
+  document.getElementById("wnote").textContent=" (zero on this date — nothing to apply)";
+}
 build(); redraw();
 window.__probe=(i,view,side)=>{const r=points(D.frames[i],side,view,S(),true);
   return r.centre?[r.centre[0],r.centre[1]]:null;};
@@ -530,7 +566,21 @@ window.__probe=(i,view,side)=>{const r=points(D.frames[i],side,view,S(),true);
         .replace("__GR__", str(d["gel_range_mm"])) \
         .replace("__RR__", str(d["rot_range_deg"])) \
         .replace("__FR__", str(d["frame_range"])) \
-        .replace("__WOFF__", ", ".join(f"{v:g}" for v in d["world_offset_mm"]))
+        .replace("__WOFF__", ", ".join(f"{v:g}" for v in d["world_offset_mm"])) \
+        .replace("__WHICH__", (
+            "<b>Before the mocap reset.</b> This session shares the release's "
+            "reference frame and carries a zero world offset, so the offset "
+            "presets do nothing here &mdash; that is the point. A GEL error is a "
+            "property of the sensor and must show on this page too; a WORLD "
+            "error is a property of the 05-19 session and must not. The 3.60&deg; "
+            "tilt is a NEGATIVE CONTROL here: it was measured as 05-19's "
+            "departure from these dates, so it should make this page worse."
+            if d["pre_reset"] else
+            "<b>After the mocap reset.</b> This session's world origin was "
+            "redefined; the release patches it with a translation only, "
+            f"({', '.join(f'{v:g}' for v in d['world_offset_mm'])}) mm. Compare "
+            "any correction you dial in against the pre-reset page: a gel error "
+            "shows on both, a world error only here."))
 
 
 if __name__ == "__main__":
