@@ -55,6 +55,12 @@ class _H264Writer:
              "-f", "rawvideo", "-pix_fmt", "bgr24", "-s", f"{w}x{h}",
              "-r", str(fps), "-i", "-",
              "-an", "-vcodec", "libx264", "-pix_fmt", "yuv420p",
+             # BASELINE, level 3.0, no B-frames. libx264's default is High with
+             # B-frames, which modern desktops decode fine and older phones and
+             # Android WebViews do not. Desktop Chromium reported 640x480 and
+             # readyState 4 on the High-profile files, which is one device's
+             # evidence, not "it plays".
+             "-profile:v", "baseline", "-level", "3.0", "-bf", "0",
              "-preset", "veryfast", "-crf", "23",
              "-movflags", "+faststart", str(path)],
             stdin=subprocess.PIPE, stdout=subprocess.DEVNULL,
@@ -87,6 +93,7 @@ def render(frame_rgb, poses, cal, cam, out_mp4, hud, held_pose, held_gel,
     base = draw_sensor_frame(base, held_pose, held_gel, cam, stem=True,
                              dim=True, label="held")
     vw = _H264Writer(out_mp4, w, h, FPS)
+    poster = Path(str(out_mp4).replace(".mp4", ".jpg"))
     trail, n = [], 0
     for i, q in enumerate(np.asarray(poses, float)):
         img = base.copy()
@@ -104,6 +111,17 @@ def render(frame_rgb, poses, cal, cam, out_mp4, hud, held_pose, held_gel,
         cv2.rectangle(img, (0, 0), (w, 18), (0, 0, 0), -1)
         cv2.putText(img, f"{hud}  t={i/FPS:4.2f}s", (5, 13),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.40, (255, 255, 255), 1, cv2.LINE_AA)
+        if n == 0:
+            # A POSTER, so the page can show 72 stills without fetching 72
+            # videos. `preload="metadata"` on a grid this size means the phone
+            # opens 72 connections before anything is visible; WebKit here
+            # could not even finish `load` on the page for that reason.
+            # Half size: the tile is ~290 px wide in the grid, so a 640x480
+            # poster ships four times the pixels it can show. 72 of them is the
+            # page's whole first-paint cost on a phone.
+            small = cv2.resize(img[:, :, ::-1], (w // 2, h // 2),
+                               interpolation=cv2.INTER_AREA)
+            cv2.imwrite(str(poster), small, [cv2.IMWRITE_JPEG_QUALITY, 78])
         vw.write(img[:, :, ::-1]); n += 1
     vw.release()
     return n
@@ -170,7 +188,8 @@ def _page(out: Path, recs, man) -> None:
     secs = "".join(
         f"<h2>{name}</h2><div class='grid'>" + "".join(
             f"<figure><video src='{r['clip']}' controls loop muted playsinline "
-            f"preload='metadata'></video><figcaption>run{r['run']} &middot; "
+            f"poster='{r['clip'].replace('.mp4', '.jpg')}' preload='none'>"
+            f"</video><figcaption>run{r['run']} &middot; "
             f"{r['episode']}<br>{r['amplitude']:g}"
             f"{'m' if r['amplitude_unit']=='m' else '&deg;'} &middot; "
             f"{r['horizon_s']:.2f}s &middot; p{r['speed_percentile']:.0f} &middot; "
@@ -202,6 +221,8 @@ poses, held hand, context frame and calibration you download from
 Rendered from that package, not from a second sampling run, so a clip cannot
 drift from the data it illustrates. Static overlays and the method are on the
 <a href="../testset/index.html">test set page</a>.</p>
+<p><small style="color:var(--dim)">Each tile shows the first frame; tap or click
+to load and play. 72 videos preloading at once is what a phone chokes on.</small></p>
 <p>The background is <b>frozen on purpose</b>. The camera image at step k is
 unknown &mdash; that is the whole point of a probe &mdash; so animating anything
 but the sensors would be inventing pixels. What moves is the only thing known:

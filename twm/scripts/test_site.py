@@ -148,6 +148,10 @@ def main() -> int:
             await b.close()
             return r
 
+    # ...and on a phone viewport, where the failure was first reported. Linux
+    # WebKit here lacks the proprietary H.264 decoder real Safari has, so it
+    # cannot stand in for an iPhone; Chromium under a mobile device profile at
+    # least exercises the small-screen layout and the lazy-load path.
     vids = [(p_, v["vsrc"]) for p_, v in au.items() if v.get("vsrc")]
     vres = []
     for p_, src in vids:
@@ -168,7 +172,33 @@ def main() -> int:
           f"{len(gaps)} pages with overlays, worst image/canvas box mismatch "
           f"{worst:.1f} px")
 
-    # 5 — THE CLIP PAGE SHOWS THE PUBLISHED SET, not a second sampling.
+    # ...and the video grid must not fetch every clip up front. 72 videos
+    #    preloading at once is what a phone chokes on: WebKit could not even
+    #    finish `load` on the page before this changed.
+    async def first_paint(url):
+        from playwright.async_api import async_playwright
+        async with async_playwright() as pw:
+            b = await pw.chromium.launch()
+            ctx = await b.new_context(**pw.devices["iPhone 13"])
+            pg = await ctx.new_page()
+            got = []
+            pg.on("response", lambda r: got.append(r.url.rsplit("/", 1)[-1]))
+            await pg.goto(url, wait_until="networkidle", timeout=90000)
+            await pg.wait_for_timeout(2500)
+            d = await pg.evaluate("""(() => {const v=[...document.querySelectorAll('video')];
+                return {n: v.length, preload: v.length ? v[0].getAttribute('preload') : null,
+                        posters: v.filter(x => x.getAttribute('poster')).length};})()""")
+            await b.close()
+            return d, sum(1 for g in got if g.endswith(".mp4"))
+
+    clip_page = f"{a.base}/probes/index.html"
+    d, n_mp4 = asyncio.run(first_paint(clip_page))
+    check(d["n"] > 0 and n_mp4 == 0 and d["posters"] == d["n"],
+          "the clip grid shows posters and fetches no video until asked",
+          f"iPhone viewport: {d['n']} videos, preload={d['preload']}, "
+          f"{d['posters']} with posters, {n_mp4} mp4 requests on first paint")
+
+    # 6 — THE CLIP PAGE SHOWS THE PUBLISHED SET, not a second sampling.
     from huggingface_hub import hf_hub_download
     d = tempfile.mkdtemp()
     man = json.loads(Path(hf_hub_download(
@@ -183,7 +213,7 @@ def main() -> int:
           f"{len(live)} clips vs {man['n_probes']} published probes; "
           f"start frames identical: {page_runs == set_runs}")
 
-    # 6 — and no page uses a session the set excludes
+    # 7 — and no page uses a session the set excludes
     excl = set(man.get("excluded_sessions") or {})
     leaked = sorted({e.split("/")[0] for _, e in page_runs} & excl)
     check(not leaked, "no page shows an excluded session",
