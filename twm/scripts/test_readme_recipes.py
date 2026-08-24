@@ -21,6 +21,12 @@ import sys
 from pathlib import Path
 
 import numpy as np
+
+# The repo root, so `force_recovery` (the single source of the stiffness
+# constant) is importable however this script is invoked.
+import sys as _sys
+from pathlib import Path as _Path
+_sys.path.insert(0, str(_Path(__file__).resolve().parents[1]))
 import pyarrow.parquet as pq
 
 REPO = "yxma/React"
@@ -73,10 +79,18 @@ def main() -> int:
                                 f"promises they are identical")
 
             # ── claim: penetration_mm == F / k with the declared k ──────
-            k = 1.0
+            #
+            # IMPORTED, not retyped. This line said `k = 1.0` while the data
+            # ships k = 2.0 N/mm, so the check failed on 12 episode-sides for a
+            # year — the data was right and the test was stale. `pipeline_guard`
+            # already warns that "STIFFNESS HAS ONE SOURCE ... a second literal
+            # would let the two drift"; this was that second literal, living in
+            # the file whose job was to catch drift.
+            from force_recovery.dexforce import STIFFNESS_N_PER_M
+            k = STIFFNESS_N_PER_M / 1000.0          # N/m -> N/mm
             if not np.allclose(pen, f / k, atol=1e-5):
                 problems.append(f"{name} {side}: penetration_mm is not "
-                                f"force / {k}")
+                                f"force / {k} N/mm")
 
             # ── claim: the displacement is F/k along a UNIT direction ───
             con = f > 0
