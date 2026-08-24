@@ -140,11 +140,12 @@ def main() -> int:
 
     # 5 — the residual is published, not hidden
     r = world_residual("motherboard", "2026-05-19")
-    check(r.get("yaw_deg") is None and r.get("in_plane_mm") is None
-          and r.get("tilt_deg") is not None,
-          "what it cannot fix is declared as unknown",
-          f"tilt +/-{r['tilt_deg']} deg, height {r['height_mm']} mm measured but "
-          f"not applied; yaw and in-plane translation declared None")
+    check(r.get("in_plane_mm") is None and r.get("tilt_deg") is not None
+          and r.get("yaw_applied") is False and r.get("yaw_ci_deg"),
+          "what it cannot fix is declared, with the reason",
+          f"tilt +/-{r['tilt_deg']} deg; height {r['height_mm']} mm and yaw "
+          f"{r['yaw_deg']} deg {r['yaw_ci_deg']} measured but NOT applied; "
+          f"in-plane translation declared None")
 
     w = max(len(x) for _, x, _ in RESULTS)
     print()

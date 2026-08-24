@@ -227,9 +227,48 @@ WORLD_TRANSFORM = {
 # Sessions absent from the table are already in the reference frame to within
 # the 0.29 deg / 1.5 mm floor and get the identity.
 
+# WHAT THE TRANSFORM DOES NOT FIX.
+#
+# The world axes matter here, so they are named. The table normal is
+# (-0.009, 0.998, 0.058): world +y is UP. Therefore
+#
+#     tilt        rotation about x and z  (axes lying IN the table)  -> MEASURED
+#     yaw         rotation about y        (the normal itself)        -> see below
+#     height      translation along y                                -> measured, not applied
+#     in-plane    translation along x and z                          -> NOT determined
+#
+# The 3.38 deg that IS corrected is almost entirely about x. A plane normal
+# cannot constrain rotation about itself, so yaw needed separate evidence.
+#
+# YAW, MEASURED BUT NOT APPLIED. Matching the tracked board's projected outline
+# against the board segmented from the middle camera, sweeping yaw about the
+# normal and taking the parabolic peak, bootstrapped over frames:
+#
+#     2026-05-10 (reference)  -0.16 deg   95% [-0.51, +0.68]   <- validation
+#     2026-05-11              -0.54 deg   95% [-2.32, -0.02]
+#     2026-05-19              +2.41 deg   95% [+0.36, +3.15]
+#
+# The reference date returning zero is what makes the 05-19 number readable.
+# It is NOT applied because it is CONDITIONAL on the in-plane translation being
+# right: solving yaw and in-plane translation jointly is degenerate — a small
+# yaw about a distant pivot is nearly a translation — and the joint fit fails
+# its own validation, giving 2.83 deg plus 16 mm for 2026-05-11 (which should
+# be zero) and flipping 05-19's yaw to -6.82 deg. The IoU gains are 0.01-0.02,
+# so the objective is nearly flat in that subspace.
+#
+# WHAT WOULD BREAK THE DEGENERACY: every piece of evidence used here lies in
+# the table plane. Structure at a different height — a calibration object
+# standing vertically, or the sensor positions themselves, which sit above the
+# table at varying heights — separates a rotation from a translation, because
+# the two produce different parallax with height.
 WORLD_RESIDUAL = {
     "2026-05-19": {"tilt_deg": 0.29, "height_mm": 3.8,
-                   "yaw_deg": None, "in_plane_mm": None},
+                   "yaw_deg": 2.41, "yaw_ci_deg": [0.36, 3.15],
+                   "yaw_applied": False,
+                   "yaw_note": "conditional on the in-plane translation; yaw and "
+                               "in-plane translation are degenerate in the "
+                               "board-outline objective",
+                   "in_plane_mm": None},
 }
 
 
