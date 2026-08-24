@@ -31,6 +31,45 @@ SRC = Path("/media/yxma/Disk1/twm/probe_testset")
 FPS = 30.0
 
 
+class _H264Writer:
+    """Frames -> H.264, by pipe, because cv2 here cannot encode it.
+
+    The clips shipped as `mpeg4 / mp4v / Simple Profile`, which browsers refuse:
+    Chromium's canPlayType for `mp4v.20.8` returns the empty string. The files
+    were present, served with the right Content-Type and the right byte count —
+    and unplayable. The dataset's own 248 videos are avc1; only these were not.
+
+    OpenCV in this environment has no H.264 encoder ("Could not find encoder for
+    codec_id=27"), so frames go straight to ffmpeg. Piping rather than
+    transcoding an mp4v intermediate avoids a second lossy pass.
+
+    `yuv420p` and `+faststart` are not decoration: some players reject 4:4:4,
+    and without faststart the moov atom lands at the end so playback cannot
+    begin until the whole file is fetched.
+    """
+
+    def __init__(self, path, w, h, fps):
+        import subprocess
+        self.p = subprocess.Popen(
+            ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+             "-f", "rawvideo", "-pix_fmt", "bgr24", "-s", f"{w}x{h}",
+             "-r", str(fps), "-i", "-",
+             "-an", "-vcodec", "libx264", "-pix_fmt", "yuv420p",
+             "-preset", "veryfast", "-crf", "23",
+             "-movflags", "+faststart", str(path)],
+            stdin=subprocess.PIPE, stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE)
+
+    def write(self, bgr):
+        self.p.stdin.write(np.ascontiguousarray(bgr).tobytes())
+
+    def release(self):
+        self.p.stdin.close()
+        err = self.p.stderr.read().decode()[-400:]
+        if self.p.wait() != 0:
+            raise RuntimeError(f"ffmpeg failed: {err}")
+
+
 def render(frame_rgb, poses, cal, cam, out_mp4, hud, held_pose, held_gel,
            gel_m, collision_m, color):
     """The moving sensor's frame walking its trajectory over a frozen scene.
@@ -47,7 +86,7 @@ def render(frame_rgb, poses, cal, cam, out_mp4, hud, held_pose, held_gel,
                                  collision_m, (120, 120, 120))
     base = draw_sensor_frame(base, held_pose, held_gel, cam, stem=True,
                              dim=True, label="held")
-    vw = cv2.VideoWriter(str(out_mp4), cv2.VideoWriter_fourcc(*"mp4v"), FPS, (w, h))
+    vw = _H264Writer(out_mp4, w, h, FPS)
     trail, n = [], 0
     for i, q in enumerate(np.asarray(poses, float)):
         img = base.copy()

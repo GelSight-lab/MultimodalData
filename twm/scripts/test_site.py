@@ -61,9 +61,11 @@ async def audit(base, pages):
                     return Math.max(Math.abs(a.x-b.x), Math.abs(a.y-b.y),
                                     Math.abs(a.width-b.width), Math.abs(a.height-b.height));
                 });
+                const vd = [...document.querySelectorAll('video')];
                 return {imgs: im.length,
                         broken: im.filter(x => x.naturalWidth === 0 && x.getAttribute('src')).length,
-                        videos: document.querySelectorAll('video').length,
+                        videos: vd.length,
+                        vsrc: vd.length ? vd[0].currentSrc || vd[0].src : null,
                         overflow: document.documentElement.scrollWidth > window.innerWidth,
                         canvasGap: cv.length ? Math.max(...cv) : null,
                         title: document.title};
@@ -118,7 +120,46 @@ def main() -> int:
           f"{sum(v['videos'] for v in au.values())} videos, 0 broken, 0 overflowing"
           + (f"; {br + ov}" if (br or ov) else ""))
 
-    # 3 — OVERLAY CANVASES COVER THEIR IMAGES. The defect that left every
+    # 3 — VIDEOS ACTUALLY DECODE. Counting <video> elements says nothing: the
+    #     element exists whether or not the browser can play what is inside it.
+    #     72 clips shipped as mpeg4/mp4v Simple Profile, which Chromium refuses
+    #     (canPlayType returns ""), while every file was present, served as
+    #     video/mp4 with the right byte count — and unplayable. This check
+    #     loads one and waits for real decoded dimensions.
+    async def probe_video(url):
+        from playwright.async_api import async_playwright
+        async with async_playwright() as pw:
+            b = await pw.chromium.launch()
+            pg = await b.new_page()
+            await pg.goto("about:blank")
+            r = await pg.evaluate("""async (u) => {
+                const v = document.createElement('video');
+                v.src = u; v.muted = true; v.preload = 'auto';
+                document.body.appendChild(v);
+                const ok = await new Promise(res => {
+                    v.onloadeddata = () => res(true);
+                    v.onerror = () => res(false);
+                    setTimeout(() => res(false), 20000);
+                });
+                return {ok, w: v.videoWidth, h: v.videoHeight,
+                        state: v.readyState,
+                        err: v.error ? v.error.code : null};
+            }""", url)
+            await b.close()
+            return r
+
+    vids = [(p_, v["vsrc"]) for p_, v in au.items() if v.get("vsrc")]
+    vres = []
+    for p_, src in vids:
+        vres.append((p_, asyncio.run(probe_video(src))))
+    okv = [r for _, r in vres if r["ok"] and r["w"] > 0]
+    check(vres and len(okv) == len(vres),
+          "videos actually decode, not merely exist as elements",
+          "; ".join(f"{p_.split('/')[0]} {r['w']}x{r['h']} readyState={r['state']}"
+                    + (f" ERR{r['err']}" if r.get("err") else "")
+                    for p_, r in vres) or "no <video> found")
+
+    # 4 — OVERLAY CANVASES COVER THEIR IMAGES. The defect that left every
     #     arithmetic check green while the overlay sat 93 px off.
     gaps = {p: v["canvasGap"] for p, v in au.items() if v["canvasGap"] is not None}
     worst = max(gaps.values()) if gaps else 0.0
@@ -127,7 +168,7 @@ def main() -> int:
           f"{len(gaps)} pages with overlays, worst image/canvas box mismatch "
           f"{worst:.1f} px")
 
-    # 4 — THE CLIP PAGE SHOWS THE PUBLISHED SET, not a second sampling.
+    # 5 — THE CLIP PAGE SHOWS THE PUBLISHED SET, not a second sampling.
     from huggingface_hub import hf_hub_download
     d = tempfile.mkdtemp()
     man = json.loads(Path(hf_hub_download(
@@ -142,7 +183,7 @@ def main() -> int:
           f"{len(live)} clips vs {man['n_probes']} published probes; "
           f"start frames identical: {page_runs == set_runs}")
 
-    # 5 — and no page uses a session the set excludes
+    # 6 — and no page uses a session the set excludes
     excl = set(man.get("excluded_sessions") or {})
     leaked = sorted({e.split("/")[0] for _, e in page_runs} & excl)
     check(not leaked, "no page shows an excluded session",
