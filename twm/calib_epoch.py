@@ -167,117 +167,71 @@ def describe(task: str, date: str, episode: str) -> str:
 
 # ── the world frame each session is in, as a FULL RIGID TRANSFORM ───────────
 #
-# WHY THIS REPLACES A BARE OFFSET.
+# WHAT THE RIG PHYSICALLY ALLOWS, which constrains this more than any fit.
 #
-# Re-running an OptiTrack calibration changes the world frame by a rigid
-# transform, rotation included. The release corrected 2026-05-19 with a
-# TRANSLATION ONLY, (230, 0, 175) mm, so its rotation went uncorrected — and
-# every self-consistency check in this project is invariant to a shared world
-# transform, which is why none of them caught it. A three-number offset cannot
-# express the thing it is correcting.
+# The OptiTrack ground plane is set with an L-bracket laid on the table, so the
+# calibration defines +y as the normal of the SAME physical plane every time.
+# Two calibrations of that rig can therefore differ only by
 #
-# REFERENCE FRAME: 2026-05-10. Named, so "aligned" has a referent. Every other
+#     yaw          rotation about y (the plane normal)
+#     in-plane     translation along x and z
+#
+# and NOT by a tilt about x or z. That is a property of the procedure, not an
+# assumption about the data.
+#
+# A TILT I MEASURED, AND WHY IT WAS WRONG.
+#
+# Comparing the board's plane normal across sessions gave 3.38 deg for
+# 2026-05-19, almost all of it about x — a rotation the procedure forbids. The
+# measurement, not the constraint, was at fault: 2026-05-19's contact cloud is
+# not planar. Split by in-plane position, its two halves give normals 6.35 deg
+# apart, and one half agrees with the reference to 0.77 deg while the other is
+# 6.61 deg off. Bootstrap jitter is 0.15 deg, so this is real spatial
+# inhomogeneity — that session's contacts sample the board's relief unevenly —
+# not sampling noise. The whole-cloud 3.38 deg was an average of two
+# inconsistent halves. The reference sessions split to 0.56-1.52 deg, which is
+# why the artefact showed up only here.
+#
+# So no tilt is applied. The reference date remains 2026-05-10; every other
 # session declares the transform onto it, and future motherboard sessions must
 # do the same rather than adding a fourth convention.
-#
-# HOW IT WAS MEASURED. The board lies on the same physical table every session,
-# so the table normal in world coordinates is an invariant:
-#
-#     n_date = median over frames of  R_obj @ n_local
-#     n_local = smallest singular vector of the contact cloud (force > 2 N)
-#               expressed in the board's OWN frame
-#
-# The board frame matters: the board is picked up and tilted (median 3.3-4.2
-# deg off its own median), so fitting a plane to WORLD contacts measures the
-# board's average pose, not the table. Two attempts at that gave 3.24 and
-# 3.76 deg between 05-10 and 05-11 — dates the board-frame method puts at
-# 0.29 deg — and both were discarded.
-#
-#     05-11 vs 05-10   0.29 deg   <- the reproducibility floor
-#     05-19 vs 05-10   3.38 deg
-#
-# stable across quiet-frame thresholds (3.41 / 3.49 / 3.44 / 3.24 / 2.96 deg
-# for the quietest 100 / 50 / 25 / 10 / 5 %).
-#
-# WHAT IS NOT DETERMINED, AND IS THEREFORE NOT INVENTED HERE. A plane normal
-# fixes two rotational degrees of freedom. Yaw about that normal, and the two
-# in-plane translations, are invisible to it — verified: composing the fix with
-# any spin about the normal still aligns the normals exactly. The height along
-# the normal is measurable but marginal (+3.8 mm against a 1.5 mm floor), so it
-# is recorded and NOT applied.
-#
-# PIVOT. The rotation is applied about the WORKSPACE CENTROID, not the mocap
-# origin. Both are valid rigid transforms and they differ by a translation —
-# the one degree of freedom that is undetermined. Pivoting where the data
-# actually is leaves the in-plane position of the workspace unchanged, so the
-# correction alters orientation without moving what was already right.
 WORLD_REF_DATE = "2026-05-10"
 
 WORLD_TRANSFORM = {
     # date: (rotation vector in DEGREES onto the reference frame,
     #        pivot in that session's own world mm, note)
-    # Pivot is the MEDIAN CONTACT POSITION IN WORLD MILLIMETRES. My first
-    # value was [363.1, 9.0, -362.2], lifted from a printout where those were
-    # projections onto a rotated basis (e1, e2, n) rather than world xyz — the
-    # z sign was even flipped. It moved the workspace 41 mm, which the
-    # "does not move the workspace" check caught.
-    "2026-05-19": ([3.376, -0.017, -0.118], [363.2, 22.8, 364.0],
-                   "tilt only; yaw and in-plane translation undetermined"),
+    #
+    # Empty: the only rotation the rig can produce is yaw about y, and the yaw
+    # measured for 2026-05-19 (+2.41 deg) is not separable from the in-plane
+    # translation by the evidence available — see WORLD_RESIDUAL. A number that
+    # cannot be separated from another number is not a correction.
 }
-# Sessions absent from the table are already in the reference frame to within
-# the 0.29 deg / 1.5 mm floor and get the identity.
 
-# WHAT THE TRANSFORM DOES NOT FIX.
-#
-# The world axes matter here, so they are named. The table normal is
-# (-0.009, 0.998, 0.058): world +y is UP. Therefore
-#
-#     tilt        rotation about x and z  (axes lying IN the table)  -> MEASURED
-#     yaw         rotation about y        (the normal itself)        -> see below
-#     height      translation along y                                -> measured, not applied
-#     in-plane    translation along x and z                          -> NOT determined
-#
-# The 3.38 deg that IS corrected is almost entirely about x. A plane normal
-# cannot constrain rotation about itself, so yaw needed separate evidence.
-#
-# YAW, MEASURED BUT NOT APPLIED. Matching the tracked board's projected outline
-# against the board segmented from the middle camera, sweeping yaw about the
-# normal and taking the parabolic peak, bootstrapped over frames:
-#
-#     2026-05-10 (reference)  -0.16 deg   95% [-0.51, +0.68]   <- validation
-#     2026-05-11              -0.54 deg   95% [-2.32, -0.02]
-#     2026-05-19              +2.41 deg   95% [+0.36, +3.15]
-#
-# The reference date returning zero is what makes the 05-19 number readable.
-# It is NOT applied because it is CONDITIONAL on the in-plane translation being
-# right: solving yaw and in-plane translation jointly is degenerate — a small
-# yaw about a distant pivot is nearly a translation — and the joint fit fails
-# its own validation, giving 2.83 deg plus 16 mm for 2026-05-11 (which should
-# be zero) and flipping 05-19's yaw to -6.82 deg. The IoU gains are 0.01-0.02,
-# so the objective is nearly flat in that subspace.
-#
-# WHAT WOULD BREAK THE DEGENERACY: every piece of evidence used here lies in
-# the table plane. Structure at a different height — a calibration object
-# standing vertically, or the sensor positions themselves, which sit above the
-# table at varying heights — separates a rotation from a translation, because
-# the two produce different parallax with height.
 WORLD_RESIDUAL = {
-    "2026-05-19": {"tilt_deg": 0.29, "height_mm": 3.8,
-                   "yaw_deg": 2.41, "yaw_ci_deg": [0.36, 3.15],
-                   "yaw_applied": False,
-                   "yaw_note": "conditional on the in-plane translation; yaw and "
-                               "in-plane translation are degenerate in the "
-                               "board-outline objective",
-                   "in_plane_mm": None},
+    "2026-05-19": {
+        "tilt_deg": 0.0,
+        "tilt_note": "forbidden by the L-bracket procedure; the 3.38 deg once "
+                     "measured here was an artefact of a non-planar contact "
+                     "cloud (halves 6.35 deg apart)",
+        "yaw_deg": 2.41, "yaw_ci_deg": [0.36, 3.15], "yaw_applied": False,
+        "yaw_note": "from matching the tracked board's projected outline against "
+                    "the board segmented in the middle camera; the reference "
+                    "date validates at -0.16 deg [-0.51, +0.68]. NOT applied: "
+                    "yaw and in-plane translation are degenerate in that "
+                    "objective — a small yaw about a distant pivot is nearly a "
+                    "translation — and the joint fit gives 2.83 deg plus 16 mm "
+                    "for 2026-05-11, which should be zero.",
+        "in_plane_mm": None,
+    },
 }
 
 
 def world_transform(task: str, date: str):
     """(R, t) taking `date`'s world frame onto WORLD_REF_DATE's, in mm.
 
-    Returns numpy arrays; the identity for any session not in the table. Apply
-    as `p_ref = R @ p_session + t`, positions in MILLIMETRES, and rotate the
-    orientation by the same R.
+    Currently the identity for every session: the only rotation the rig can
+    produce is yaw about y, and that yaw is not yet separable from the in-plane
+    translation. `world_residual` states what is known and what is not.
     """
     import numpy as _np
     from scipy.spatial.transform import Rotation as _R
@@ -293,6 +247,6 @@ def world_residual(task: str, date: str) -> dict:
     """What the transform does NOT fix, so a consumer can bound their error."""
     if task != "motherboard":
         return {}
-    return dict(WORLD_RESIDUAL.get(date, {"tilt_deg": 0.29, "height_mm": 1.5,
-                                          "yaw_deg": None, "in_plane_mm": None}))
-
+    return dict(WORLD_RESIDUAL.get(date, {"tilt_deg": 0.0, "yaw_deg": 0.0,
+                                          "yaw_applied": False,
+                                          "in_plane_mm": None}))
