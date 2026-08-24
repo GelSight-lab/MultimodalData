@@ -33,6 +33,8 @@ SLOW = {
     "test_mesh_uncropped.py": "renders every published mesh under xvfb",
     "test_boundary_rule.py": "full-release reconstruction sweep",
     "test_gel_bound.py": "full-release reconstruction sweep",
+    "test_frame_consistency.py": "reads depth from 32 episodes x 3 cameras, ~10 min",
+    "test_site.py": "drives the live Space in a browser; needs network",
 }
 
 
