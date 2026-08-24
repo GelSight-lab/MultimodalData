@@ -216,9 +216,20 @@ The pieces that must be told about a new session, in order:
    frame moved. Record what you could not measure as `None` **with a reason**.
 4. **`bad_frames.json`, `segments.json`** — from the curation pass.
 5. **`splits.json`** — `python scripts/build_splits.py`.
-6. **Validate**: `python scripts/validate_all.py`, then
-   `scripts/test_frame_consistency.py` to confirm the new session shares the
-   world frame, and `scripts/test_site.py` if you republished pages.
+6. **Validate**:
+
+   ```
+   python scripts/check_session_ready.py --task <task>   # is it registered?
+   python scripts/validate_all.py                        # 22 checks
+   python scripts/test_frame_consistency.py              # same world frame?
+   python scripts/test_site.py                           # if pages were rebuilt
+   ```
+
+   `check_session_ready` answers steps 1–5 mechanically rather than leaving
+   them to this list — a prose checklist gets skipped, and each omission has a
+   silent failure mode: a wrong calibration epoch looks like a slightly
+   miscalibrated rig (it shipped that way once, 35–73 px off), a missing
+   `splits.json` entry puts the whole session in train.
 
 If a new session's world frame moved and you cannot measure the change, say so
 in `WORLD_RESIDUAL` and keep the session. Dropping data to hide a bounded,
