@@ -212,16 +212,21 @@ WORLD_RESIDUAL = {
         "tilt_deg": 0.0,
         "tilt_note": "forbidden by the L-bracket procedure; the 3.38 deg once "
                      "measured here was an artefact of a non-planar contact "
-                     "cloud (halves 6.35 deg apart)",
-        "yaw_deg": 2.41, "yaw_ci_deg": [0.36, 3.15], "yaw_applied": False,
-        "yaw_note": "from matching the tracked board's projected outline against "
-                    "the board segmented in the middle camera; the reference "
-                    "date validates at -0.16 deg [-0.51, +0.68]. NOT applied: "
-                    "yaw and in-plane translation are degenerate in that "
-                    "objective — a small yaw about a distant pivot is nearly a "
-                    "translation — and the joint fit gives 2.83 deg plus 16 mm "
-                    "for 2026-05-11, which should be zero.",
+                     "cloud (in-plane halves 6.35 deg apart, vs 0.56 deg on the "
+                     "reference)",
+        "yaw_deg": None, "yaw_applied": False,
+        "yaw_note": "NOT MEASURED. Matching the tracked board's projected "
+                    "outline against the board segmented in a camera gave "
+                    "+2.41 deg with a 95% frame-bootstrap of [0.36, 3.15], but "
+                    "that interval covered only frame-to-frame noise. Varying "
+                    "the camera and the hull clipping moves 2026-05-19 over "
+                    "-1.84 to +3.04 deg — and moves the REFERENCE date, which "
+                    "is zero by construction, over -1.83 to +3.28 deg. The "
+                    "method's systematic scatter is the size of the effect, so "
+                    "it has no power and the number was withdrawn.",
         "in_plane_mm": None,
+        "status": "the (230, 0, 175) mm translation the release already applies "
+                  "is the only correction; how good it is remains unmeasured",
     },
 }
 
