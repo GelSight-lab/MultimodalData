@@ -80,7 +80,8 @@ def _decode_frames(mp4_path: Path, frame_indices, depth=False):
 class ReactVideoDataset:
     def __init__(self, task_root, window_length=16, stride=1, window_step=None,
                  mode="segment", streams=ALL_STREAMS, skip_bad=True,
-                 which_sensors="any", load_depth=False, tactile_latency=0):
+                 which_sensors="any", load_depth=False, tactile_latency=0,
+                 split="all", splits_file="splits.json"):
         self.root = Path(task_root)
         self.W = window_length
         self.stride = stride
@@ -101,6 +102,33 @@ class ReactVideoDataset:
         self._TACT = ("tactile_left", "tactile_right")
         self._TACT_COLS = ("tactile_left_intensity", "tactile_right_intensity",
                            "tactile_left_mixed", "tactile_right_mixed")
+
+        # SPLIT. "train" | "test" | "all". The release holds out INTERVALS from
+        # inside episodes rather than whole episodes: there are only 32 of them,
+        # and a short-horizon world model must generalise over dynamics within a
+        # scene, not over scenes.
+        #
+        # A training window starting shortly BEFORE a held-out interval still
+        # contains its frames, so `splits.json` carries a guard of
+        # max_train_window - 1 and this loader REFUSES a longer window instead
+        # of leaking — a leak here leaves no trace in any metric.
+        self.split = split
+        self.splits = None
+        if split != "all":
+            sp = self.root / splits_file
+            if not sp.is_file():
+                raise FileNotFoundError(
+                    f"split={split!r} needs {sp}; pass split='all' to use every "
+                    f"frame, or rebuild it with scripts/build_splits.py")
+            with open(sp) as f:
+                self.splits = json.load(f)
+            span = (window_length - 1) * stride + 1 + int(tactile_latency)
+            if span - 1 > self.splits["guard_frames"]:
+                raise ValueError(
+                    f"window spans {span} frames but the split has "
+                    f"guard_frames={self.splits['guard_frames']}; a window this "
+                    f"long would overlap held-out intervals. Rebuild with "
+                    f"max_train_window >= {span}.")
 
         self.segments = json.loads((self.root / "segments.json").read_text())["segments"]
         self.bad = json.loads((self.root / "bad_frames.json").read_text())["episodes"]
@@ -123,16 +151,37 @@ class ReactVideoDataset:
                 m[max(0, a):min(T, b + 1)] = True
         return m
 
+    def _split_filter(self, span):
+        """(keep_fn) deciding whether a window starting at `s` is in this split."""
+        if self.splits is None:
+            return lambda ek, s: True
+        E = self.splits["episodes"]
+
+        def keep(ek, s):
+            e = E.get(ek)
+            if e is None:
+                return self.split == "train"      # unlisted episode -> train
+            if e["whole"] == "test":
+                return self.split == "test"
+            if self.split == "test":
+                # the WHOLE window must lie inside one held-out interval
+                return any(a <= s and s + span - 1 <= b for a, b in e["test"])
+            # train: reject starts in [a - (span-1), b], not just [a, b]
+            return not any(a - (span - 1) <= s <= b for a, b in e["test"])
+        return keep
+
     def _build_index(self):
         items = []
         span = (self.W - 1) * self.stride + 1
         lat = self.tactile_latency        # tactile read at idx+lat must stay in bounds
+        keep = self._split_filter(span + lat)
         if self.mode == "segment":
             for s in self.segments:
                 ek, a, b = s["source_episode"], s["frame_range"][0], s["frame_range"][1]
                 start = a
                 while start + span - 1 + lat <= b:
-                    items.append((ek, start))
+                    if keep(ek, start):
+                        items.append((ek, start))
                     start += self.step
         else:  # window over whole episode
             eps = sorted({s["source_episode"] for s in self.segments})
@@ -142,7 +191,7 @@ class ReactVideoDataset:
                 start = 0
                 while start + span - 1 + lat < T:
                     idx = range(start, start + span, self.stride)
-                    if not (self.skip_bad and bad[list(idx)].any()):
+                    if not (self.skip_bad and bad[list(idx)].any()) and keep(ek, start):
                         items.append((ek, start))
                     start += self.step
         return items

@@ -41,7 +41,18 @@ REL = Path("/media/yxma/Disk1/twm/release_force/motherboard/meta")
 H5R = Path("/media/yxma/Disk1/twm/data/motherboard")
 CAM_H5 = {"left": 1, "middle": 2, "right": 0}
 VIEWS = ("left", "middle", "right")
-TRUSTED = ("2026-05-10", "2026-05-11")
+# All three sessions. 2026-05-19 is included with the translation-only
+# correction the release already applies, (230, 0, 175) mm; its residual — the
+# unmeasured yaw about the table normal — is published in the manifest under
+# `world_residual` rather than the session being dropped. The earlier build
+# excluded it, which cost a fifth of the sessions to avoid an error that is
+# declared and bounded.
+TRUSTED = ("2026-05-10", "2026-05-11", "2026-05-19")
+
+# Start frames come from HELD-OUT intervals only. Without this the probe's
+# context frames were training frames: the action is novel, but the model had
+# already seen the image it starts from, and nothing said so.
+SPLITS = "splits.json"
 CONTEXT = 4
 # Wider than the preview's 8 px. A ground-truth path that ends 15 px from the
 # edge is inside the frame but useless for scoring: a rollout that overshoots
@@ -79,6 +90,8 @@ def main() -> int:
     shutil.copytree(stage / "calibration", out / "calibration")
 
     eps = _episodes()
+    splits = json.loads((Path("/media/yxma/Disk1/twm/release/motherboard") /
+                         SPLITS).read_text())
     rng = np.random.default_rng(args.seed)
     manifest = {
         "format": FORMAT_VERSION,
@@ -107,10 +120,8 @@ def main() -> int:
             "frame": "OptiTrack world, 2026-05-10 reference",
         },
         "trusted_sessions": list(TRUSTED),
-        "excluded_sessions": {
-            "2026-05-19": "world frame redefined; yaw about the table normal and "
-                          "in-plane translation unmeasured (attempts scatter "
-                          "+/-2.3 deg = 16 px at the workspace)"},
+        "excluded_sessions": {},
+        "start_frames_from": "held-out intervals of splits.json (never training frames)",
         "overlay_error_budget_px": {
             "camera_reprojection": {v: round(cal["cams"][v]["rmse"] / 800.0 *
                                              cal["cams"][v]["intrinsics"]["fx"], 1)
@@ -119,6 +130,12 @@ def main() -> int:
             "note": "agreement within about 6 px is at the noise floor",
         },
         "world_residual": {d: world_residual("motherboard", d) for d in TRUSTED},
+        "session_note": {
+            "2026-05-19": "world frame redefined mid-collection; the release "
+                          "applies a translation-only correction and the "
+                          "residual yaw about the table normal is unmeasured "
+                          "(+/-2.3 deg, about 16 px at the workspace). Included "
+                          "with that stated; see world_residual."},
         "probes": [],
     }
 
@@ -132,12 +149,30 @@ def main() -> int:
         poses = {s: np.asarray([x for x in t[f"sensor_{s}_pose"]], float)
                  for s in ("left", "right")}
         trim = int(np.asarray(t["source_h5_frame"])[0])
+        # restrict the sampler to this episode's held-out intervals by masking
+        # every other row's pose to NaN — `sample_probe` already requires a run
+        # of `CONTEXT` tracked rows, so an invalid row is simply never chosen.
+        info = splits["episodes"].get(f"{date}/{ep}")
+        if info is None:
+            continue
+        iv = info["test"]
+        if not iv:
+            continue
+        n = min(len(poses["left"]), len(poses["right"]))
+        allow = np.zeros(n, bool)
+        for a, b in iv:
+            allow[a:min(b, n - 1) + 1] = True
+        if allow.sum() < CONTEXT + 4:
+            continue
+        poses = {k: np.where(allow[:n, None], v[:n], np.nan) for k, v in poses.items()}
         try:
             r = T.sample_probe(poses, cal, seed=int(rng.integers(1 << 30)),
                                context=CONTEXT, view="middle",
                                margin_px=VIEW_MARGIN_PX)
         except ValueError:
             continue
+        assert allow[np.asarray(r["context_rows"], int)].all(), \
+            "start frame outside a held-out interval"
         rows = np.asarray(r["context_rows"], int)
         with h5py.File(str(H5R / date / f"{ep}.h5"), "r") as f5:
             ctx = {v: [f5[f"realsense/cam{CAM_H5[v]}/color"][trim + int(rr)][..., ::-1]

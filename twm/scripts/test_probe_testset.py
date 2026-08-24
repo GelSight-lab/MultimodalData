@@ -119,14 +119,31 @@ def main() -> int:
           f"truth {z['pos_mm_final']:.2e} mm; injected 10 mm reads "
           f"{e['pos_mm_final']:.4f} mm and {e['px_final']:.1f} px")
 
-    # 5 — no probe comes from a session whose world frame is unpinned
-    bad5 = [p["episode"] for p in man["probes"]
-            if p["episode"].split("/")[0] not in man["trusted_sessions"]]
-    check(not bad5 and man["excluded_sessions"],
-          "start frames come only from sessions with a pinned world frame",
-          f"{len(man['probes'])} runs from {sorted({p['episode'].split('/')[0] for p in man['probes']})}; "
-          f"excluded {sorted(man['excluded_sessions'])}"
-          + (f"; leaked {bad5}" if bad5 else ""))
+    # 5 — START FRAMES ARE HELD-OUT FRAMES. Without this the context images
+    #     were training frames: the action is novel but the model had already
+    #     seen the picture it starts from, and nothing said so.
+    sp = json.loads((Path("/media/yxma/Disk1/twm/release/motherboard") /
+                     "splits.json").read_text())
+    leaked = []
+    for r in runs:
+        info = sp["episodes"].get(r["episode"])
+        if info is None:
+            leaked.append(f"{r['episode']}: not in splits.json"); continue
+        for row in r["context_rows"]:
+            if not any(a <= row <= b for a, b in info["test"]):
+                leaked.append(f"{r['episode']} row {row}")
+    check(not leaked, "every start frame lies in a held-out interval",
+          f"{sum(len(r['context_rows']) for r in runs)} context rows across "
+          f"{len(runs)} runs, all inside splits.json test intervals"
+          + (f"; leaked {leaked[:3]}" if leaked else ""))
+
+    # ...and the world-frame residual is published for every session used
+    miss = [d for d in {r["episode"].split("/")[0] for r in runs}
+            if d not in man["world_residual"]]
+    check(not miss, "each session used publishes its world-frame residual",
+          f"{sorted({r['episode'].split('/')[0] for r in runs})}; "
+          f"2026-05-19 carries a stated unmeasured yaw rather than being dropped"
+          + (f"; missing {miss}" if miss else ""))
 
     # 6 — the overlay runs and puts the marker where the stored truth says
     from react_toolbox.probe_eval import overlay_gt

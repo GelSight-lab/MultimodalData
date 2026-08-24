@@ -1,4 +1,16 @@
-# React probe test set — controlled actions for world-model rollout evaluation
+# React probe set — controlled actions for measuring ACTION FOLLOWING
+
+> **This is one of two evaluation sets, and they answer different questions.**
+>
+> | | question | data |
+> |---|---|---|
+> | **held-out split** | can the model predict what actually happened? | real frames, real actions, real futures — `ReactVideoDataset(..., split="test")` |
+> | **probe set** (this) | does the model *follow the action it is given*? | commanded actions nobody performed; ground truth is geometric |
+>
+> The held-out split scores prediction against recorded frames. It cannot
+> isolate action-following, because the action in a recording is whatever the
+> human happened to do. These probes command motions that were never performed,
+> one axis at a time, so a failure names a direction.
 
 72 commanded action sequences over 6 start frames, for scoring a tactile world
 model's rollouts against ground truth that is **geometric, not photometric**.
@@ -205,27 +217,51 @@ depth, and neither substitutes for the other.
    rollout that overshoots a path ending 15 px from the edge leaves the image
    and cannot be scored at all.
 
+### Start frames are HELD OUT
+
+Start frames are drawn only from the held-out intervals of `splits.json`.
+Without that the context images would be *training* frames: the action is novel
+either way, but the model would already have seen the picture it starts from,
+and nothing would say so.
+
+The release holds out **intervals from inside episodes**, not whole episodes.
+There are 32 motherboard episodes; spending them on episode-level held-out data
+buys independence a short-horizon world model does not need — what it must
+generalise over is dynamics within a scene, not scenes. Measured, with a
+64-frame training window: **test 12.1%, guard 9.4%, train 78.5%**, over 147
+intervals plus 2 wholly-held-out episodes.
+
+The **guard** is the part that leaks if you get it wrong. A training window
+starting shortly before a held-out interval still contains its frames, so
+starts in `[a-(S-1), b]` must be rejected, not just `[a, b]`. `splits.json`
+records `guard_frames = max_train_window - 1`, and the loader **refuses** a
+longer window rather than leaking — a leak here leaves no trace in any metric
+until the numbers are suspiciously good. Without the guard, 1827 windows leak
+in the first six episodes alone.
+
 ### Sessions
 
-Start frames come only from **2026-05-10** and **2026-05-11**.
-
-**2026-05-19 is excluded.** Its OptiTrack world was redefined mid-collection.
-The release corrects that with a translation only; the yaw about the table
-normal and the in-plane translation remain unmeasured — attempts scatter over
-±2.3°, which is **16 px** at the workspace, three times the noise floor above.
-Projected ground truth is the whole point of this test set, so a session whose
-projection carries an unstated bias does not belong in it. `manifest.json`
-records this under `excluded_sessions`, and `world_residual` for the included
-sessions.
+All three sessions are used. **2026-05-19** had its OptiTrack world redefined
+mid-collection; the release applies the translation-only correction
+(230, 0, 175) mm, and the residual yaw about the table normal is **unmeasured**
+— attempts scatter ±2.3°, about 16 px at the workspace. It is included with
+that stated in `manifest.json` under `world_residual` and `session_note`, rather
+than the session being dropped to hide a bounded, declared error.
 
 ## Reproducing
 
 ```
+python scripts/build_splits.py                     # writes splits.json
 python scripts/build_probe_testset.py --runs 6 --seed 0
+python scripts/test_splits.py
 python scripts/test_probe_testset.py
 ```
 
-The test asserts the package is self-contained, that the stored ground-truth
+`test_splits.py` enumerates every admissible training window and asserts none
+touches a held-out frame, and that removing the guard *does* leak — a guard
+nobody can show to be load-bearing is decoration.
+
+`test_probe_testset.py` asserts the package is self-contained, that the stored ground-truth
 pixels recompute from the calibration **inside the package**, that the deltas
 integrate back to the poses, that the ground truth keeps its scoring margin, and
 that the scorer reads zero on the ground truth and exactly 10 mm on an injected
