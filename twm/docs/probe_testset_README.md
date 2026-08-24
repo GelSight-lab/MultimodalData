@@ -75,16 +75,40 @@ Each `.npz` holds:
 | `poses` | (T+1, 7) | commanded ground-truth pose of the moving sensor |
 | `held_pose` | (7,) | the stationary hand, constant over the horizon |
 | `context_poses_moving` / `_held` | (4, 7) | poses at the context frames |
-| `delta_pos_m` | (T, 3) | per-step translation, world frame |
-| `delta_rotvec_rad` | (T, 3) | per-step rotation vector, world frame |
+| `gel_pos_m` | (T+1, 3) | the gel centre — what the action is measured at |
+| `delta_gel_pos_m` | (T, 3) | **the action**: per-step translation, world axes, at the gel |
+| `delta_gel_rotvec_rad` | (T, 3) | **the action**: per-step rotation, world axes |
+| `action_scalar` | (T,) | the same action as one number: signed step along `action_axis` |
+| `action_axis` / `action_sign` | scalar | 0/1/2 for x/y/z, and ±1 |
+| `delta_rigid_pos_m` / `delta_rigid_rotvec_rad` | (T, 3) | the marker cluster's motion instead |
 | `gt_px_{left,middle,right}` | (T+1, 2) | ground-truth gel-centre pixels |
 
 Poses are `[x, y, z, qx, qy, qz, qw]`, position in **metres**, quaternion in
 **xyzw** order (`scipy.spatial.transform.Rotation.from_quat`), in the OptiTrack
 world frame with **2026-05-10** as reference.
 
-`delta_*` are the action a world model consumes; they integrate back to `poses`
-exactly (asserted to 1e-9 m and 1e-6 deg).
+### One action, one direction — and where you have to measure it
+
+Every probe moves along **exactly one axis**: a translation probe has zero
+rotation, a rotation probe has zero translation, and the off-axis components are
+zero to machine precision. All of that is true **at the gel**, and false at the
+marker cluster.
+
+The pose 7-vec is the OptiTrack marker cluster's, and rotations pivot on the gel
+65.7 mm away — so in rigid-body coordinates a "pure rotation" carries up to
+**91 mm** of translation. A model fed `delta_rigid_*` for `rot+x` reads
+"translate 91 mm *and* rotate 79°" for something labelled a pure rotation. Hence
+`delta_gel_*` is the primary action; `delta_rigid_*` ships alongside for a model
+that predicts the marker-cluster pose, under a name that cannot be confused.
+
+Rotation deltas are **world-frame**, i.e. pre-multiplied: `dq = q[i+1] · q[i]⁻¹`,
+integrate as `q[i+1] = dq · q[i]`. The probes rotate about world axes, so the
+world-frame increment lies exactly along the named axis; the body-frame
+increment `q[i]⁻¹ · q[i+1]` is the same rotation seen from the moving hand and
+sits 7.1e-3 rad off it.
+
+Both deltas integrate back to their own trajectory exactly — the rigid one to
+`poses`, the gel one to `gel_pos_m` — asserted to 1e-9 m and 1e-6 deg.
 
 ## Usage
 
@@ -104,7 +128,10 @@ cam  = cal["cams"]["middle"]
 # --- the model input: 4 context frames, and the action
 ctx    = [cv2.imread(f"{root}/probes/run0/context/ctx{i}_middle.jpg")[:, :, ::-1]
           for i in range(4)]
-action = np.concatenate([d["delta_pos_m"], d["delta_rotvec_rad"]], axis=1)  # (T, 6)
+action = np.concatenate([d["delta_gel_pos_m"],
+                         d["delta_gel_rotvec_rad"]], axis=1)   # (T, 6), at the gel
+# or, since each probe is one-directional, the same thing as one number:
+#   d["action_scalar"], along axis "xyz"[int(d["action_axis"])]
 
 pred = my_world_model.rollout(ctx, action)      # -> (T+1, 7) poses
 

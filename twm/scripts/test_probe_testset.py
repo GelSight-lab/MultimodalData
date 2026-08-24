@@ -55,8 +55,10 @@ def main() -> int:
         if not f.exists():
             missing.append(q["file"]); continue
         d = np.load(f)
-        need = {"poses", "held_pose", "delta_pos_m", "delta_rotvec_rad",
-                "context_poses_moving", "context_poses_held"} | \
+        need = {"poses", "held_pose", "gel_pos_m", "delta_gel_pos_m",
+                "delta_gel_rotvec_rad", "delta_rigid_pos_m",
+                "delta_rigid_rotvec_rad", "action_scalar", "action_axis",
+                "action_sign", "context_poses_moving", "context_poses_held"} | \
                {f"gt_px_{v}" for v in man["views"]}
         if not need <= set(d.files):
             missing.append(f"{q['file']}: {sorted(need - set(d.files))}")
@@ -88,14 +90,19 @@ def main() -> int:
     for r, q in files:
         d = np.load(ROOT / q["file"])
         P = d["poses"]
-        pos = P[0, :3] + np.cumsum(d["delta_pos_m"], axis=0)
+        # BOTH deltas must integrate: the rigid one back to `poses`, the gel
+        # one back to `gel_pos_m`. They are different trajectories — that is
+        # the point — so checking only one would let the other rot.
+        pos = P[0, :3] + np.cumsum(d["delta_rigid_pos_m"], axis=0)
         e = float(np.max(np.linalg.norm(pos - P[1:, :3], axis=1)))
+        g = d["gel_pos_m"][0] + np.cumsum(d["delta_gel_pos_m"], axis=0)
+        eg = float(np.max(np.linalg.norm(g - d["gel_pos_m"][1:], axis=1)))
         qq = Rotation.from_quat(P[0, 3:7])
-        for rv in d["delta_rotvec_rad"]:
-            qq = qq * Rotation.from_rotvec(rv)
+        for rv in d["delta_gel_rotvec_rad"]:
+            qq = Rotation.from_rotvec(rv) * qq        # world-frame: pre-multiply
         ang = float(np.degrees((qq.inv() * Rotation.from_quat(P[-1, 3:7])).magnitude()))
-        if e > 1e-9 or ang > 1e-6:
-            bad.append(f"{q['file']}: {e:.2e} m, {ang:.2e} deg")
+        if e > 1e-9 or eg > 1e-9 or ang > 1e-6:
+            bad.append(f"{q['file']}: rigid {e:.2e} m, gel {eg:.2e} m, {ang:.2e} deg")
     check(not bad, "the published deltas integrate back to the poses",
           f"{len(files)}/{len(files)} exact to 1e-9 m and 1e-6 deg"
           + (f"; {bad[:2]}" if bad else ""))
@@ -157,6 +164,49 @@ def main() -> int:
           f"{len(files)}/{len(files)} stay >= {man['view_margin_px']:.0f} px "
           f"inside the middle view"
           + (f"; {close[:2]}" if close else ""))
+
+    # 8 — EACH ACTION MOVES ALONG EXACTLY ONE AXIS. This is the defining
+    #     property of the set and nothing checked it. Measured at the GEL:
+    #     the pose 7-vec is the marker cluster's and rotations pivot on the
+    #     gel 65.7 mm away, so in RIGID-BODY coordinates a "pure rotation"
+    #     carries up to 75.7 mm of translation and a model fed that action
+    #     reads "translate 76 mm AND rotate 79 deg".
+    off = []
+    for r, q in files:
+        d = np.load(ROOT / q["file"])
+        ax = int(d["action_axis"])
+        dp, dr = d["delta_gel_pos_m"], d["delta_gel_rotvec_rad"]
+        if q["kind"] == "translation":
+            cross = float(np.abs(np.delete(dp, ax, axis=1)).max())
+            other = float(np.abs(dr).max())
+            unit = "m"
+        else:
+            cross = float(np.abs(np.delete(dr, ax, axis=1)).max())
+            other = float(np.abs(dp).max())
+            unit = "rad"
+        if cross > 1e-12 or other > 1e-9:
+            off.append(f"{q['file']}: off-axis {cross:.1e} {unit}, "
+                       f"other-kind {other:.1e}")
+        # and the 1-D form must reconstruct the full delta
+        recon = np.zeros_like(dp)
+        recon[:, ax] = d["action_scalar"]
+        tgt = dp if q["kind"] == "translation" else dr
+        if float(np.abs(recon - tgt).max()) > 1e-15:
+            off.append(f"{q['file']}: action_scalar does not reconstruct")
+    check(not off, "every action moves along exactly one axis, at the gel",
+          f"{len(files)}/{len(files)} have zero off-axis and zero other-kind "
+          f"motion, and action_scalar reconstructs the delta exactly"
+          + (f"; {off[:2]}" if off else ""))
+
+    # ...and the rigid-body delta is NOT zero for rotations, which is the whole
+    # reason the gel frame is the primary one. Asserted so the distinction
+    # cannot quietly collapse back.
+    rots = [(r, q) for r, q in files if q["kind"] == "rotation"]
+    mx = max(float(np.abs(np.load(ROOT / q["file"])["delta_rigid_pos_m"]).sum(0).max())
+             for _, q in rots)
+    check(mx > 0.005, "the rigid-body action is documented as different",
+          f"rotation probes carry up to {mx*1000:.0f} mm of marker-cluster "
+          f"translation, which is why delta_gel_* is primary")
 
     w = max(len(x) for _, x, _ in RESULTS)
     print()
