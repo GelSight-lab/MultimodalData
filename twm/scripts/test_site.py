@@ -148,10 +148,15 @@ def main() -> int:
             await b.close()
             return r
 
-    # ...and on a phone viewport, where the failure was first reported. Linux
-    # WebKit here lacks the proprietary H.264 decoder real Safari has, so it
-    # cannot stand in for an iPhone; Chromium under a mobile device profile at
-    # least exercises the small-screen layout and the lazy-load path.
+    # ...and on a phone viewport, where the failure was first reported.
+    #
+    # Playwright's Linux WebKit is not a stand-in for Safari, but NOT for the
+    # reason I first wrote here. I claimed it lacked the proprietary H.264
+    # decoder; measured, its canPlayType returns "probably" for baseline, for
+    # high, AND for mp4v — the codec real Safari refuses and that broke this
+    # page. It is over-permissive, so it would have passed the original bug.
+    # Chromium under a mobile device profile exercises the small-screen layout
+    # and the lazy-load path; neither engine here can certify Safari playback.
     vids = [(p_, v["vsrc"]) for p_, v in au.items() if v.get("vsrc")]
     vres = []
     for p_, src in vids:
