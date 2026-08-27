@@ -17,6 +17,13 @@ and neither of which a figure would have shown:
 from __future__ import annotations
 
 import numpy as np
+import sys as _sys
+from pathlib import Path as _Path
+# repo root, so `force_recovery` / `twm` / `react_toolbox` import however
+# this file is invoked. Six scripts lacked this and failed at import; all
+# six sat in validate_all's "slow" skip list, so nothing ran them.
+_sys.path.insert(0, str(_Path(__file__).resolve().parents[1]))
+
 
 from force_recovery import debug_gallery as dg
 from force_recovery.poisson import free_boundary_ok

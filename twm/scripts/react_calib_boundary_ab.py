@@ -21,6 +21,13 @@ from pathlib import Path
 
 import numpy as np
 from PIL import Image
+import sys as _sys
+from pathlib import Path as _Path
+# repo root, so `force_recovery` / `twm` / `react_toolbox` import however
+# this file is invoked. Six scripts lacked this and failed at import; all
+# six sat in validate_all's "slow" skip list, so nothing ran them.
+_sys.path.insert(0, str(_Path(__file__).resolve().parents[1]))
+
 
 from force_recovery import react_calib as RC
 from force_recovery.debug_gallery import LUT, CNT

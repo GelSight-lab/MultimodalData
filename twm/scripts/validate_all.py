@@ -37,6 +37,7 @@ SLOW = {
     "test_site.py": "drives the live Space in a browser; needs network",
     "test_published_toolbox.py": "downloads the toolbox from the Hub; needs network",
     "test_doc_references.py": "reads every published doc from the Hub; needs network",
+    "test_reproducible.py": "clean-room rebuild from the Hub, ~300 MB download",
 }
 
 
@@ -50,9 +51,23 @@ def main() -> int:
     tests = sorted(HERE.glob("test_*.py"))
     if a.only:
         tests = [t for t in tests if a.only in t.name]
-    rows, skipped = [], []
+    rows, skipped, unloadable = [], [], []
     for t in tests:
         if t.name in SLOW and not a.include_slow:
+            # SKIPPED IS NOT UNCHECKED. Six of these were broken at import —
+            # `ModuleNotFoundError: force_recovery`, because they lacked the
+            # sys.path bootstrap their siblings have — and the skip list hid it
+            # for as long as it existed. Naming a script in a skip list does not
+            # run it. Importing the module executes its top-level imports while
+            # leaving main() alone, which is exactly the part that was rotting.
+            imp = subprocess.run(
+                [sys.executable, "-c",
+                 f"import sys; sys.path.insert(0, {str(HERE)!r}); "
+                 f"import {t.stem}"],
+                capture_output=True, text=True, timeout=120)
+            if imp.returncode != 0:
+                unloadable.append(
+                    (t.name, (imp.stderr.strip().splitlines() or ["?"])[-1][:90]))
             skipped.append((t.name, SLOW[t.name]))
             continue
         t0 = time.time()
@@ -68,7 +83,12 @@ def main() -> int:
 
     bad = [r for r in rows if r[1] != 0]
     print(f"\n{len(rows)} checks run, {len(rows)-len(bad)} passing, {len(bad)} failing"
-          f"{f', {len(skipped)} skipped as slow' if skipped else ''}")
+          f"{f', {len(skipped)} skipped as slow' if skipped else ''}"
+          f"{f' ({len(unloadable)} of them DO NOT IMPORT)' if unloadable else ''}")
+    if unloadable:
+        print("\nskipped AND broken — these never ran and could not have:")
+        for n, e in unloadable:
+            print(f"   {n:<44} {e}")
     if skipped:
         print("\nskipped (run with --include-slow):")
         for n, why in skipped:
@@ -77,7 +97,7 @@ def main() -> int:
         print(f"\n{'='*70}\nFAIL  {name}  (exit {code})\n{'='*70}")
         tail = [l for l in out.splitlines() if l.strip()][-25:]
         print("\n".join(tail))
-    return 1 if bad else 0
+    return 1 if (bad or unloadable) else 0
 
 
 if __name__ == "__main__":

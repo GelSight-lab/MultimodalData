@@ -60,10 +60,33 @@ EXPECTED_EPOCH = {"motherboard": "2026-05-12", "pushT": "2026-06-26"}
 def calib_dir(task: str) -> Path:
     """Directory of camera extrinsics valid for `task`.
 
-    Raises on an unknown task rather than falling back to a default: a wrong
-    calibration does not look wrong, it looks like a slightly miscalibrated
-    rig, which is exactly how this shipped unnoticed.
+    Looked up in this order, so the module works outside the repository it
+    lives in:
+
+        1. $REACT_CALIB                 explicit override
+        2. $REACT_RELEASE/<task>/calibration   the PUBLISHED layout
+        3. CALIB_DIRS[task]             this repo's working layout
+
+    Until (2) existed, `calib_dir` resolved a path relative to this file, so a
+    clean-room run of `build_probe_testset.py` died on
+    "calibration dir for 'motherboard' missing: .../calibration/result backup"
+    — a directory that exists on exactly one machine. The dataset publishes the
+    same files under `data/<task>/calibration/`; nothing was missing except the
+    lookup.
+
+    Raises on an unknown task rather than falling back to another task's
+    extrinsics: a wrong calibration does not look wrong, it looks like a
+    slightly miscalibrated rig, which is how it shipped unnoticed once.
     """
+    import os as _os
+    env = _os.environ.get("REACT_CALIB")
+    if env and Path(env).is_dir():
+        return Path(env)
+    rel = _os.environ.get("REACT_RELEASE")
+    if rel:
+        cand = Path(rel) / task / "calibration"
+        if cand.is_dir():
+            return cand
     try:
         d = CALIB_DIRS[task]
     except KeyError:
@@ -72,7 +95,10 @@ def calib_dir(task: str) -> Path:
             f"calib_epoch.CALIB_DIRS — do not fall back to another task's "
             f"extrinsics") from None
     if not d.is_dir():
-        raise FileNotFoundError(f"calibration dir for {task!r} missing: {d}")
+        raise FileNotFoundError(
+            f"calibration dir for {task!r} missing: {d}. Set REACT_CALIB, or "
+            f"REACT_RELEASE so that $REACT_RELEASE/{task}/calibration exists "
+            f"(the dataset publishes it there).")
     return d
 
 

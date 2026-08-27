@@ -27,11 +27,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from react_paths import force_meta, raw_root, release_root, testset_root   # noqa: E402
+from react_paths import force_meta, release_root, testset_root   # noqa: E402
 
 import cv2                                                     # noqa: E402
-import h5py                                                    # noqa: E402
-import hdf5plugin                                              # noqa: E402,F401
 import numpy as np                                             # noqa: E402
 import pyarrow.parquet as pq                                   # noqa: E402
 
@@ -40,7 +38,6 @@ from react_toolbox.probe_eval import project_gt                # noqa: E402
 from twm.calib_epoch import calib_dir, world_residual          # noqa: E402
 
 REL = force_meta("motherboard")
-H5R = raw_root("motherboard")
 CAM_H5 = {"left": 1, "middle": 2, "right": 0}
 VIEWS = ("left", "middle", "right")
 # The context a tactile world model conditions on is not three camera views.
@@ -75,7 +72,12 @@ def _episodes():
         if d.name not in TRUSTED:
             continue
         for p in sorted(d.glob("*.parquet")):
-            if (H5R / d.name / f"{p.stem}.h5").exists():
+            # gated on the VIDEOS, not the raw HDF5. The frame reading moved
+            # to the published videos but this filter did not, so a clean-room
+            # run found zero usable episodes and reported "0 probes over 0
+            # start frames" — success-shaped output for a total failure.
+            vids = release_root("motherboard") / "videos" / d.name / p.stem
+            if all((vids / f"{s}.mp4").is_file() for s in STREAMS):
                 out.append((d.name, p.stem))
     return out
 
@@ -311,10 +313,22 @@ def main() -> int:
     manifest["n_runs"] = made
     manifest["n_probes"] = sum(p["n_probes"] for p in manifest["probes"])
     (out / "manifest.json").write_text(json.dumps(manifest, indent=1))
-    # The README is SOURCE, not output. It lived in the export directory once
-    # and the next rebuild's rmtree deleted it.
-    shutil.copy(Path(__file__).resolve().parents[1] / "docs" /
-                "probe_testset_README.md", out / "README.md")
+    # The README is SOURCE, not output — it lived in the export directory once
+    # and the next rebuild's rmtree deleted it. Searched rather than assumed:
+    # hard-coding the repo's docs/ made a clean-room rebuild die on a path that
+    # exists only here, which is the same failure calib_dir had.
+    here = Path(__file__).resolve().parent
+    for cand in (here.parents[0] / "docs" / "probe_testset_README.md",
+                 here / "docs" / "probe_testset_README.md",
+                 here.parent / "docs" / "probe_testset_README.md",
+                 Path.cwd() / "docs" / "probe_testset_README.md"):
+        if cand.is_file():
+            shutil.copy(cand, out / "README.md")
+            break
+    else:
+        print("  note: probe_testset_README.md not found; package built without "
+              "it. Fetch docs/probe_testset_README.md from the dataset to "
+              "include it.", flush=True)
     print(f"\n{manifest['n_probes']} probes over {made} start frames -> {out}")
     return 0 if made == args.runs else 1
 
