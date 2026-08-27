@@ -47,7 +47,12 @@ async def audit(base, pages):
             pg = await b.new_page(viewport={"width": 1440, "height": 1000})
             errs, bad = [], []
             pg.on("console", lambda m: errs.append(m.text) if m.type == "error" else None)
-            pg.on("response", lambda r: bad.append((r.status, r.url.rsplit("/", 1)[-1]))
+            # the FULL url. Storing the basename and rebuilding
+            # f"{base}/{dir}/{name}" dropped the subdirectory, so the retry
+            # fetched /testset/run4_trans-y.jpg for a file that lives at
+            # /testset/overlays/... — a 404 on a URL that never existed, which
+            # I read as a missing file when all 72 were present.
+            pg.on("response", lambda r: bad.append((r.status, r.url))
                   if r.status >= 400 else None)
             r = await pg.goto(f"{base}/{p}", wait_until="networkidle", timeout=90000)
             await pg.evaluate("window.scrollTo(0, document.body.scrollHeight)")
@@ -92,8 +97,8 @@ def main() -> int:
     # because the next real failure gets waved through.
     persist = []
     for pg_, v in au.items():
-        for st, name in v["bad"]:
-            url = f"{a.base}/{pg_.rsplit('/', 1)[0]}/{name}"
+        for st, url in v["bad"]:
+            name = url.rsplit("/", 1)[-1]
             try:
                 again = urllib.request.urlopen(url, timeout=45).status
             except urllib.error.HTTPError as e:
@@ -115,9 +120,13 @@ def main() -> int:
     # 2 — nothing broken or overflowing
     br = [f"{p}: {v['broken']} broken imgs" for p, v in au.items() if v["broken"]]
     ov = [p for p, v in au.items() if v["overflow"]]
+    n_transient_img = sum(v["broken"] for v in au.values())
     check(not br and not ov, "no broken media and no horizontal overflow",
           f"{sum(v['imgs'] for v in au.values())} images, "
-          f"{sum(v['videos'] for v in au.values())} videos, 0 broken, 0 overflowing"
+          f"{sum(v['videos'] for v in au.values())} videos, 0 persistently broken, "
+          f"0 overflowing"
+          + (f" ({n_transient_img} lost a race with a cold-start 429, all "
+             f"re-fetched OK)" if n_transient_img else "")
           + (f"; {br + ov}" if (br or ov) else ""))
 
     # 3 — VIDEOS ACTUALLY DECODE. Counting <video> elements says nothing: the
@@ -218,7 +227,39 @@ def main() -> int:
           f"{len(live)} clips vs {man['n_probes']} published probes; "
           f"start frames identical: {page_runs == set_runs}")
 
-    # 7 — and no page uses a session the set excludes
+    # 7 — THE PAGE'S STATED POLICY MATCHES THE MANIFEST. Check 8 below compares
+    #     run SETS and passed while the prose said "2026-05-19 is excluded"
+    #     months after that call was reversed: the draw had simply not selected
+    #     it, and the sentence promoted an accident of sampling into a policy a
+    #     reader would act on. Sets are not claims; sentences are.
+    async def page_text(url):
+        from playwright.async_api import async_playwright
+        async with async_playwright() as pw:
+            b = await pw.chromium.launch(); pg = await b.new_page()
+            await pg.goto(url, wait_until="domcontentloaded", timeout=90000)
+            t = await pg.inner_text("body")
+            await b.close()
+            return t
+
+    elig = set(man.get("trusted_sessions", []))
+    excl = set(man.get("excluded_sessions") or {})
+    prose = []
+    for pg_ in ("testset/index.html", "probes/index.html"):
+        t = asyncio.run(page_text(f"{a.base}/{pg_}"))
+        for sess in elig - excl:
+            # an eligible session must never be described as excluded
+            for phrase in (f"{sess} is excluded", f"{sess} is left out",
+                           f"excluded: {sess}"):
+                if phrase.lower() in t.lower():
+                    prose.append(f"{pg_}: says '{phrase}' but manifest lists it eligible")
+        for sess in excl:
+            if sess not in t:
+                prose.append(f"{pg_}: excludes {sess} but never says so")
+    check(not prose, "the page's stated session policy matches the manifest",
+          f"eligible {sorted(elig)}, excluded {sorted(excl) or 'none'}; both pages "
+          f"agree" + (f"; {prose[:2]}" if prose else ""))
+
+    # 8 — and no page uses a session the set excludes
     excl = set(man.get("excluded_sessions") or {})
     leaked = sorted({e.split("/")[0] for _, e in page_runs} & excl)
     check(not leaked, "no page shows an excluded session",

@@ -17,6 +17,42 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 SRC = Path("/media/yxma/Disk1/twm/probe_testset")
 
 
+def _sessions_note(man, runs):
+    """State what the POLICY is and what this DRAW happened to contain.
+
+    An earlier version of this page said "2026-05-19 is excluded" long after
+    that decision was reversed. The draw happened not to select it, and the
+    prose turned an accident of sampling into a stated policy — a reader would
+    have concluded the session is unusable. Both facts are now read from the
+    manifest, so the page cannot outlive the decision.
+    """
+    used = sorted({r["episode"].split("/")[0] for r in runs})
+    elig = sorted(man.get("trusted_sessions", []))
+    excl = man.get("excluded_sessions") or {}
+    parts = [f"Start frames are drawn from <b>held-out intervals</b> of "
+             f"<code>splits.json</code> &mdash; never training frames."]
+    parts.append(f"Eligible sessions: {', '.join(elig)}. "
+                 f"This draw happened to select {', '.join(used)}"
+                 + (f"; {', '.join(sorted(set(elig) - set(used)))} was not sampled "
+                    f"this time, which is chance, not a judgement about it."
+                    if set(elig) - set(used) else "."))
+    if excl:
+        parts.append("Excluded by policy: " + "; ".join(
+            f"<b>{k}</b> &mdash; {v}" for k, v in excl.items()))
+    resid = man.get("world_residual", {})
+    noted = [k for k, v in resid.items() if v and v.get("yaw_deg") is None
+             and v.get("in_plane_mm") is None and k in used]
+    if "2026-05-19" in elig:
+        parts.append("<b>2026-05-19</b> had its OptiTrack world redefined "
+                     "mid-collection; the release applies a translation-only "
+                     "correction and the residual yaw about the table normal is "
+                     "<b>unmeasured</b> (about 16 px at the workspace). It is "
+                     "included with that stated in <code>world_residual</code> "
+                     "rather than dropped &mdash; a bounded, declared error is "
+                     "not a reason to discard a fifth of the sessions.")
+    return " ".join(parts)
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", default="/media/yxma/Disk1/twm/testset_page")
@@ -94,17 +130,14 @@ ground truth. Red: a deliberately wrong rollout, offset 25&nbsp;mm in world x &m
 it reads 18&ndash;19&nbsp;px against a ~6&nbsp;px noise floor. Dimmed: the hand that
 must stay still.</figcaption></div>
 <div class="cards">__CARDS__</div>
-<p><b>Start frames come only from 2026-05-10 and 2026-05-11.</b> 2026-05-19 is
-excluded: its OptiTrack world was redefined and the yaw about the table normal
-remains unmeasured to &plusmn;2.3&deg;, which is 16&nbsp;px at the workspace &mdash;
-three times the noise floor. Projected ground truth is the point of this set, so a
-session whose projection carries an unstated bias is left out.</p>
+<p>__SESSIONS__</p>
 __SECS__
 </div></body></html>"""
     html = (html.replace("__N__", str(len(allp)))
                 .replace("__R__", str(len(runs)))
                 .replace("__CARDS__", "".join(
                     f"<div class='card'><b>{a}</b><span>{b}</span></div>" for a, b in cards))
+                .replace("__SESSIONS__", _sessions_note(man, runs))
                 .replace("__SECS__", "".join(sec)))
     (out / "index.html").write_text(html)
     shutil.copy(SRC / "README.md", out / "README.md")

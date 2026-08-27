@@ -166,6 +166,31 @@ def main() -> int:
     return 0
 
 
+def _sessions_note(man, recs):
+    """Read the policy from the manifest, not from prose written months ago.
+
+    This page once said "2026-05-19 is excluded" after that call was reversed:
+    the draw simply had not selected it, and the sentence promoted an accident
+    of sampling to a stated policy.
+    """
+    used = sorted({r["episode"].split("/")[0] for r in recs})
+    elig = sorted(man.get("trusted_sessions", []))
+    excl = man.get("excluded_sessions") or {}
+    out = [f"Start frames come from <b>held-out intervals</b> of "
+           f"<code>splits.json</code>, never training frames. "
+           f"Eligible: {', '.join(elig)}; this draw selected {', '.join(used)}"]
+    miss = sorted(set(elig) - set(used))
+    if miss:
+        out.append(f"({', '.join(miss)} was not sampled this time &mdash; chance, "
+                   f"not a judgement).")
+    else:
+        out.append(".")
+    if excl:
+        out.append("Excluded by policy: " + "; ".join(
+            f"<b>{k}</b> &mdash; {v}" for k, v in excl.items()) + ".")
+    return " ".join(out)
+
+
 def _page(out: Path, recs, man) -> None:
     import statistics as st
     order = [f"{k}{s}{a}" for k in ("trans", "rot") for a in "xyz" for s in "+-"]
@@ -228,15 +253,13 @@ unknown &mdash; that is the whole point of a probe &mdash; so animating anything
 but the sensors would be inventing pixels. What moves is the only thing known:
 where the sensor would be. The dimmed hand is the one that must stay still; the
 circles are the 0.12&nbsp;m exclusion zones.</p>
-<p>Start frames come only from <b>2026-05-10 and 2026-05-11</b>. 2026-05-19 is
-excluded &mdash; its OptiTrack world was redefined and the yaw about the table
-normal is unmeasured to &plusmn;2.3&deg;, 16&nbsp;px at the workspace. An earlier
-version of this page included one such run while the test set excluded it.</p>
+<p>__SESSIONS__</p>
 <div class="cards">__CARDS__</div>
 __SECS__
 </div></body></html>"""
     (out / "index.html").write_text(
-        html.replace("__CARDS__", "".join(
+        html.replace("__SESSIONS__", _sessions_note(man, recs))
+            .replace("__CARDS__", "".join(
             f"<div class='card'><b>{a}</b><span>{b}</span></div>" for a, b in cards))
             .replace("__SECS__", secs))
 

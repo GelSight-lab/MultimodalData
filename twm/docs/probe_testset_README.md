@@ -224,6 +224,12 @@ Without that the context images would be *training* frames: the action is novel
 either way, but the model would already have seen the picture it starts from,
 and nothing would say so.
 
+`meta.json` records `context_rows` — **release-parquet row indices**, not raw
+HDF5 frames and not seconds. Row `r` is camera frame `trim + r`, where
+`trim = source_h5_frame[0]`; `source_h5_frames` in the same file gives the
+mapping explicitly so you never have to apply it yourself. The four rows are
+consecutive, one camera frame apart.
+
 The release holds out **intervals from inside episodes**, not whole episodes.
 There are 32 motherboard episodes; spending them on episode-level held-out data
 buys independence a short-horizon world model does not need — what it must
@@ -241,12 +247,18 @@ in the first six episodes alone.
 
 ### Sessions
 
-All three sessions are used. **2026-05-19** had its OptiTrack world redefined
-mid-collection; the release applies the translation-only correction
-(230, 0, 175) mm, and the residual yaw about the table normal is **unmeasured**
-— attempts scatter ±2.3°, about 16 px at the workspace. It is included with
-that stated in `manifest.json` under `world_residual` and `session_note`, rather
-than the session being dropped to hide a bounded, declared error.
+All three sessions are **eligible**; which ones a given draw contains is
+chance. Run `build_probe_testset.py` with a different `--seed` and the mix
+changes.
+
+**2026-05-19** had its OptiTrack world redefined mid-collection. The release
+applies the translation-only correction (230, 0, 175) mm, and the residual yaw
+about the table normal is **unmeasured** — attempts scatter ±2.3°, about 16 px
+at the workspace. It is included with that stated in `manifest.json` under
+`world_residual` and `session_note`, rather than dropped: a bounded, declared
+error is not a reason to discard a fifth of the sessions. An earlier build did
+drop it, and an earlier version of the web page went on saying so after the
+decision was reversed — the pages now generate that sentence from the manifest.
 
 ## Reproducing
 
