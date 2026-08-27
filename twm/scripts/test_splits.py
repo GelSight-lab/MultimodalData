@@ -18,10 +18,12 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
+from react_paths import release_root   # noqa: E402
+
 import numpy as np                                             # noqa: E402
 
 RESULTS: list[tuple[bool, str, str]] = []
-REL = Path("/media/yxma/Disk1/twm/release/motherboard")
+REL = release_root("motherboard")
 
 
 def check(ok: bool, name: str, evidence: str) -> None:

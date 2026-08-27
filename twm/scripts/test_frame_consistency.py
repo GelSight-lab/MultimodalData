@@ -47,12 +47,14 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
+from react_paths import force_meta, raw_root   # noqa: E402
+
 import numpy as np                                             # noqa: E402
 import pyarrow.parquet as pq                                   # noqa: E402
 
 RESULTS: list[tuple[bool, str, str]] = []
-REL = Path("/media/yxma/Disk1/twm/release_force/motherboard/meta")
-H5R = Path("/media/yxma/Disk1/twm/data/motherboard")
+REL = force_meta("motherboard")
+H5R = raw_root("motherboard")
 CAM_H5 = {"left": 1, "middle": 2, "right": 0}
 VIEWS = ("left", "middle", "right")
 TRUSTED = ("2026-05-10", "2026-05-11")

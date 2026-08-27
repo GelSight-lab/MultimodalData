@@ -36,6 +36,7 @@ SLOW = {
     "test_frame_consistency.py": "reads depth from 32 episodes x 3 cameras, ~10 min",
     "test_site.py": "drives the live Space in a browser; needs network",
     "test_published_toolbox.py": "downloads the toolbox from the Hub; needs network",
+    "test_doc_references.py": "reads every published doc from the Hub; needs network",
 }
 
 

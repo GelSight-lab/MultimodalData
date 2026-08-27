@@ -27,7 +27,9 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-RELEASE = Path("/media/yxma/Disk1/twm/release")
+from react_paths import release_root   # noqa: E402
+
+RELEASE = release_root()
 
 
 def main() -> int:

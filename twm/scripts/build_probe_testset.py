@@ -27,6 +27,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from react_paths import force_meta, raw_root, release_root, testset_root   # noqa: E402
+
 import cv2                                                     # noqa: E402
 import h5py                                                    # noqa: E402
 import hdf5plugin                                              # noqa: E402,F401
@@ -37,8 +39,8 @@ import react_toolbox as T                                      # noqa: E402
 from react_toolbox.probe_eval import project_gt                # noqa: E402
 from twm.calib_epoch import calib_dir, world_residual          # noqa: E402
 
-REL = Path("/media/yxma/Disk1/twm/release_force/motherboard/meta")
-H5R = Path("/media/yxma/Disk1/twm/data/motherboard")
+REL = force_meta("motherboard")
+H5R = raw_root("motherboard")
 CAM_H5 = {"left": 1, "middle": 2, "right": 0}
 VIEWS = ("left", "middle", "right")
 # All three sessions. 2026-05-19 is included with the translation-only
@@ -76,7 +78,7 @@ def _episodes():
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--runs", type=int, default=6)
-    ap.add_argument("--out", default="/media/yxma/Disk1/twm/probe_testset")
+    ap.add_argument("--out", default=str(testset_root()))
     ap.add_argument("--seed", type=int, default=0)
     args = ap.parse_args()
 
@@ -90,7 +92,7 @@ def main() -> int:
     shutil.copytree(stage / "calibration", out / "calibration")
 
     eps = _episodes()
-    splits = json.loads((Path("/media/yxma/Disk1/twm/release/motherboard") /
+    splits = json.loads((release_root("motherboard") /
                          SPLITS).read_text())
     rng = np.random.default_rng(args.seed)
     manifest = {

@@ -13,6 +13,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from react_paths import testset_root   # noqa: E402
+
 import cv2                                                     # noqa: E402
 import numpy as np                                             # noqa: E402
 
@@ -31,7 +33,7 @@ def _hud(img, text, h=16, scale=0.36):
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--root", default="/media/yxma/Disk1/twm/probe_testset")
+    ap.add_argument("--root", default=str(testset_root()))
     args = ap.parse_args()
     root = Path(args.root)
     cal = load_calibration(root)

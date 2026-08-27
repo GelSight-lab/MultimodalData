@@ -22,12 +22,14 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from react_paths import out_root, testset_root   # noqa: E402
+
 import cv2                                                     # noqa: E402
 import numpy as np                                             # noqa: E402
 
 from react_toolbox.calibration import load_calibration          # noqa: E402
 
-SRC = Path("/media/yxma/Disk1/twm/probe_testset")
+SRC = testset_root()
 FPS = 30.0
 
 
@@ -129,7 +131,7 @@ def render(frame_rgb, poses, cal, cam, out_mp4, hud, held_pose, held_gel,
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--out", default="/media/yxma/Disk1/twm/probe_clips")
+    ap.add_argument("--out", default=str(out_root("probe_clips")))
     args = ap.parse_args()
     out = Path(args.out)
     if out.exists():

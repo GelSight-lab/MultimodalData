@@ -11,13 +11,15 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
+from react_paths import release_root   # noqa: E402
+
 from twm.splits import (MAX_TRAIN_WINDOW, TARGET_TEST_FRACTION,   # noqa: E402
                         TEST_INTERVAL_FRAMES, build_splits)
 
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--root", default="/media/yxma/Disk1/twm/release/motherboard")
+    ap.add_argument("--root", default=str(release_root("motherboard")))
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--test-len", type=int, default=TEST_INTERVAL_FRAMES)
     ap.add_argument("--max-train-window", type=int, default=MAX_TRAIN_WINDOW)

@@ -201,6 +201,30 @@ non-planar contact cloud and has been retracted.
 `calib_epoch.world_residual("motherboard", date)` returns all of this
 programmatically. Use it to bound your own error rather than assuming zero.
 
+## 7b. Running the scripts
+
+Everything the sections above tell you to run ships under
+[`scripts/`](scripts/). They read their roots from the environment, so:
+
+```
+REACT_RELEASE=/path/to/react/data python scripts/build_splits.py
+REACT_RELEASE=... python scripts/test_splits.py
+```
+
+| variable | what it points at | published? |
+|---|---|---|
+| `REACT_RELEASE` | the release tree — `episodes.jsonl`, `splits.json`, `meta/`, `videos/` | **yes**, this dataset |
+| `REACT_FORCE` | a release whose `meta/` has the force columns; defaults to `REACT_RELEASE` | yes |
+| `REACT_TESTSET` | the probe package | yes, `test_sets/probes_v1` |
+| `REACT_OUT` | where build scripts write | — |
+| `REACT_RAW` | the original HDF5 capture tree | **no**, ~1 TB |
+
+**What needs `REACT_RAW`, and therefore cannot be reproduced from the release
+alone:** `build_probe_testset.py` and `render_probe_overlays.py` read original
+camera frames for the probe context images, and `test_frame_consistency.py`
+reads the depth stream. Everything else — the split, its tests, the probe
+package's own tests, the pages — runs from what is published.
+
 ## 8. Adding a session or a task
 
 The pieces that must be told about a new session, in order:

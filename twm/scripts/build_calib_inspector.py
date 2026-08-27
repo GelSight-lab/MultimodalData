@@ -28,6 +28,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from react_paths import out_root   # noqa: E402
+
 import cv2                                                     # noqa: E402
 import h5py                                                    # noqa: E402
 import hdf5plugin                                              # noqa: E402,F401
@@ -178,7 +180,7 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--batch", default="a", choices=("a", "b"))
     ap.add_argument("--date", default="2026-05-19")
-    ap.add_argument("--out", default="/media/yxma/Disk1/twm/calib_inspector")
+    ap.add_argument("--out", default=str(out_root("calib_inspector")))
     ap.add_argument("--slug", default=None,
                     help="output subdirectory; defaults to the batch letter")
     args = ap.parse_args()

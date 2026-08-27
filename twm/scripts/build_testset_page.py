@@ -14,7 +14,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-SRC = Path("/media/yxma/Disk1/twm/probe_testset")
+from react_paths import out_root, testset_root   # noqa: E402
+
+SRC = testset_root()
 
 
 def _sessions_note(man, runs):
@@ -55,7 +57,7 @@ def _sessions_note(man, runs):
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--out", default="/media/yxma/Disk1/twm/testset_page")
+    ap.add_argument("--out", default=str(out_root("testset_page")))
     args = ap.parse_args()
     out = Path(args.out)
     if out.exists():

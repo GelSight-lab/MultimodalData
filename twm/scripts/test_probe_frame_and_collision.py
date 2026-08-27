@@ -35,6 +35,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
+from react_paths import force_meta   # noqa: E402
+
 import numpy as np                                              # noqa: E402
 
 RESULTS: list[tuple[bool, str, str]] = []
@@ -104,7 +106,7 @@ def main() -> int:
               if ok else "projection failed")
 
     # 3 / 4 — one sensor moves, chosen at random, and no collision
-    P = ("/media/yxma/Disk1/twm/release_force/motherboard/meta/"
+    P = (str(force_meta("motherboard"))+"/"
          "2026-05-11/episode_003.parquet")
     t = pq.read_table(P, columns=["sensor_left_pose", "sensor_right_pose"]).to_pydict()
     poses = {s: np.asarray([x for x in t[f"sensor_{s}_pose"]], float)

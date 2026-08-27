@@ -24,10 +24,12 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from react_paths import release_root, testset_root   # noqa: E402
+
 import numpy as np                                             # noqa: E402
 
 RESULTS: list[tuple[bool, str, str]] = []
-ROOT = Path("/media/yxma/Disk1/twm/probe_testset")
+ROOT = testset_root()
 
 
 def check(ok: bool, name: str, evidence: str) -> None:
@@ -122,7 +124,7 @@ def main() -> int:
     # 5 — START FRAMES ARE HELD-OUT FRAMES. Without this the context images
     #     were training frames: the action is novel but the model had already
     #     seen the picture it starts from, and nothing said so.
-    sp = json.loads((Path("/media/yxma/Disk1/twm/release/motherboard") /
+    sp = json.loads((release_root("motherboard") /
                      "splits.json").read_text())
     leaked = []
     for r in runs:

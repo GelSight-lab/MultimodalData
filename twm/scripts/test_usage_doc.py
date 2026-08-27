@@ -19,13 +19,15 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
+from react_paths import force_meta, release_root   # noqa: E402
+
 import numpy as np                                             # noqa: E402
 import pyarrow.parquet as pq                                   # noqa: E402
 
 RESULTS: list[tuple[bool, str, str]] = []
 DOC = Path(__file__).resolve().parents[1] / "docs" / "USAGE.md"
-REL = Path("/media/yxma/Disk1/twm/release/motherboard")
-RELF = Path("/media/yxma/Disk1/twm/release_force/motherboard/meta")
+REL = release_root("motherboard")
+RELF = force_meta("motherboard")
 
 
 def check(ok: bool, name: str, evidence: str) -> None:
