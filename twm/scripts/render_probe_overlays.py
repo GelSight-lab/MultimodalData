@@ -43,7 +43,7 @@ def main() -> int:
     cam = cal["cams"]["middle"]
 
     for m in runs:
-        img = cv2.imread(str(root / f"probes/run{m['run']}/context/ctx3_middle.jpg"))[:, :, ::-1]
+        img = cv2.imread(str(root / f"probes/run{m['run']}/context/ctx3_view_middle.jpg"))[:, :, ::-1]
         gel_m, gel_o = cal[f"gel_{m['moving_side']}"], cal[f"gel_{m['held_side']}"]
         for q in m["probes"]:
             d = np.load(root / q["file"])
@@ -59,7 +59,7 @@ def main() -> int:
     for run, name in ((0, "trans+x"), (0, "rot+y"), (3, "trans-z"), (3, "rot-x")):
         m = runs[run]
         d = np.load(root / f"probes/run{run}/{name}.npz")
-        img = cv2.imread(str(root / f"probes/run{run}/context/ctx3_middle.jpg"))[:, :, ::-1]
+        img = cv2.imread(str(root / f"probes/run{run}/context/ctx3_view_middle.jpg"))[:, :, ::-1]
         gel_m, gel_o = cal[f"gel_{m['moving_side']}"], cal[f"gel_{m['held_side']}"]
         vis = overlay_gt(img, d["poses"], gel_m, cam, held_pose7=d["held_pose"],
                          held_gel_mm=gel_o, label=m["moving_side"][0].upper())

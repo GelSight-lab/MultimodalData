@@ -44,7 +44,7 @@ def fetch(root: Path):
             "test_sets/probes_v1/probes/run0/meta.json",
             "test_sets/probes_v1/probes/run0/trans+x.npz",
             "test_sets/probes_v1/probes/run0/rot+y.npz",
-            "test_sets/probes_v1/probes/run0/context/ctx3_middle.jpg"]
+            "test_sets/probes_v1/probes/run0/context/ctx3_view_middle.jpg"]
     want += [f"test_sets/probes_v1/calibration/T_mocap_to_cam_{v}.json"
              for v in ("left", "middle", "right")]
     want += [f"test_sets/probes_v1/calibration/T_gel_to_rigid_{s}.json"
@@ -73,7 +73,7 @@ SCRIPT = textwrap.dedent('''
     cam = cal["cams"]["middle"]
 
     # the README's example
-    img = cv2.imread(pkg + "/probes/run0/context/ctx3_middle.jpg")[:, :, ::-1]
+    img = cv2.imread(pkg + "/probes/run0/context/ctx3_view_middle.jpg")[:, :, ::-1]
     vis = overlay_gt(img, d["poses"], gel, cam, held_pose7=d["held_pose"],
                      held_gel_mm=cal["gel_" + meta["held_side"]])
     err = rollout_error(d["poses"], d["poses"], gel, cam)

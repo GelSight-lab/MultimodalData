@@ -144,7 +144,7 @@ def main() -> int:
     cam = cal["cams"]["middle"]
     recs = []
     for m in runs:
-        frame = cv2.imread(str(SRC / f"probes/run{m['run']}/context/ctx3_middle.jpg"))[:, :, ::-1]
+        frame = cv2.imread(str(SRC / f"probes/run{m['run']}/context/ctx3_view_middle.jpg"))[:, :, ::-1]
         gel_m = cal[f"gel_{m['moving_side']}"]
         gel_o = cal[f"gel_{m['held_side']}"]
         col = (255, 210, 63) if m["moving_side"] == "left" else (79, 195, 247)

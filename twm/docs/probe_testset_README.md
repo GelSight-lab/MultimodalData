@@ -49,7 +49,7 @@ every probe.*
 | | |
 |---|---|
 | Probes | **72** — 12 per start frame (6 translations, 6 rotations) |
-| Start frames | **6**, each 4 consecutive context frames × 3 camera views |
+| Start frames | **6**, each 4 consecutive context frames × **5 streams** (3 cameras + 2 tactile) |
 | Translation amplitude | **0.113 – 0.391 m** |
 | Rotation amplitude | **18.6 – 88.7°** |
 | Horizon | **1.50 – 4.27 s** at 30 Hz |
@@ -74,7 +74,8 @@ calibration/                       T_mocap_to_cam_{left,middle,right}.json
                                    T_gel_to_rigid_{left,right}.json
 probes/runN/
   meta.json                        episode, context rows, moving/held hand
-  context/ctx{0..3}_{view}.jpg     the frames a model conditions on
+  context/ctx{0..3}_view_{left,middle,right}.jpg    what a model conditions on
+  context/ctx{0..3}_tactile_{left,right}.jpg
   {trans,rot}{±x,±y,±z}.npz        one probe
 overlays/runN_<probe>.jpg          ground truth drawn on the last context frame
 overlay_example.jpg                the figure above
@@ -94,6 +95,7 @@ Each `.npz` holds:
 | `action_axis` / `action_sign` | scalar | 0/1/2 for x/y/z, and ±1 |
 | `delta_rigid_pos_m` / `delta_rigid_rotvec_rad` | (T, 3) | the marker cluster's motion instead |
 | `gt_px_{left,middle,right}` | (T+1, 2) | ground-truth gel-centre pixels |
+| `context_{tactile,force}_*` | (4,) | the numeric channels **at the context rows** — intensity, area, is_new, force, penetration |
 
 Poses are `[x, y, z, qx, qy, qz, qw]`, position in **metres**, quaternion in
 **xyzw** order (`scipy.spatial.transform.Rotation.from_quat`), in the OptiTrack
@@ -138,8 +140,10 @@ gel  = cal[f"gel_{run['moving_side']}"]
 cam  = cal["cams"]["middle"]
 
 # --- the model input: 4 context frames, and the action
-ctx    = [cv2.imread(f"{root}/probes/run0/context/ctx{i}_middle.jpg")[:, :, ::-1]
+ctx    = [cv2.imread(f"{root}/probes/run0/context/ctx{i}_view_middle.jpg")[:, :, ::-1]
           for i in range(4)]
+tac_l  = [cv2.imread(f"{root}/probes/run0/context/ctx{i}_tactile_left.jpg")[:, :, ::-1]
+          for i in range(4)]      # and tactile_right
 action = np.concatenate([d["delta_gel_pos_m"],
                          d["delta_gel_rotvec_rad"]], axis=1)   # (T, 6), at the gel
 # or, since each probe is one-directional, the same thing as one number:
@@ -229,6 +233,20 @@ HDF5 frames and not seconds. Row `r` is camera frame `trim + r`, where
 `trim = source_h5_frame[0]`; `source_h5_frames` in the same file gives the
 mapping explicitly so you never have to apply it yourself. The four rows are
 consecutive, one camera frame apart.
+
+**Context is five streams, not three.** The first export shipped only the
+camera views, which made the package unusable for the one thing it exists to
+test. Each start frame now ships `view_{left,middle,right}` and
+`tactile_{left,right}`, plus the numeric channels at those exact rows.
+
+The images come from the **published** `videos/` tree, not the unpublished raw
+HDF5, so the package can be rebuilt from what the dataset ships. Video frame
+`r` is parquet row `r` for every stream — measured against the raw capture at
+1.88 mean pixel difference where two adjacent raw frames differ by 4.89. The
+tactile videos are **already row-aligned**: cross-correlating a contact
+measure from the video against the parquet's `tactile_left_intensity` peaks at
+lag 0 with r = 0.980, falling off symmetrically. The +15-frame acquisition lag
+was applied at encode time, so nothing is re-applied here.
 
 The release holds out **intervals from inside episodes**, not whole episodes.
 There are 32 motherboard episodes; spending them on episode-level held-out data

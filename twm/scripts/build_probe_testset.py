@@ -43,6 +43,11 @@ REL = force_meta("motherboard")
 H5R = raw_root("motherboard")
 CAM_H5 = {"left": 1, "middle": 2, "right": 0}
 VIEWS = ("left", "middle", "right")
+# The context a tactile world model conditions on is not three camera views.
+# The first export shipped only those, which made the package unusable for the
+# thing it exists to test.
+TACTILE = ("tactile_left", "tactile_right")
+STREAMS = tuple(f"view_{v}" for v in VIEWS) + TACTILE
 # All three sessions. 2026-05-19 is included with the translation-only
 # correction the release already applies, (230, 0, 175) mm; its residual — the
 # unmeasured yaw about the table normal — is published in the manifest under
@@ -99,6 +104,11 @@ def main() -> int:
         "format": FORMAT_VERSION,
         "task": "motherboard",
         "views": list(VIEWS),
+        "context_streams": list(STREAMS),
+        "context_note": ("ctx{i}_{stream}.jpg for i in 0..3. Video frame r is "
+                         "parquet row r for every stream; the tactile videos "
+                         "are already row-aligned (the +15 acquisition lag was "
+                         "applied at encode time), so nothing is re-applied."),
         "context_frames": CONTEXT,
         "view_margin_px": VIEW_MARGIN_PX,
         "image_size": [640, 480],
@@ -145,9 +155,7 @@ def main() -> int:
     while made < args.runs and tried < args.runs * 14:
         tried += 1
         date, ep = eps[int(rng.integers(len(eps)))]
-        t = pq.read_table(REL / date / f"{ep}.parquet",
-                          columns=["sensor_left_pose", "sensor_right_pose",
-                                   "source_h5_frame"]).to_pydict()
+        t = pq.read_table(REL / date / f"{ep}.parquet").to_pydict()
         poses = {s: np.asarray([x for x in t[f"sensor_{s}_pose"]], float)
                  for s in ("left", "right")}
         trim = int(np.asarray(t["source_h5_frame"])[0])
@@ -176,16 +184,46 @@ def main() -> int:
         assert allow[np.asarray(r["context_rows"], int)].all(), \
             "start frame outside a held-out interval"
         rows = np.asarray(r["context_rows"], int)
-        with h5py.File(str(H5R / date / f"{ep}.h5"), "r") as f5:
-            ctx = {v: [f5[f"realsense/cam{CAM_H5[v]}/color"][trim + int(rr)][..., ::-1]
-                       for rr in rows] for v in VIEWS}
+        # FROM THE PUBLISHED VIDEOS, not the raw HDF5. The release ships
+        # view_{left,middle,right}.mp4 and tactile_{left,right}.mp4, and video
+        # frame r IS parquet row r: measured against the raw H5 at 1.88 mean
+        # pixel difference, where two ADJACENT raw frames differ by 4.89. (My
+        # first comparison said 11.46 because I compared cv2's BGR against an
+        # already channel-flipped array — the data was fine, the test was not.)
+        #
+        # The tactile videos are already row-aligned: cross-correlating a
+        # contact measure from the video against the parquet's
+        # tactile_left_intensity peaks at lag 0 with r = 0.980, falling off
+        # symmetrically. The +15 acquisition lag was applied at encode time, so
+        # nothing must be re-applied here.
+        #
+        # This removes the last dependency on the unpublished ~1 TB raw tree,
+        # so the test set can be rebuilt from what the dataset ships.
+        ctx = {}
+        for stream in STREAMS:
+            f = REL.parent / "videos" / date / ep / f"{stream}.mp4"
+            if not f.is_file():
+                f = release_root("motherboard") / "videos" / date / ep / f"{stream}.mp4"
+            cap = cv2.VideoCapture(str(f))
+            got = []
+            for rr in rows:
+                cap.set(cv2.CAP_PROP_POS_FRAMES, int(rr))
+                ok, fr = cap.read()
+                got.append(fr if ok else None)
+            cap.release()
+            if any(g is None for g in got):
+                ctx = None
+                break
+            ctx[stream] = got
+        if ctx is None:
+            continue
 
         run_dir = out / "probes" / f"run{made}"
         (run_dir / "context").mkdir(parents=True)
-        for v in VIEWS:
-            for i, im in enumerate(ctx[v]):
-                cv2.imwrite(str(run_dir / "context" / f"ctx{i}_{v}.jpg"),
-                            im[..., ::-1], [cv2.IMWRITE_JPEG_QUALITY, 95])
+        for stream, frames in ctx.items():
+            for i, im in enumerate(frames):
+                cv2.imwrite(str(run_dir / "context" / f"ctx{i}_{stream}.jpg"),
+                            im, [cv2.IMWRITE_JPEG_QUALITY, 95])
 
         side, other = r["moving_side"], r["held_side"]
         gel_m, gel_o = cal[f"gel_{side}"], cal[f"gel_{other}"]
@@ -202,6 +240,15 @@ def main() -> int:
             npz = {"poses": P, "held_pose": np.asarray(r["held_pose"], float),
                    "context_poses_moving": poses[side][rows],
                    "context_poses_held": poses[other][rows]}
+            # the numeric channels AT the context rows, so a model that reads
+            # scalars sees the same instants as the images
+            for col in ("tactile_left_intensity", "tactile_right_intensity",
+                        "tactile_left_area", "tactile_right_area",
+                        "tactile_left_is_new", "tactile_right_is_new",
+                        "force_left_normal_n", "force_right_normal_n",
+                        "force_left_penetration_mm", "force_right_penetration_mm"):
+                if col in t:
+                    npz[f"context_{col}"] = np.asarray(t[col])[rows]
             for v in VIEWS:
                 npz[f"gt_px_{v}"] = project_gt(P, gel_m, cal["cams"][v])
             # THE ACTION, IN THE GEL FRAME. Each probe moves along exactly one

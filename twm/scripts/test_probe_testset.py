@@ -66,10 +66,10 @@ def main() -> int:
             missing.append(f"{q['file']}: {sorted(need - set(d.files))}")
     n_ctx = sum(len(list((ROOT / f"probes/run{r['run']}/context").glob("*.jpg")))
                 for r in runs)
-    check(not missing and n_ctx == len(runs) * man["context_frames"] * len(man["views"]),
+    check(not missing and n_ctx == len(runs) * man["context_frames"] * len(man["context_streams"]),
           "every probe ships its action, ground truth and context",
-          f"{len(files)} probes, {n_ctx} context images "
-          f"({len(runs)} runs x {man['context_frames']} frames x {len(man['views'])} views)"
+          f"{len(files)} probes, {n_ctx} context images ({len(runs)} runs x "
+          f"{man['context_frames']} frames x {len(man['context_streams'])} streams)"
           + (f"; missing {missing[:2]}" if missing else ""))
 
     # 2 — the stored ground-truth pixels recompute from the PACKAGED calibration
@@ -151,7 +151,7 @@ def main() -> int:
     from react_toolbox.probe_eval import overlay_gt
     r, q = files[0]
     d = np.load(ROOT / q["file"])
-    img = cv2.imread(str(ROOT / f"probes/run{r['run']}/context/ctx3_middle.jpg"))[:, :, ::-1]
+    img = cv2.imread(str(ROOT / f"probes/run{r['run']}/context/ctx3_view_middle.jpg"))[:, :, ::-1]
     vis = overlay_gt(img, d["poses"], cal[f"gel_{r['moving_side']}"],
                      cal["cams"]["middle"], held_pose7=d["held_pose"],
                      held_gel_mm=cal[f"gel_{r['held_side']}"])
@@ -226,6 +226,50 @@ def main() -> int:
     check(mx > 0.005, "the rigid-body action is documented as different",
           f"rotation probes carry up to {mx*1000:.0f} mm of marker-cluster "
           f"translation, which is why delta_gel_* is primary")
+
+    # 11 — THE CONTEXT INCLUDES TACTILE. The first export shipped three camera
+    #      views and nothing else, which made the package unusable for the one
+    #      thing it exists to test: a TACTILE world model.
+    tac = [s_ for s_ in man["context_streams"] if s_.startswith("tactile")]
+    have = []
+    for r in runs:
+        for i in range(man["context_frames"]):
+            for s_ in tac:
+                have.append((ROOT / f"probes/run{r['run']}/context/ctx{i}_{s_}.jpg").is_file())
+    check(len(tac) == 2 and all(have) and have,
+          "the context includes both tactile streams, not only cameras",
+          f"streams {man['context_streams']}; {sum(have)}/{len(have)} tactile "
+          f"context images present")
+
+    # 12 — and every context image IS the release video's frame at that row.
+    #      Saved from the published videos rather than the unpublished raw tree,
+    #      so this also proves the package can be rebuilt from what ships.
+    rel = release_root("motherboard")
+    diffs = []
+    for r in runs[:2]:
+        d_, e_ = r["episode"].split("/")
+        for s_ in man["context_streams"]:
+            cap = cv2.VideoCapture(str(rel / "videos" / d_ / e_ / f"{s_}.mp4"))
+            for i, row in enumerate(r["context_rows"]):
+                cap.set(cv2.CAP_PROP_POS_FRAMES, int(row))
+                ok, fr = cap.read()
+                got = cv2.imread(str(ROOT / f"probes/run{r['run']}/context/ctx{i}_{s_}.jpg"))
+                if ok and got is not None:
+                    diffs.append(float(np.abs(got.astype(int) - fr.astype(int)).mean()))
+            cap.release()
+    check(diffs and max(diffs) < 3.0,
+          "each context image is the published video's frame at that row",
+          f"{len(diffs)} images, worst mean pixel difference {max(diffs):.2f} "
+          f"(JPEG q95 noise; the tactile video is row-aligned, cross-correlation "
+          f"r=0.98 at lag 0)")
+
+    # 13 — the numeric channels at those rows ship too
+    d0 = np.load(ROOT / files[0][1]["file"])
+    cols = [k for k in d0.files if k.startswith("context_")]
+    check(len(cols) >= 8,
+          "the context carries its numeric channels as well as images",
+          f"{len(cols)} per-row arrays: "
+          f"{', '.join(sorted(c[8:] for c in cols)[:4])}...")
 
     w = max(len(x) for _, x, _ in RESULTS)
     print()
