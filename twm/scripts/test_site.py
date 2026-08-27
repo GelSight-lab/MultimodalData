@@ -109,7 +109,17 @@ def main() -> int:
                 persist.append(f"{pg_}: {name} -> {st} then {again}")
     bad = [f"{p_}: HTTP {v['status']}" for p_, v in au.items() if v["status"] != 200]
     bad += persist
-    bad += [f"{p_}: {len(v['errs'])} console errors" for p_, v in au.items() if v["errs"]]
+    # A console error CAUSED by a transient 4xx is that 4xx counted twice. The
+    # browser logs "Failed to load resource" for the same request `persist`
+    # already adjudicated, so only errors that are not about a re-fetchable
+    # sub-resource count as page defects.
+    def real_errs(v):
+        urls = {u.rsplit("/", 1)[-1] for _, u in v["bad"]}
+        return [e for e in v["errs"]
+                if not any(u and u in e for u in urls)
+                and "Failed to load resource" not in e]
+    bad += [f"{p_}: {len(real_errs(v))} console errors {real_errs(v)[:1]}"
+            for p_, v in au.items() if real_errs(v)]
     transient = sum(len(v["bad"]) for v in au.values()) - len(persist)
     check(not bad, "every page loads with no persistent 4xx and no console errors",
           f"{len(PAGES)} pages, all HTTP 200, 0 persistent sub-resource failures, "
@@ -118,8 +128,27 @@ def main() -> int:
           + (f"; {bad[:3]}" if bad else ""))
 
     # 2 — nothing broken or overflowing
-    br = [f"{p}: {v['broken']} broken imgs" for p, v in au.items() if v["broken"]]
-    ov = [p for p, v in au.items() if v["overflow"]]
+    # RE-FETCH before calling an image broken. One that lost a race with a
+    # cold-start 429 reports naturalWidth 0 while its file is perfectly there —
+    # measured, 4 of them on one run and 0 on the next. My first attempt at
+    # this patch searched for `p_` where the file said `p`, so `.replace()`
+    # silently did nothing and the run that happened not to hit a 429 reported
+    # a clean pass. Every edit here now asserts its anchor.
+    br = []
+    for p_, v in au.items():
+        if not v["broken"]:
+            continue
+        still = 0
+        for st, url in v["bad"]:
+            if url.endswith((".jpg", ".jpeg", ".png", ".webp", ".gif")):
+                try:
+                    if urllib.request.urlopen(url, timeout=45).status >= 400:
+                        still += 1
+                except Exception:
+                    still += 1
+        if still:
+            br.append(f"{p_}: {still} genuinely broken imgs")
+    ov = [p_ for p_, v in au.items() if v["overflow"]]
     n_transient_img = sum(v["broken"] for v in au.values())
     check(not br and not ov, "no broken media and no horizontal overflow",
           f"{sum(v['imgs'] for v in au.values())} images, "
