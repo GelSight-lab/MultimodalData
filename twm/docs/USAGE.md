@@ -19,7 +19,39 @@ tour.
 | Quaternion order | **scalar-last (xyzw)** — `scipy...Rotation.from_quat` |
 | Rotation deltas | **world-frame**: `dq = q[i+1] · q[i]⁻¹`, integrate `q[i+1] = dq · q[i]` |
 | World frame | OptiTrack, **2026-05-10 reference** |
+| **Up axis** | **+y** — OptiTrack's convention, right-handed. See below. |
 | Images | 640×480, three colour views (`left`, `middle`, `right`) + two tactile |
+
+### Up is +y, not +z
+
+OptiTrack records **Y-up, right-handed**: measured on this release, the table
+normal in world coordinates sits **4.4° off +y**, and both the pose rotations
+and `T_mocap_to_cam` have determinant +1.
+
+Robotics code overwhelmingly assumes Z-up. Taking `pose[2]` as height here
+gives you a *horizontal* coordinate, and nothing complains — the numbers are
+plausible, the plots look fine, and it surfaces only as a model that never
+learns which way gravity points.
+
+```python
+ds  = ReactVideoDataset(root, up_axis="z")   # poses converted
+cal = ds.calibration()                       # extrinsics in the SAME convention
+```
+
+**Ask the dataset for the calibration.** The conversion is a rotation of the
+world frame, so it must be applied to the poses *and* to `T_mocap_to_cam`
+together. Applied to one only it moves every projection by up to **165 px** and
+raises nothing — measured, and asserted as a negative control in
+`scripts/test_frames.py`. Converting both leaves projections identical to
+1.3e-10 px, which is the property that test exists to check.
+
+The rotation is `R_x(-90°)`: `(x, y, z) → (x, -z, y)`. There are two
+right-handed candidates; the other one leaves the world upside down with
+`det = +1` and no handedness check would notice. `toolbox/frames.py` exposes
+`convert_poses`, `convert_calibration` and `to_zup(poses, cal)` — prefer the
+last, since the whole point is that they move as one piece.
+
+The gel centre is in the sensor's own rigid frame and is untouched.
 
 `toolbox/actions.py` once documented "quat wxyz" while its code was scalar-last.
 The code was right; a reader who trusted the text would have swapped `w` into

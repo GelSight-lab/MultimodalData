@@ -81,7 +81,7 @@ class ReactVideoDataset:
     def __init__(self, task_root, window_length=16, stride=1, window_step=None,
                  mode="segment", streams=ALL_STREAMS, skip_bad=True,
                  which_sensors="any", load_depth=False, tactile_latency=0,
-                 split="all", splits_file="splits.json"):
+                 split="all", splits_file="splits.json", up_axis="y"):
         self.root = Path(task_root)
         self.W = window_length
         self.stride = stride
@@ -112,6 +112,20 @@ class ReactVideoDataset:
         # contains its frames, so `splits.json` carries a guard of
         # max_train_window - 1 and this loader REFUSES a longer window instead
         # of leaking — a leak here leaves no trace in any metric.
+        # UP AXIS. OptiTrack records Y-up, right-handed — measured, the table
+        # normal sits 4.4 deg off +y. Robotics code overwhelmingly assumes
+        # Z-up, and a reader taking pose[2] as height silently gets a
+        # horizontal coordinate.
+        #
+        # `up_axis="z"` converts the poses this loader yields. It does NOT
+        # convert your calibration, and converting one without the other moves
+        # every projection by up to 165 px with nothing raised — so use
+        # `.calibration()` below, which returns the extrinsics in whichever
+        # convention this dataset is in.
+        if up_axis not in ("y", "z"):
+            raise ValueError(f"up_axis must be 'y' (as recorded) or 'z', got {up_axis!r}")
+        self.up_axis = up_axis
+
         self.split = split
         self.splits = None
         if split != "all":
@@ -133,6 +147,39 @@ class ReactVideoDataset:
         self.segments = json.loads((self.root / "segments.json").read_text())["segments"]
         self.bad = json.loads((self.root / "bad_frames.json").read_text())["episodes"]
         self.index = self._build_index()
+
+    def calibration(self, calib_dir=None):
+        """Extrinsics in THIS dataset's up-convention, so the two cannot drift.
+
+        Ask the dataset rather than loading calibration yourself: poses in
+        Z-up with a Y-up `T_mocap_to_cam` project 165 px away from the sensor
+        and raise nothing.
+        """
+        import shutil as _sh, tempfile as _tf
+        from react_toolbox.calibration import load_calibration
+        from react_toolbox.frames import convert_calibration
+        root = Path(calib_dir) if calib_dir else self.root
+        if not (root / "calibration").is_dir():
+            # The published release ships <task>/calibration/. A working tree
+            # may not, so stage the declared epoch into the layout
+            # load_calibration expects, rather than failing three frames later
+            # with a KeyError on 'gel_left'.
+            from twm.calib_epoch import calib_dir as _epoch_dir
+            stage = Path(_tf.mkdtemp())
+            _sh.copytree(_epoch_dir(self.root.name), stage / "calibration")
+            root = stage
+        cal = load_calibration(root)
+        if "gel_left" not in cal:
+            raise FileNotFoundError(
+                f"no gel calibration under {root}; the published release ships "
+                f"it at <task>/calibration/. Pass calib_dir= or set REACT_CALIB.")
+        return cal if self.up_axis == "y" else convert_calibration(cal, True)
+
+    def _convert_pose(self, arr):
+        if self.up_axis == "y":
+            return arr
+        from react_toolbox.frames import convert_poses
+        return convert_poses(arr, True)
 
     def _video_dir(self, ep_key):
         date, ep = ep_key.split("/")
@@ -221,10 +268,15 @@ class ReactVideoDataset:
         tbl = pq.read_table(self._parquet(ek)).slice(lo, hi - lo + 1)
         v_rows = [r - lo for r in idx]
         t_rows = [r - lo for r in idx_tac]
+        # EVERY pose column goes through the same conversion. Converting the
+        # sensors and forgetting the object would put the two in different
+        # worlds, which no shape check would notice.
         for c in ("sensor_left_pose", "sensor_right_pose"):
-            out[c] = np.array(tbl.column(c).to_pylist(), np.float32)[v_rows]
+            out[c] = self._convert_pose(
+                np.array(tbl.column(c).to_pylist(), np.float32)[v_rows])
         if "object_pose" in tbl.column_names:
-            out["object_pose"] = np.array(tbl.column("object_pose").to_pylist(), np.float32)[v_rows]
+            out["object_pose"] = self._convert_pose(
+                np.array(tbl.column("object_pose").to_pylist(), np.float32)[v_rows])
         # tactile contact scalars follow the tactile frames -> shifted rows
         for c in self._TACT_COLS:
             out[c] = np.array(tbl.column(c).to_pylist(), np.float32)[t_rows]
