@@ -74,8 +74,52 @@ _sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from twm.calib_epoch import calib_dir as _calib_dir  # noqa: E402
 
 
-def gel_axis(task: str, side: str) -> np.ndarray:
-    """Calibrated pressing direction in the sensor's rigid-body frame."""
+# GelSight Mini's face is normal to the sensor body's y, so a compression
+# acts along local -y. That is the default here.
+GEL_AXIS_SOURCE_DEFAULT = "body_y"
+
+
+def gel_axis(task: str, side: str, source: str | None = None) -> np.ndarray:
+    """Pressing direction in the sensor's rigid-body frame.
+
+    `source="body_y"` (the default) returns local -y: the GelSight Mini's
+    sensing face is normal to the body's y axis, so a compression acts along
+    -y.
+
+    `source="dual_ball"` returns the calibrated `gel_axis_in_rigid`, kept
+    because it is what the published files contain and what earlier results
+    used.
+
+    WHY -Y IS THE DEFAULT. `gel_axis_in_rigid` is
+    normalize(gelball_centre - refball_centre): the line between two
+    calibration ball centres 57 mm apart, from three poses. It never measured
+    the gel surface. That line is the surface normal only if the fixture held
+    both balls along it.
+
+    Pressing hard (>6 N) on a level board, where the gel normal must point
+    near world -z, measured over 38k frames:
+
+        left   dual_ball  7.1 deg off      body_y  25.6 deg off
+        right  dual_ball 18.1 deg off      body_y   7.7 deg off
+
+    The two sensors disagree about which is better, so one calibration is
+    wrong; the right one also carries `depth_offset_mm = 0.0` where the left
+    carries -5.0, i.e. its ball centre was never backed off by a ball radius
+    to reach the gel surface. Two independent signs pointing at the same
+    file.
+
+    Kinematics cannot arbitrate: sum(R_i) over contact frames has
+    singular-value ratio 1.09 (left) and 1.04 (right), so the axis is not
+    identifiable from motion, and the concentration score differs by 0.013
+    between the two candidates. The board-normal comparison above is the only
+    measurement with any power, and it is why the physical geometry wins.
+    """
+    src = source or GEL_AXIS_SOURCE_DEFAULT
+    if src == "body_y":
+        return np.array([0.0, -1.0, 0.0])
+    if src != "dual_ball":
+        raise ValueError(f"gel_axis: unknown source {src!r}; "
+                         f"expected 'body_y' or 'dual_ball'")
     path = _calib_dir(task) / f"T_gel_to_rigid_{side}.json"
     axis = np.asarray(json.loads(path.read_text())["gel_axis_in_rigid"], np.float64)
     return axis / np.linalg.norm(axis)

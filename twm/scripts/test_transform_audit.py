@@ -41,8 +41,13 @@ RESULTS: list[tuple[bool, str, str]] = []
 M = np.asarray(YUP_TO_ZUP, float)
 
 # world-frame geometry: MUST have rotated
-ROTATED = {"sensor_left_pose", "sensor_right_pose", "object_pose",
-           "force_left_target_pose", "force_right_target_pose"}
+ROTATED = {"sensor_left_pose", "sensor_right_pose", "object_pose"}
+# World-frame too, but DERIVED: target = observed + (F/k) * R(q) @ gel_axis.
+# Comparing these to the pre-conversion backup stopped isolating the frame
+# question the moment the pressing axis changed -- the backup diff then mixes
+# two unrelated edits and reads as a 1.5e-3 frame error. Checked against the
+# definition instead, which is stronger and does not decay.
+DERIVED = {"force_left_target_pose", "force_right_target_pose"}
 # scalars, indices, sensor-local quantities: MUST be untouched
 UNTOUCHED = {
     "frame_idx", "timestamp", "source_h5_frame", "task", "task_index",
@@ -87,11 +92,11 @@ def main() -> int:
             fs = sorted(glob.glob(tree.format(t=t) + "/*/*.parquet"))
             if fs:
                 seen |= set(_cols(fs[0]))
-    unknown = sorted(seen - ROTATED - UNTOUCHED)
+    unknown = sorted(seen - ROTATED - UNTOUCHED - DERIVED)
     check(seen and not unknown,
           "every published column is classified as rotated or untouched",
           f"{len(seen)} distinct columns, {len(ROTATED & seen)} rotated, "
-          f"{len(UNTOUCHED & seen)} untouched"
+          f"{len(DERIVED & seen)} derived, {len(UNTOUCHED & seen)} untouched"
           if not unknown else f"UNCLASSIFIED: {unknown}")
 
     # 2 — the rotated ones rotated by EXACTLY the world rotation
@@ -128,6 +133,37 @@ def main() -> int:
           f"{n_r} rows across {len(BACKUPS)} tree/task pairs, worst deviation "
           f"{worst_r:.2e} (m or quaternion units)"
           if not missing else f"missing live files: {missing[:3]}")
+
+    # 2b — the derived targets satisfy their own definition
+    from force_recovery.dexforce import gel_axis, STIFFNESS_N_PER_M
+    from scipy.spatial.transform import Rotation
+    worst_d, n_d = 0.0, 0
+    for t in ("motherboard", "pushT"):
+        for f in sorted(glob.glob(LIVE["release_force"].format(t=t)
+                                  + "/*/*.parquet")):
+            for side in ("left", "right"):
+                cs = [f"sensor_{side}_pose", f"force_{side}_normal_n",
+                      f"force_{side}_target_pose"]
+                if not all(c in _cols(f) for c in cs):
+                    continue
+                d0 = pq.read_table(f, columns=cs).to_pydict()
+                P = np.asarray([x for x in d0[cs[0]]], float)
+                F = np.asarray(d0[cs[1]], float)
+                T = np.asarray([x for x in d0[cs[2]]], float)
+                m = (np.isfinite(P).all(1) & np.isfinite(T).all(1)
+                     & (np.linalg.norm(P[:, 3:], axis=1) > 0.5))
+                if not m.any():
+                    continue
+                R = Rotation.from_quat(P[m, 3:7]).as_matrix()
+                nh = np.einsum("nij,j->ni", R, gel_axis(t, side))
+                want = P[m, :3] + (F[m][:, None] / STIFFNESS_N_PER_M) * nh
+                n_d += int(m.sum())
+                worst_d = max(worst_d, float(np.abs(want - T[m, :3]).max()))
+    check(n_d > 0 and worst_d < 1e-9,
+          "each target pose equals observed + (F/k) * R(q) @ gel_axis",
+          f"{n_d} rows, worst {worst_d:.2e} m, using the ACTIVE pressing "
+          f"axis — so a change of axis convention is caught here rather "
+          f"than mistaken for a frame error")
 
     # 3 — the untouched ones are bit-for-bit what they were
     worst_u, n_u, moved = 0.0, 0, []

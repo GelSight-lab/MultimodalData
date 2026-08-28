@@ -161,9 +161,19 @@ def build_declaration(task: str, date: str, ep: str, poses: dict) -> dict:
     reason this module exists.
     """
     from twm.calib_epoch import world_offset_m
+    from react_toolbox.frames import UP_AXIS_RECORDED
     off = list(world_offset_m(task, date, ep, up_axis="y"))
     return {
         "world_frame": COMMON,
+        # EMITTED HERE, not patched in afterwards. up_axis reached the
+        # published files via a one-off repair script; this builder never
+        # knew about it, so re-exporting the force channel stripped the
+        # convention from all 36 parquet without a word. A declaration that
+        # survives only until someone re-runs the exporter is not one.
+        "up_axis": UP_AXIS_RECORDED,
+        "up_axis_note": ("converted from the recorded Y-up by R_x(-90): "
+                         "(x,y,z)->(x,-z,y). Projections are unchanged "
+                         "because T_mocap_to_cam moved with the poses."),
         "raw_h5_offset_m": off,
         "raw_h5_offset_up_axis": "y",
         "raw_h5_note": ("add this to a pose read straight out of the source "

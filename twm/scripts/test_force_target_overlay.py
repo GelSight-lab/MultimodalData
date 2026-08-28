@@ -157,10 +157,52 @@ def main() -> int:
           f"k={k} N/mm: 1 N -> {gaps[0]:.1f} px, 3 N -> {gaps[1]:.1f} px, "
           f"6 N -> {gaps[2]:.1f} px")
 
+    check_axis_convention()
     check_press_arrow()
     check_preview_frames()
     _report()
     return 1 if sum(not ok for ok, _, _ in RESULTS) else 0
+
+
+def check_axis_convention() -> None:
+    """The pressing direction: default -y, with the dual-ball fit kept.
+
+    The published `gel_axis_in_rigid` is normalize(gelball - refball): the
+    line between two calibration ball centres, from three poses. It never
+    measured the gel surface. It is the normal only if the fixture held both
+    balls along the normal, and the evidence says it did not for the right
+    sensor -- pressing hard on a level board, that axis sits 18.1 deg off the
+    board normal while local -y sits 7.7 deg off. On the left the ordering
+    reverses (7.1 vs 25.6), so the two sensors cannot both be right.
+
+    A second sign of trouble in the same file: `depth_offset_mm` is -5.0 on
+    the left (the ball centre backed off one ball radius to reach the gel
+    surface) and 0.0 on the right (not backed off at all).
+
+    Kinematics cannot settle it -- sum(R_i) has singular-value ratio 1.09 and
+    1.04, so the axis is unidentifiable from motion alone.
+
+    So: -y is the default, the fit stays reachable, and neither is silent.
+    """
+    import numpy as _np
+    from force_recovery.dexforce import gel_axis as _ga
+
+    try:
+        d = _ga("motherboard", "left")
+        b = _ga("motherboard", "left", source="dual_ball")
+        y = _ga("motherboard", "left", source="body_y")
+    except TypeError:
+        check(False, "the pressing direction defaults to sensor local -y",
+              "gel_axis() has no `source` argument")
+        return
+    ok = (_np.allclose(d, [0, -1, 0]) and _np.allclose(y, [0, -1, 0])
+          and abs(_np.linalg.norm(b) - 1) < 1e-12
+          and not _np.allclose(b, [0, -1, 0]))
+    sep = float(_np.degrees(_np.arccos(abs(_np.clip(b @ y, -1, 1)))))
+    check(ok, "the pressing direction defaults to sensor local -y",
+          f"default == body_y == {_np.round(d, 3).tolist()}; the dual-ball "
+          f"fit is still reachable at {_np.round(b, 3).tolist()}, {sep:.1f} "
+          f"deg away")
 
 
 def check_press_arrow() -> None:
@@ -218,27 +260,30 @@ def check_press_arrow() -> None:
     win = drew[max(0, ty - 5):ty + 6, max(0, tx - 5):tx + 6]
     d = _np.array([u1 - u0, v1 - v0], float)
     d /= (_np.linalg.norm(d) or 1)
-    seps = []
-    for k in range(3):
-        e = _np.zeros(3); e[k] = 1.0
-        t = _v.press_arrow_pixels(pose, gel, e, cam)
-        if t is None:
-            continue
-        a2 = _np.array([t[1][0] - t[0][0], t[1][1] - t[0][1]], float)
+    # The arrow must follow the ACTIVE axis. It used to be checked as ">8 deg
+    # from every body axis", which was right while the axis was the dual-ball
+    # fit and became wrong the moment -y became the default: the force really
+    # does act along a body axis now, so that check failed on correct
+    # drawing. What still has teeth is that the arrow TRACKS the parameter --
+    # drawn with the dual-ball axis it must move by that axis's own 21.2 deg.
+    alt = _ga("motherboard", "left", source="dual_ball")
+    t2 = _v.press_arrow_pixels(pose, gel, alt, cam)
+    moved = None
+    if t2 is not None:
+        a2 = _np.array([t2[1][0] - t2[0][0], t2[1][1] - t2[0][1]], float)
         a2 /= (_np.linalg.norm(a2) or 1)
-        seps.append(float(_np.degrees(_np.arccos(abs(_np.clip(d @ a2, -1, 1))))))
+        moved = float(_np.degrees(_np.arccos(abs(_np.clip(d @ a2, -1, 1)))))
     okarrow = bool(win.any())
-    okdist = bool(seps) and min(seps) > 8.0
-    check(okarrow and okdist,
+    oktrack = moved is not None and moved > 3.0
+    check(okarrow and oktrack,
           "the panel shows the direction the force acts along",
-          (f"ink reaches the projected R(q) @ gel_axis tip at panel "
-           f"({tx}, {ty}); the closest body axis is {min(seps):.1f} deg away, "
-           f"so it is not a relabelled axis")
-          if okarrow and okdist else
-          (f"arrow tip at panel ({tx}, {ty}): "
-           f"{'no ink there' if not okarrow else 'ink ok'}; "
-           f"closest body axis {min(seps) if seps else float('nan'):.1f} deg "
-           f"(needs > 8)"))
+          f"ink reaches the projected R(q) @ gel_axis tip at panel "
+          f"({tx}, {ty}); switching to the dual-ball axis swings the drawn "
+          f"arrow {moved:.1f} deg, so it follows the axis rather than being "
+          f"hardcoded"
+          if okarrow and oktrack else
+          f"tip ({tx}, {ty}): {'no ink' if not okarrow else 'ink ok'}; "
+          f"dual-ball swing {moved}")
 
 
 def check_preview_frames() -> None:

@@ -104,6 +104,50 @@ went stale against the data and failed silently on 12 episode-sides.
 **`force_{side}_source_frame`** names the tactile frame a force came from, so an
 alignment claim is checkable rather than asserted.
 
+### Which direction the force acts along
+
+`force_normal_n` is a **magnitude**. It acts along the gel normal expressed in
+the **sensor's own body frame** — not along world vertical, which is a median
+7.7° away on motherboard and **23.3° on pushT, where 70 % of contact frames
+exceed 15°**. `force_{side}_target_pose` already has the direction applied:
+
+```python
+from force_recovery.dexforce import gel_axis, STIFFNESS_N_PER_M
+n_hat = R_from_quat(pose[3:7]) @ gel_axis(task, side)   # world unit vector
+target_xyz = pose[:3] + (force_n / STIFFNESS_N_PER_M) * n_hat
+```
+
+**The default is local `-y`**: the GelSight Mini's sensing face is normal to
+the body's y axis, so a compression acts along `-y`.
+
+The calibration files also carry `gel_axis_in_rigid`, reachable as
+`gel_axis(task, side, source="dual_ball")`. It is
+`normalize(gelball_centre - refball_centre)` — the line between two calibration
+ball centres 57 mm apart, from **three** poses. It never measured the gel
+surface, and equals the normal only if the fixture held both balls along it.
+It sits 21.2° (left) and 22.4° (right) from `-y`.
+
+Which is right is **not settled**, and the two sensors do not agree. Measured:
+
+| test | left | right |
+|---|---|---|
+| angle from board normal, pressing >6 N on a level board (38 k frames) | dual_ball **7.1°**, -y 25.6° | dual_ball 18.1°, -y **7.7°** |
+| corr(dF, v·n̂) — no world-frame or table assumption (31 episodes) | dual_ball **+0.085**, -y +0.053; -y better on only 3 % of episodes | +0.116 vs +0.116, a tie |
+
+So the **left** sensor's dual-ball axis looks right by both tests, and the
+**right** sensor's looks wrong by one and indifferent by the other. The right
+calibration also carries `depth_offset_mm = 0.0` where the left carries `-5.0`,
+i.e. its ball centre was never backed off by a ball radius to reach the gel
+surface — a second sign of trouble in the same file.
+
+Kinematics cannot arbitrate: over contact frames `sum(R_i)` has singular-value
+ratio 1.09 (left) and 1.04 (right), so the axis is unidentifiable from motion
+alone, and the two candidates' concentration scores differ by 0.013.
+
+Choosing `-y` moves `force_*_target_pose` by a median 0.57 mm (max 1.53 mm),
+because `F/k` is itself only a few mm. Pass `source="dual_ball"` to reproduce
+the earlier published values.
+
 ## 3. The loader
 
 ```python

@@ -54,7 +54,15 @@ def main() -> int:
 
     tasks = _tasks()
 
-    # 1 — MEASURED. Which way is down, according to the sensors themselves?
+    # 1 — MEASURED, with an instrument that does not depend on a contested
+    #     calibration. This used R(q) @ gel_axis, so when the pressing axis
+    #     changed the world-frame test changed its answer -- a question about
+    #     the world frame must not hinge on the gel calibration.
+    #
+    #     Contact points lie on the horizontal work surface, so a plane fitted
+    #     to them has the vertical as its normal. Positions only: no
+    #     orientation, no gel axis. The third singular value must be small, or
+    #     the points are not on a plane and the normal means nothing.
     measured, weak = {}, []
     for task in tasks:
         files = sorted(glob.glob(str(force_meta(task) / "*" / "*.parquet")))
@@ -62,28 +70,31 @@ def main() -> int:
         if "force_left_normal_n" not in cols:
             weak.append(task)
             continue
-        press = []
+        pts = []
         for f in files:
             t = pq.read_table(f, columns=["sensor_left_pose",
                                           "force_left_normal_n"]).to_pydict()
             P = np.asarray([x for x in t["sensor_left_pose"]], float)
             F = np.asarray(t["force_left_normal_n"], float)
-            m = (np.isfinite(P).all(1) & (np.linalg.norm(P[:, 3:], axis=1) > .5)
-                 & (F > 3))
-            if m.sum() < 30:
-                continue
-            R = Rotation.from_quat(P[m, 3:7]).as_matrix()
-            press.append(np.median(np.einsum("nij,j->ni", R,
-                                             gel_axis(task, "left")), 0))
-        v = np.median(np.asarray(press), 0)
-        measured[task] = v / np.linalg.norm(v)
-    bad = {t: np.round(v, 3).tolist() for t, v in measured.items()
-           if int(np.argmax(abs(v))) != UP or v[UP] >= 0}
-    check(measured and not bad and not weak,
-          f"the sensors press along -{UP_AXIS_RECORDED} in every task",
-          "; ".join(f"{t}: {np.round(v, 3).tolist()}"
-                    for t, v in measured.items())
-          + (f"; NO FORCE CHANNEL, unmeasured: {weak}" if weak else ""))
+            m = np.isfinite(P).all(1) & (F > 4)
+            if m.sum() >= 30:
+                pts.append(P[m, :3])
+        if not pts:
+            weak.append(task)
+            continue
+        X = np.vstack(pts)
+        U, sv, Vt = np.linalg.svd(X - X.mean(0), full_matrices=False)
+        n = Vt[-1] * np.sign(Vt[-1][int(np.argmax(np.abs(Vt[-1])))])
+        measured[task] = (n, float(sv[2] / sv[0]))
+    bad = {t: np.round(v, 3).tolist() for t, (v, _) in measured.items()
+           if int(np.argmax(abs(v))) != UP}
+    flat = {t: r for t, (_, r) in measured.items() if r > 0.35}
+    check(measured and not bad and not weak and not flat,
+          f"contact points lie in a plane whose normal is {UP_AXIS_RECORDED}",
+          "; ".join(f"{t}: normal {np.round(v, 3).tolist()}, sv3/sv1 {r:.3f}"
+                    for t, (v, r) in measured.items())
+          + (f"; NOT PLANAR: {flat}" if flat else "")
+          + (f"; NO FORCE CHANNEL: {weak}" if weak else ""))
 
     # 2 — DECLARED: calibration
     cbad = []
@@ -136,7 +147,7 @@ def main() -> int:
           if not pbad else f"{len(pbad)} disagree, e.g. {pbad[:4]}")
 
     # 5 — the declaration is the one the data actually has
-    mism = [t for t, v in measured.items()
+    mism = [t for t, (v, _) in measured.items()
             if (json.loads((release_root(t) / "calibration"
                             / "T_mocap_to_cam_middle.json").read_text())
                 .get("up_axis") or "y") != "xyz"[int(np.argmax(abs(v)))]]
@@ -156,6 +167,32 @@ def main() -> int:
     check(not extra, "the derived artefacts carry the convention too",
           f"probe test set and simulator both {UP_AXIS_RECORDED}-up"
           if not extra else f"still on the old convention: {extra}")
+
+    # 7 — the BUILDER emits the convention, not just the files that happen to
+    #     carry it. up_axis was added to the published parquet after the
+    #     conversion, by a repair script; build_declaration never learned to
+    #     emit it, so the next re-export of the force channel silently
+    #     stripped it from all 36 files. A declaration that survives only
+    #     until someone re-runs the exporter is not a declaration.
+    from twm.world_frame import build_declaration
+    key = f"{tasks[0]}"
+    ejs = [json.loads(l) for l in
+           (release_root(key) / "episodes.jsonl").read_text().splitlines()
+           if l.strip()]
+    date, ep = ejs[0]["episode"].split("/")
+    fs = sorted(glob.glob(str(force_meta(key) / date / f"{ep}.parquet")))
+    poses = {}
+    if fs:
+        t = pq.read_table(fs[0]).to_pydict()
+        for sd in ("left", "right"):
+            k = f"sensor_{sd}_pose"
+            if k in t:
+                poses[sd] = np.asarray([x for x in t[k]], float)
+    d = build_declaration(key, date, ep, poses)
+    check(d.get("up_axis") == UP_AXIS_RECORDED and d.get("up_axis_note"),
+          "the declaration builder emits the convention itself",
+          f"build_declaration({key}, {date}, {ep}) -> up_axis="
+          f"{d.get('up_axis')!r}, note {'present' if d.get('up_axis_note') else 'MISSING'}")
 
     w = max(len(x) for _, x, _ in RESULTS)
     print()
