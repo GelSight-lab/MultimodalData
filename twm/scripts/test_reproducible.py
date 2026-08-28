@@ -1,3 +1,4 @@
+
 """Run the PUBLISHED scripts against ONLY the published data, in a clean room.
 
 Every reproduction claim so far was verified by me, on my disk, with my
@@ -17,6 +18,8 @@ checked.
     python scripts/test_reproducible.py
 """
 from __future__ import annotations
+
+from react_toolbox.staging import staging_dir
 
 import json
 import os
@@ -42,7 +45,7 @@ def stage(root: Path):
     got = {"scripts": 0, "toolbox": 0, "meta": 0, "calib": 0, "docs": 0}
     for f in files:
         if f.startswith("scripts/") or f.startswith("toolbox/"):
-            p = hf_hub_download(REPO, f, repo_type="dataset", local_dir=tempfile.mkdtemp())
+            p = hf_hub_download(REPO, f, repo_type="dataset", local_dir=str(staging_dir()))
             dest = root / f
             dest.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy(p, dest)
@@ -61,20 +64,20 @@ def stage(root: Path):
     for f in files:
         if f.startswith("data/motherboard/") and f.rsplit("/", 1)[-1] in (
                 "episodes.jsonl", "bad_frames.json", "segments.json", "splits.json"):
-            p = hf_hub_download(REPO, f, repo_type="dataset", local_dir=tempfile.mkdtemp())
+            p = hf_hub_download(REPO, f, repo_type="dataset", local_dir=str(staging_dir()))
             shutil.copy(p, rel / Path(f).name)
             got["meta"] += 1
         # the calibration, from where the dataset publishes it. calib_dir used
         # to resolve a path relative to its own source file, which exists on one
         # machine; it now looks under $REACT_RELEASE/<task>/calibration first.
         if f.startswith("docs/"):
-            src = hf_hub_download(REPO, f, repo_type="dataset", local_dir=tempfile.mkdtemp())
+            src = hf_hub_download(REPO, f, repo_type="dataset", local_dir=str(staging_dir()))
             dest = root / f
             dest.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy(src, dest)
             got["docs"] = got.get("docs", 0) + 1
         if f.startswith("data/motherboard/calibration/"):
-            p = hf_hub_download(REPO, f, repo_type="dataset", local_dir=tempfile.mkdtemp())
+            p = hf_hub_download(REPO, f, repo_type="dataset", local_dir=str(staging_dir()))
             dest = rel / "calibration" / Path(f).name
             dest.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy(p, dest)
@@ -95,7 +98,7 @@ def run(root: Path, rel: Path, script: str, *args, needs_meta=False):
 
 
 def main() -> int:
-    root = Path(tempfile.mkdtemp())
+    root = staging_dir()
     got, rel = stage(root)
     check(got["scripts"] > 10 and got["toolbox"] > 10 and got["meta"] >= 3
           and got["calib"] >= 5,
@@ -126,7 +129,7 @@ def main() -> int:
     from huggingface_hub import hf_hub_download
     pub = json.loads(Path(hf_hub_download(
         REPO, "data/motherboard/splits.json", repo_type="dataset",
-        local_dir=tempfile.mkdtemp())).read_text())
+        local_dir=str(staging_dir()))).read_text())
     mine = json.loads((rel / "splits.json").read_text())
     same = pub["episodes"] == mine["episodes"]
     check(same, "the rebuilt split reproduces the published one exactly",
@@ -154,7 +157,7 @@ def main() -> int:
             if f not in files:
                 okall = False; break
             src = hf_hub_download(REPO, f, repo_type="dataset",
-                                  local_dir=tempfile.mkdtemp())
+                                  local_dir=str(staging_dir()))
             dest = rel / Path(f).relative_to("data/motherboard")
             dest.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy(src, dest)

@@ -33,6 +33,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import numpy as np                                             # noqa: E402
 
+from react_toolbox.staging import staging_dir
+
 RESULTS: list[tuple[bool, str, str]] = []
 VIEWS = ("left", "middle", "right")
 TOL_PX = 0.5
@@ -74,7 +76,7 @@ def main() -> int:
 
     root = Path(args.root) / args.batch
     d = json.loads((root / "data.json").read_text())
-    stage = Path(tempfile.mkdtemp())
+    stage = staging_dir()
     cal = load_calibration(release_root("motherboard"))
     require_up_axis(cal, where="the release")
 

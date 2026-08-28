@@ -29,6 +29,7 @@ import numpy as np                                             # noqa: E402
 import pyarrow.parquet as pq                                   # noqa: E402
 
 from react_toolbox.frames import UP_AXIS_RECORDED            # noqa: E402
+from react_toolbox.staging import staging_dir
 
 RESULTS: list[tuple[bool, str, str]] = []
 REL = Path("/media/yxma/Disk1/twm/release_force/motherboard/meta")
@@ -124,7 +125,7 @@ def main() -> int:
     from twm.calib_epoch import (WORLD_REF_DATE, calib_dir, world_residual,
                                  world_transform)
 
-    stage = Path(tempfile.mkdtemp())
+    stage = staging_dir()
     shutil.copytree(calib_dir("motherboard"), stage / "calibration")
     cal = load_calibration(stage)
     ang = lambda a, b: float(np.degrees(np.arccos(np.clip(a @ b, -1, 1))))

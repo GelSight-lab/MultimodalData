@@ -28,6 +28,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import numpy as np                                              # noqa: E402
 
+from react_toolbox.staging import staging_dir
+
 RESULTS: list[tuple[bool, str, str]] = []
 
 
@@ -47,7 +49,7 @@ def main() -> int:
     from react_toolbox.viz import draw_projection
 
     from twm.calib_epoch import calib_dir
-    stage = Path(tempfile.mkdtemp())
+    stage = staging_dir()
     shutil.copytree(calib_dir("motherboard"), stage / "calibration")
     cal = C.load_calibration(stage)
     cam = cal["cams"]["middle"]

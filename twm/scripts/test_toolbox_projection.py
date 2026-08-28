@@ -32,6 +32,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import numpy as np                                              # noqa: E402
 
+from react_toolbox.staging import staging_dir
+
 RESULTS: list[tuple[bool, str, str]] = []
 
 
@@ -61,7 +63,7 @@ def main() -> int:
     # load_calibration expects <root>/calibration/, so hand it the parent of
     # the epoch dir under a temporary name that matches that layout.
     import tempfile, shutil as _sh
-    stage = Path(tempfile.mkdtemp())
+    stage = staging_dir()
     _sh.copytree(cdir, stage / "calibration")
     cal = C.load_calibration(stage)
     truth = {s: np.asarray(json.loads(
@@ -78,7 +80,7 @@ def main() -> int:
     # 2 — AND IT REFUSES rather than substituting a plausible zero. A missing
     # key must raise; the whole defect was a fallback nobody could see.
     import tempfile, shutil
-    tmp = Path(tempfile.mkdtemp()) / "calibration"
+    tmp = staging_dir() / "calibration"
     shutil.copytree(cdir, tmp)
     d = json.loads((tmp / "T_gel_to_rigid_left.json").read_text())
     d.pop("gel_center_in_rigid_mm")

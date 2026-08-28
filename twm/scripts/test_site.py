@@ -1,3 +1,4 @@
+
 """The published Space renders, and its pages agree with the data and each other.
 
 Two failures this suite exists for, both of which shipped:
@@ -16,6 +17,8 @@ overlay canvases actually cover their images.
     python scripts/test_site.py [--base URL]
 """
 from __future__ import annotations
+
+from react_toolbox.staging import staging_dir
 
 import argparse
 import asyncio
@@ -243,7 +246,7 @@ def main() -> int:
 
     # 6 — THE CLIP PAGE SHOWS THE PUBLISHED SET, not a second sampling.
     from huggingface_hub import hf_hub_download
-    d = tempfile.mkdtemp()
+    d = str(staging_dir())
     man = json.loads(Path(hf_hub_download(
         "yxma/React", "test_sets/probes_v1/manifest.json",
         repo_type="dataset", local_dir=d)).read_text())

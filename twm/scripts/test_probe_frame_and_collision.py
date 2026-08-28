@@ -39,6 +39,8 @@ from react_paths import force_meta   # noqa: E402
 
 import numpy as np                                              # noqa: E402
 
+from react_toolbox.staging import staging_dir
+
 RESULTS: list[tuple[bool, str, str]] = []
 COLLISION_M = 0.12
 
@@ -55,7 +57,7 @@ def main() -> int:
     from react_toolbox.frames import as_up_axis
     from twm.calib_epoch import calib_dir
 
-    stage = Path(tempfile.mkdtemp())
+    stage = staging_dir()
     shutil.copytree(calib_dir("motherboard"), stage / "calibration")
     cal = as_up_axis(T.load_calibration(stage), "z")  # release poses
     cam = cal["cams"]["middle"]

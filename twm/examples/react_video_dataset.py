@@ -34,6 +34,8 @@ import json
 from pathlib import Path
 
 import numpy as np
+
+from react_toolbox.staging import staging_dir
 import pyarrow.parquet as pq
 
 try:
@@ -164,7 +166,7 @@ class ReactVideoDataset:
             # load_calibration expects, rather than failing three frames later
             # with a KeyError on 'gel_left'.
             from twm.calib_epoch import calib_dir as _epoch_dir
-            stage = Path(_tf.mkdtemp())
+            stage = staging_dir()
             _sh.copytree(_epoch_dir(self.root.name), stage / "calibration")
             root = stage
         cal = load_calibration(root)

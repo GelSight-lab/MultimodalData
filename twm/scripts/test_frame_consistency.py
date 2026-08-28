@@ -50,6 +50,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from react_paths import force_meta, raw_root   # noqa: E402
 
 import numpy as np                                             # noqa: E402
+
+from react_toolbox.staging import staging_dir
 import pyarrow.parquet as pq                                   # noqa: E402
 
 RESULTS: list[tuple[bool, str, str]] = []
@@ -109,7 +111,7 @@ def main() -> int:
     from react_toolbox.frames import as_up_axis
     from twm.calib_epoch import calib_dir
 
-    stage = Path(tempfile.mkdtemp())
+    stage = staging_dir()
     shutil.copytree(calib_dir("motherboard"), stage / "calibration")
     cal = as_up_axis(load_calibration(stage), "z")   # REL poses are Z-up
 

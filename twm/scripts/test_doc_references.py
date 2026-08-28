@@ -1,3 +1,4 @@
+
 """Every path a published doc tells you to run must itself be published.
 
 The READMEs' "Reproducing" sections named nine `scripts/*.py`. None was on the
@@ -13,6 +14,8 @@ same failure — published but unrunnable.
     python scripts/test_doc_references.py
 """
 from __future__ import annotations
+
+from react_toolbox.staging import staging_dir
 
 import re
 import sys
@@ -37,7 +40,7 @@ def main() -> int:
     from huggingface_hub import HfApi, hf_hub_download
     api = HfApi()
     files = set(api.list_repo_files(REPO, repo_type="dataset"))
-    d = tempfile.mkdtemp()
+    d = str(staging_dir())
 
     docs = sorted(f for f in files if f.endswith(".md"))
     missing, seen = [], 0
@@ -89,6 +92,37 @@ def main() -> int:
           "the shared path module ships with the scripts that import it",
           f"{len(imports_paths)} scripts import react_paths; "
           f"published: {'scripts/react_paths.py' in files}")
+
+    # 4 — the published copy must BE the repo copy. `scripts/` and `USAGE.md`
+    #     were uploaded once, by hand, and nothing has kept them current
+    #     since: exactly the failure the toolbox upload block in
+    #     build_release_publish.py describes, one directory over. Drift here is
+    #     invisible -- the files exist, the doc-reference check above is happy,
+    #     and a reader downloads instructions for a dataset that has moved.
+    from huggingface_hub import HfApi, hf_hub_download
+    import hashlib
+    api = HfApi()
+    files = api.list_repo_files(REPO, repo_type="dataset")
+    root = Path(__file__).resolve().parents[1]
+    pairs = [(f, root / f) for f in files if f.startswith("scripts/")]
+    pairs += [(f, src) for f, src in (
+        ("USAGE.md", root / "docs/USAGE.md"),
+        ("README.md", root / "docs/superpowers/specs/README_v2_release.md"))
+        if f in files]
+    drift, absent = [], []
+    for remote, local in pairs:
+        if not local.exists():
+            absent.append(remote)
+            continue
+        got = hf_hub_download(REPO, remote, repo_type="dataset")
+        if Path(got).read_bytes() != local.read_bytes():
+            drift.append(remote)
+    check(not drift and not absent,
+          "every published script and doc is the repo's current copy",
+          f"{len(pairs)} files checked, all identical" if not (drift or absent)
+          else f"{len(drift)} stale on the Hub: {drift[:6]}"
+               + (f"; {len(absent)} published with no source: {absent[:3]}"
+                  if absent else ""))
 
     w = max(len(x) for _, x, _ in RESULTS)
     print()

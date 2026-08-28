@@ -1,3 +1,4 @@
+
 """Download the PUBLISHED toolbox and run the README's own example with it.
 
 Every other toolbox check imports the working copy on this disk. That is not
@@ -12,6 +13,8 @@ probe package from the Hub, and runs the documented workflow against both.
     python scripts/test_published_toolbox.py
 """
 from __future__ import annotations
+
+from react_toolbox.staging import staging_dir
 
 import json
 import shutil
@@ -37,7 +40,7 @@ def fetch(root: Path):
              if f.startswith("toolbox/")]
     for f in files:
         p = hf_hub_download("yxma/React", f, repo_type="dataset",
-                            local_dir=tempfile.mkdtemp())
+                            local_dir=str(staging_dir()))
         shutil.copy(p, pkg / Path(f).name)
     data = root / "data"
     want = ["test_sets/probes_v1/manifest.json",
@@ -97,7 +100,7 @@ SCRIPT = textwrap.dedent('''
 
 
 def main() -> int:
-    root = Path(tempfile.mkdtemp())
+    root = staging_dir()
     n_files, pkg = fetch(root)
     check(n_files >= 15, "the published toolbox downloads",
           f"{n_files} files under toolbox/")

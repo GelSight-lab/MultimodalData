@@ -36,6 +36,7 @@ import pyarrow.parquet as pq                                    # noqa: E402
 
 import react_toolbox as T                                       # noqa: E402
 from react_toolbox.frames import as_up_axis
+from react_toolbox.staging import staging_dir
 from twm.calib_epoch import calib_dir                           # noqa: E402
 
 RELEASE = Path("/media/yxma/Disk1/twm/release_force/motherboard/meta")
@@ -71,7 +72,7 @@ def _render_probe(frame_rgb, probe, cal, cam, out_mp4, hud, held_pose,
     side, other = probe["moving_side"], probe["held_side"]
     gel_m, gel_o = cal[f"gel_{side}"], cal[f"gel_{other}"]
     h, w = frame_rgb.shape[:2]
-    tmp = Path(tempfile.mkdtemp())
+    tmp = staging_dir()
     col = (0, 220, 255) if probe["kind"] == "translation" else (255, 100, 220)
 
     # the held hand and its circle never change: draw once, reuse
@@ -119,7 +120,7 @@ def main() -> int:
 
     out = Path(args.out)
     (out / "clips").mkdir(parents=True, exist_ok=True)
-    stage = Path(tempfile.mkdtemp())
+    stage = staging_dir()
     shutil.copytree(calib_dir("motherboard"), stage / "calibration")
     # the poses below come from the Z-up release, so ask for Z-up rather
     # than trusting whichever tree calib_dir resolved to

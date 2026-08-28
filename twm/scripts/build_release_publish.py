@@ -216,6 +216,35 @@ def main():
                           commit_message="toolbox: projection rendering + "
                                          "world-frame check; gel centre fix")
 
+    # 2c. THE SCRIPTS AND THE USAGE DOC. Same story as the toolbox above, one
+    # directory over: uploaded once by hand and never again by this script, so
+    # `USAGE.md` on the Hub went on saying "Up is +y" after the release was
+    # rotated to Z-up, and the published test scripts drifted five checks
+    # behind the repo. Nothing looked wrong -- the files were all there.
+    #
+    # Only files ALREADY published are refreshed. Deciding here which scripts
+    # belong in the release would put that list in two places; this keeps the
+    # published set as it is and only stops it going stale.
+    print("[publish] refreshing published scripts + USAGE.md ...", flush=True)
+    published = set(api.list_repo_files(REPO, repo_type="dataset"))
+    pairs = [(f, REPO_ROOT / f) for f in sorted(published)
+             if f.startswith("scripts/")]
+    pairs += [(f, REPO_ROOT / src) for f, src in
+              (("USAGE.md", "docs/USAGE.md"),) if f in published]
+    gone = [f for f, src in pairs if not src.exists()]
+    for f in gone:
+        print(f"    ! {f} is published but has no source in this repo — "
+              f"left as it is", flush=True)
+    live = [(f, src) for f, src in pairs if src.exists()]
+    if not args.dry_run and live:
+        from huggingface_hub import CommitOperationAdd as _Add
+        api.create_commit(
+            repo_id=REPO, repo_type="dataset",
+            operations=[_Add(f, str(src)) for f, src in live],
+            commit_message="refresh the published scripts and USAGE.md from "
+                           "the repo")
+    print(f"[publish] {len(live)} script/doc files refreshed", flush=True)
+
     # 3. Delete old .pt release paths
     if not args.no_delete:
         print("[publish] deleting old .pt release paths ...", flush=True)
