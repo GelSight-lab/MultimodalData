@@ -35,6 +35,7 @@ import numpy as np                                              # noqa: E402
 import pyarrow.parquet as pq                                    # noqa: E402
 
 import react_toolbox as T                                       # noqa: E402
+from react_toolbox.frames import as_up_axis
 from twm.calib_epoch import calib_dir                           # noqa: E402
 
 RELEASE = Path("/media/yxma/Disk1/twm/release_force/motherboard/meta")
@@ -120,7 +121,9 @@ def main() -> int:
     (out / "clips").mkdir(parents=True, exist_ok=True)
     stage = Path(tempfile.mkdtemp())
     shutil.copytree(calib_dir("motherboard"), stage / "calibration")
-    cal = T.load_calibration(stage)
+    # the poses below come from the Z-up release, so ask for Z-up rather
+    # than trusting whichever tree calib_dir resolved to
+    cal = as_up_axis(T.load_calibration(stage), "z")
     cam = cal["cams"][args.view]
 
     eps = _episodes()

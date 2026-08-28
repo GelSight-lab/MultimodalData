@@ -23,7 +23,10 @@ def load_calibration(task_root):
                   plus "gel_left"/"gel_right" center (3,) in rigid-body mm.
     """
     cdir = Path(task_root) / "calibration"
-    out = {"cams": {}}
+    # A calibration written before the Z-up conversion carries no declaration.
+    # Absent means Y-up: that is what every pre-conversion file was, and
+    # defaulting the other way would let a stale tree pass a Z-up check.
+    out = {"cams": {}, "up_axis": None}
     for cam in ("left", "middle", "right"):
         p = cdir / f"T_mocap_to_cam_{cam}.json"
         if not p.exists():
@@ -35,6 +38,7 @@ def load_calibration(task_root):
             "serial": d.get("camera_serial"),
             "rmse": d.get("rmse_mm", d.get("rmse_px")),
         }
+        out["up_axis"] = d.get("up_axis", "y")
     for side in ("left", "right"):
         p = cdir / f"T_gel_to_rigid_{side}.json"
         if p.exists():

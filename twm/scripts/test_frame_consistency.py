@@ -106,11 +106,12 @@ def residuals(date, ep, view, cal, n=14):
 
 def main() -> int:
     from react_toolbox.calibration import load_calibration
+    from react_toolbox.frames import as_up_axis
     from twm.calib_epoch import calib_dir
 
     stage = Path(tempfile.mkdtemp())
     shutil.copytree(calib_dir("motherboard"), stage / "calibration")
-    cal = load_calibration(stage)
+    cal = as_up_axis(load_calibration(stage), "z")   # REL poses are Z-up
 
     per = {v: {} for v in VIEWS}
     for p in sorted(REL.glob("*/*.parquet")):

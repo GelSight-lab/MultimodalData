@@ -69,13 +69,14 @@ def main() -> int:
     args = ap.parse_args()
 
     from react_toolbox.calibration import load_calibration, project_gel_frame
-    from twm.calib_epoch import calib_dir
+    from react_toolbox.frames import require_up_axis
+    from react_paths import release_root
 
     root = Path(args.root) / args.batch
     d = json.loads((root / "data.json").read_text())
     stage = Path(tempfile.mkdtemp())
-    shutil.copytree(calib_dir("motherboard"), stage / "calibration")
-    cal = load_calibration(stage)
+    cal = load_calibration(release_root("motherboard"))
+    require_up_axis(cal, where="the release")
 
     calls = [(i, v, s) for i in range(len(d["frames"])) for v in VIEWS
              for s in ("left", "right")]
@@ -485,6 +486,23 @@ def main() -> int:
           "the sampled frames are in the session's quietest quarter",
           f"{min(q):.2f}-{max(q):.2f} mm/frame = session p{min(pct):.0f}-p{max(pct):.0f} "
           f"(want <= p25), drawn from {eps} episodes")
+
+    # the held-back batch must actually hold back a comparable set. The
+    # candidate cap used to be counted across ALL episodes, so the first
+    # episode alone filled it and every later episode contributed exactly one
+    # row: batch A got its five, batch B got one, and the "checked on frames
+    # it was not chosen on" claim quietly had a sample of one.
+    import importlib.util as _il
+    _sp = _il.spec_from_file_location(
+        "_bci", Path(__file__).resolve().parent / "build_calib_inspector.py")
+    _b = _il.module_from_spec(_sp); _sp.loader.exec_module(_b)
+    qa = _b._quiet_rows("2026-05-19", cal, 5, 0)
+    qb = _b._quiet_rows("2026-05-19", cal, 5, 5)
+    overlap = {(e, r) for _, e, r in qa} & {(e, r) for _, e, r in qb}
+    check(len(qa) == 5 and len(qb) == 5 and not overlap,
+          "the held-back batch is as large as the first, and disjoint",
+          f"batch A {len(qa)} rows, batch B {len(qb)} rows, "
+          f"{len(overlap)} shared; B = {[(e, r) for _, e, r in qb]}")
 
     w = max(len(x) for _, x, _ in RESULTS)
     print()

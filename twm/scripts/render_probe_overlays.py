@@ -19,7 +19,9 @@ import cv2                                                     # noqa: E402
 import numpy as np                                             # noqa: E402
 
 from react_toolbox.calibration import load_calibration          # noqa: E402
+from react_toolbox.frames import require_up_axis           # noqa: E402
 from react_toolbox.probe_eval import overlay_gt, rollout_error  # noqa: E402
+from react_toolbox.viz import draw_world_gizmo                  # noqa: E402
 
 FONT = cv2.FONT_HERSHEY_SIMPLEX
 
@@ -37,6 +39,7 @@ def main() -> int:
     args = ap.parse_args()
     root = Path(args.root)
     cal = load_calibration(root)
+    require_up_axis(cal, where=f"{root}/calibration")
     man = json.loads((root / "manifest.json").read_text())
     runs = [json.loads((root / p["meta"]).read_text()) for p in man["probes"]]
     (root / "overlays").mkdir(exist_ok=True)
@@ -49,6 +52,7 @@ def main() -> int:
             d = np.load(root / q["file"])
             vis = overlay_gt(img, d["poses"], gel_m, cam, held_pose7=d["held_pose"],
                              held_gel_mm=gel_o, label=m["moving_side"][0].upper())
+            vis = draw_world_gizmo(vis, cam, corner="tl", margin=26, title="world (z-up)")
             unit = "m" if q["amplitude_unit"] == "m" else "deg"
             vis = _hud(vis, f"{q['name']}  {q['amplitude']:g}{unit}  "
                             f"{q['horizon_s']:.2f}s  p{q['speed_percentile']:.0f}")
@@ -66,6 +70,7 @@ def main() -> int:
         bad = d["poses"].copy()
         bad[:, 0] += 0.025                       # a deliberately wrong rollout
         vis = overlay_gt(vis, bad, gel_m, cam, color=(255, 90, 90))
+        vis = draw_world_gizmo(vis, cam, corner="tl", margin=26, title="world (z-up)")
         e = rollout_error(bad, d["poses"], gel_m, cam)
         q = next(p for p in m["probes"] if p["name"] == name)
         unit = "m" if q["amplitude_unit"] == "m" else "deg"

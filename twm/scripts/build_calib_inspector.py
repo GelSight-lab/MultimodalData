@@ -37,10 +37,16 @@ import numpy as np                                             # noqa: E402
 import pyarrow.parquet as pq                                   # noqa: E402
 
 from react_toolbox.calibration import load_calibration          # noqa: E402
-from twm.calib_epoch import calib_dir, world_offset_m            # noqa: E402
+from react_toolbox.frames import require_up_axis                 # noqa: E402
+from react_paths import force_meta, raw_root, release_root       # noqa: E402
+from twm.calib_epoch import world_offset_m                       # noqa: E402
 
-REL = Path("/media/yxma/Disk1/twm/release_force/motherboard/meta")
-H5R = Path("/media/yxma/Disk1/twm/data/motherboard")
+# Poses and calibration from the SAME release. They used to come from
+# release_force and calib_dir respectively; when the release was rotated to
+# Z-up and calib_dir was not, the page's markers moved 236 px.
+REL = force_meta("motherboard")
+CAL = release_root("motherboard") / "calibration"
+H5R = raw_root("motherboard")
 CAM_H5 = {"left": 1, "middle": 2, "right": 0}
 VIEWS = ("left", "middle", "right")
 
@@ -118,7 +124,9 @@ POST_RESET_DATES = ("2026-05-19",)
 # averaged, because a single frame can be quiet between two fast ones by luck.
 QUIET_WINDOW = 3
 MIN_ROW_GAP = 60          # so five "quiet" frames are not one quiet second
-MAX_PER_EPISODE = 2
+MAX_PER_EPISODE = 3       # 2 x 5 episodes was exactly the 10 rows the two
+                          # batches need, so a single MIN_ROW_GAP collision
+                          # starved the held-back batch
 
 
 def _quiet_rows(date: str, cal, n_wanted: int, skip: int, margin_px=25.0):
@@ -133,6 +141,7 @@ def _quiet_rows(date: str, cal, n_wanted: int, skip: int, margin_px=25.0):
 
     cand = []
     for p in sorted((REL / date).glob("*.parquet")):
+        n_ep = 0            # cap PER EPISODE, see below
         t = pq.read_table(p).to_pydict()
         O = np.asarray([x for x in t["object_pose"]], float)
         n = len(O)
@@ -161,7 +170,13 @@ def _quiet_rows(date: str, cal, n_wanted: int, skip: int, margin_px=25.0):
                     good = False; break
             if good:
                 cand.append((float(sm[r]), p.stem, r))
-            if len(cand) > 400:
+                n_ep += 1
+            # Cap PER EPISODE. Counting across all of them let the first
+            # episode fill the budget on its own, after which every later
+            # episode contributed exactly one row -- so the held-back batch,
+            # which is drawn from what the first batch did not take, had a
+            # sample of one.
+            if n_ep > 400:
                 break
     cand.sort()
     out, per = [], {}
@@ -187,9 +202,8 @@ def main() -> int:
 
     out = Path(args.out) / (args.slug or args.batch)
     (out / "img").mkdir(parents=True, exist_ok=True)
-    stage = Path(tempfile.mkdtemp())
-    shutil.copytree(calib_dir("motherboard"), stage / "calibration")
-    cal = load_calibration(stage)
+    cal = load_calibration(CAL.parent)
+    require_up_axis(cal, where=str(CAL))
     # Batch A is the quietest five; B the next five, held back so a correction
     # settled on A is checked against frames it was not chosen on.
     chosen = _quiet_rows(args.date, cal, 5, 0 if args.batch == "a" else 5)
@@ -197,7 +211,7 @@ def main() -> int:
     for q, ep, r in chosen:
         print(f"   {ep} row {r:5d}   {q:5.2f} mm/frame (worst of L/R/board, "
               f"mean over +/-{QUIET_WINDOW})")
-    raw = {s: json.loads((calib_dir("motherboard") / f"T_gel_to_rigid_{s}.json").read_text())
+    raw = {s: json.loads((CAL / f"T_gel_to_rigid_{s}.json").read_text())
            for s in ("left", "right")}
 
     data = {
@@ -212,7 +226,8 @@ def main() -> int:
         "refball": {s: raw[s]["refball_center_in_rigid_mm"] for s in ("left", "right")},
         "gel_axis": {s: raw[s]["gel_axis_in_rigid"] for s in ("left", "right")},
         "world_offset_mm": [round(v*1000.0, 1) for v in
-                            world_offset_m("motherboard", args.date, chosen[0][1])],
+                            world_offset_m("motherboard", args.date, chosen[0][1],
+                                           up_axis="z")],
         "world_range_mm": WORLD_RANGE_MM, "gel_range_mm": GEL_RANGE_MM,
         "rot_range_deg": ROT_RANGE_DEG, "tilt_fix_deg": TILT_FIX_DEG,
         "frame_range": FRAME_RANGE,

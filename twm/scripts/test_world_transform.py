@@ -28,12 +28,17 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import numpy as np                                             # noqa: E402
 import pyarrow.parquet as pq                                   # noqa: E402
 
+from react_toolbox.frames import UP_AXIS_RECORDED            # noqa: E402
+
 RESULTS: list[tuple[bool, str, str]] = []
 REL = Path("/media/yxma/Disk1/twm/release_force/motherboard/meta")
 
 
 def check(ok: bool, name: str, evidence: str) -> None:
     RESULTS.append((bool(ok), name, evidence))
+
+
+_UP = "xyz".index(UP_AXIS_RECORDED)     # which component points up
 
 
 def table_normal(date, cal, R=np.eye(3)):
@@ -69,7 +74,7 @@ def table_normal(date, cal, R=np.eye(3)):
     C = np.vstack(pts)
     nl = np.linalg.svd(C - C.mean(0))[2][2]
     nw = np.einsum("nij,j->ni", np.vstack(Ms), nl)
-    nw *= np.sign(np.median(nw[:, 1]))
+    nw *= np.sign(np.median(nw[:, _UP]))   # point it up, whichever axis that is
     n = np.median(nw, axis=0)
     return n / np.linalg.norm(n)
 
@@ -104,7 +109,7 @@ def split_normals(date, cal):
 
     def wn(X):
         nl = np.linalg.svd(X - X.mean(0), full_matrices=False)[2][2]
-        nw = Mall @ nl; nw *= np.sign(np.median(nw[:, 1]))
+        nw = Mall @ nl; nw *= np.sign(np.median(nw[:, _UP]))
         n = np.median(nw, axis=0); return n / np.linalg.norm(n)
 
     c = C.mean(0); U = np.linalg.svd(C - c, full_matrices=False)[2]
@@ -151,11 +156,15 @@ def main() -> int:
     #     give normals 6.35 deg apart with one half agreeing with the reference
     #     to 0.77 deg. This check encodes the procedure, so the artefact cannot
     #     come back as a "measurement".
+    # MEASURE the normal; do not restate it. The literal that used to sit here
+    # was a Y-up vector and kept being applied after the release became Z-up,
+    # where its y-component is about -0.056 -- a decomposition against an axis
+    # that no longer meant anything.
+    n = table_normal(WORLD_REF_DATE, cal); n = n / np.linalg.norm(n)
     tilts = []
     for d in ("2026-05-10", "2026-05-11", "2026-05-19"):
         R, _ = world_transform("motherboard", d)
         rv = Rotation.from_matrix(R).as_rotvec()
-        n = np.array([-0.009, 0.9983, 0.0579]); n /= np.linalg.norm(n)
         perp = np.degrees(np.linalg.norm(rv - (rv @ n) * n))
         tilts.append((d, float(perp)))
     worst = max(tilts, key=lambda x: x[1])

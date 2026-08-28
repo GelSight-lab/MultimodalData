@@ -334,3 +334,74 @@ def draw_collision_circle(frame_rgb, sensor_pose7, gel_center_mm, cam_calib,
     if 0 <= cx < w and 0 <= cy < h and rad_px < max(w, h):
         cv2.circle(out, (cx, cy), int(round(rad_px)), color, 1, cv2.LINE_AA)
     return out
+
+def draw_world_gizmo(frame_rgb, cam_calib, corner="tl", size=44, margin=12,
+                     labels=("x", "y", "z"), title=None):
+    """World-frame orientation gizmo in a corner. Returns a copy.
+
+    Shows which way the WORLD axes point in this camera, the way a 3D viewport
+    corner axis does. Directions come from the rotation of `T_mocap_to_cam`
+    only — a gizmo is deliberately orthographic, because a perspective one
+    would change as you moved it around the image and stop being a legend.
+
+    THE PART A NAIVE VERSION GETS WRONG: these cameras look down at the table,
+    so world +z (up) points almost AT the camera and its screen projection is
+    nearly zero length. Drawn as a plain arrow it would read as "z does not
+    exist". So each axis also carries its out-of-plane sign — a filled dot for
+    pointing toward the viewer, a cross for away — the standard convention, and
+    the arrow length is the in-plane component only.
+    """
+    import cv2
+
+    out = np.ascontiguousarray(frame_rgb).copy()
+    h, w = out.shape[:2]
+    T = np.asarray(cam_calib["T_mocap_to_cam"], float)[:3, :3]
+    # Inset by the FULL reach of the drawing, not by the arrow: the label sits
+    # 13 px past the tip and its glyph another ~9. The axis pointing straight
+    # up is the one that runs off the top edge, and that is the axis this
+    # gizmo exists to show.
+    reach = size + 22
+    ox = margin + reach if "l" in corner else w - margin - reach
+    oy = margin + reach if "t" in corner else h - margin - reach
+    # title BELOW the disc: at the top corner there is no room above it and the
+    # text clipped against the frame edge.
+    if title:
+        ty = oy + size + 22
+        for c, th in (((0, 0, 0), 3), ((215, 215, 215), 1)):
+            cv2.putText(out, title, (ox - size - 6, ty),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.34, c, th, cv2.LINE_AA)
+    # a faint disc so the gizmo reads against any background
+    ov = out.copy()
+    cv2.circle(ov, (ox, oy), size + 8, (18, 22, 34), -1)
+    cv2.addWeighted(ov, 0.55, out, 0.45, 0, out)
+    cv2.circle(out, (ox, oy), size + 8, (70, 80, 100), 1, cv2.LINE_AA)
+
+    for i, col in enumerate(AXIS_BGR_RGB):
+        e = np.zeros(3); e[i] = 1.0
+        d = T @ e                        # world axis, in camera coordinates
+        # camera x right, y down, z into the scene
+        px, py, pz = float(d[0]), float(d[1]), float(d[2])
+        inplane = float(np.hypot(px, py))
+        tipx, tipy = int(round(ox + px * size)), int(round(oy + py * size))
+        if inplane > 0.12:
+            cv2.arrowedLine(out, (ox, oy), (tipx, tipy), col, 2, cv2.LINE_AA,
+                            tipLength=0.28)
+            lx = int(round(ox + px * (size + 13)))
+            ly = int(round(oy + py * (size + 13)))
+        else:
+            lx, ly = ox + 14, oy - 14
+        # out-of-plane sign: toward the viewer is -z in camera coordinates
+        if abs(pz) > 0.55:
+            if pz < 0:                    # toward the viewer
+                cv2.circle(out, (ox, oy), 6, col, 2, cv2.LINE_AA)
+                cv2.circle(out, (ox, oy), 2, col, -1, cv2.LINE_AA)
+            else:                          # away from the viewer
+                cv2.circle(out, (ox, oy), 6, col, 2, cv2.LINE_AA)
+                r = 4
+                cv2.line(out, (ox-r, oy-r), (ox+r, oy+r), col, 1, cv2.LINE_AA)
+                cv2.line(out, (ox-r, oy+r), (ox+r, oy-r), col, 1, cv2.LINE_AA)
+        for c, th in (((0, 0, 0), 3), (col, 1)):
+            cv2.putText(out, labels[i], (lx - 4, ly + 4),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.42, c, th, cv2.LINE_AA)
+    return out
+

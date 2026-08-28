@@ -69,7 +69,8 @@ def projection_fingerprint(pose7, gel_center_mm, cams) -> dict:
     return out
 
 
-def verify_world_frame(pose7, side: str, task_root, declaration) -> float:
+def verify_world_frame(pose7, side: str, task_root, declaration, *,
+                       up_axis: str | None = None) -> float:
     """Worst per-camera pixel distance from the declared fingerprint.
 
     WORST, not mean: a frame error along one camera's optical axis is
@@ -77,9 +78,17 @@ def verify_world_frame(pose7, side: str, task_root, declaration) -> float:
     dilute exactly the evidence that matters.
 
     `task_root` is the directory holding `calibration/` — the same argument
-    `load_calibration` takes.
+    `load_calibration` takes. Its calibration is converted to the convention
+    the DECLARATION names, so a working tree that still holds the recorded
+    Y-up extrinsics gives the same answer as the published Z-up ones. Pass
+    `up_axis` only to override that.
+
+    Poses in one convention with extrinsics in the other project 165 px away
+    and raise nothing, which is why this reads the convention instead of
+    assuming it.
     """
     from .calibration import load_calibration
+    from .frames import as_up_axis
 
     if not declaration or "fingerprint" not in declaration:
         raise ValueError("declaration has no fingerprint; this episode "
@@ -92,7 +101,8 @@ def verify_world_frame(pose7, side: str, task_root, declaration) -> float:
             f"share the names left/right, so selecting by hand is easy to "
             f"get wrong — an earlier version of this check did, and returned "
             f"0.0 for every input as a result.)")
-    cal = load_calibration(task_root)
+    want = up_axis or declaration.get("up_axis") or "y"
+    cal = as_up_axis(load_calibration(task_root), want)
     got = projection_fingerprint(pose7, cal[f"gel_{side}"], cal["cams"])
     common = [v for v in VIEWS if v in got and v in stored]
     if not common:

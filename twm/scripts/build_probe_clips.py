@@ -28,6 +28,7 @@ import cv2                                                     # noqa: E402
 import numpy as np                                             # noqa: E402
 
 from react_toolbox.calibration import load_calibration          # noqa: E402
+from react_toolbox.frames import require_up_axis           # noqa: E402
 
 SRC = testset_root()
 FPS = 30.0
@@ -87,13 +88,16 @@ def render(frame_rgb, poses, cal, cam, out_mp4, hud, held_pose, held_gel,
     inventing pixels.
     """
     from react_toolbox.calibration import project_gel_frame
-    from react_toolbox.viz import draw_collision_circle, draw_sensor_frame
+    from react_toolbox.viz import (draw_collision_circle, draw_sensor_frame,
+                                   draw_world_gizmo)
 
     h, w = frame_rgb.shape[:2]
     base = draw_collision_circle(frame_rgb, held_pose, held_gel, cam,
                                  collision_m, (120, 120, 120))
     base = draw_sensor_frame(base, held_pose, held_gel, cam, stem=True,
                              dim=True, label="held")
+    # on the frozen background, so it is present in every frame for free
+    base = draw_world_gizmo(base, cam, corner="tl", margin=26, title="world (z-up)")
     vw = _H264Writer(out_mp4, w, h, FPS)
     poster = Path(str(out_mp4).replace(".mp4", ".jpg"))
     trail, n = [], 0
@@ -139,6 +143,7 @@ def main() -> int:
     (out / "clips").mkdir(parents=True)
 
     cal = load_calibration(SRC)
+    require_up_axis(cal, where=f"{SRC}/calibration")
     man = json.loads((SRC / "manifest.json").read_text())
     runs = [json.loads((SRC / p["meta"]).read_text()) for p in man["probes"]]
     cam = cal["cams"]["middle"]

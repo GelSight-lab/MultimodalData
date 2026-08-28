@@ -19,31 +19,55 @@ tour.
 | Quaternion order | **scalar-last (xyzw)** — `scipy...Rotation.from_quat` |
 | Rotation deltas | **world-frame**: `dq = q[i+1] · q[i]⁻¹`, integrate `q[i+1] = dq · q[i]` |
 | World frame | OptiTrack, **2026-05-10 reference** |
-| **Up axis** | **+y** — OptiTrack's convention, right-handed. See below. |
+| **Up axis** | **+z**, right-handed. Recorded Y-up, published Z-up. See below. |
 | Images | 640×480, three colour views (`left`, `middle`, `right`) + two tactile |
 
-### Up is +y, not +z
+### Up is +z — converted, not recorded
 
-OptiTrack records **Y-up, right-handed**: measured on this release, the table
-normal in world coordinates sits **4.4° off +y**, and both the pose rotations
-and `T_mocap_to_cam` have determinant +1.
-
-Robotics code overwhelmingly assumes Z-up. Taking `pose[2]` as height here
-gives you a *horizontal* coordinate, and nothing complains — the numbers are
-plausible, the plots look fine, and it surfaces only as a model that never
+OptiTrack records **Y-up**. This release is published **Z-up**, because
+robotics code overwhelmingly assumes Z-up and reading `pose[2]` as height under
+the recorded convention silently returns a *horizontal* coordinate: the numbers
+stay plausible, the plots look fine, and it surfaces only as a model that never
 learns which way gravity points.
 
+So the conversion was done once, in the data:
+
 ```python
-ds  = ReactVideoDataset(root, up_axis="z")   # poses converted
+ds  = ReactVideoDataset(root)                # up_axis="z" is the default
 cal = ds.calibration()                       # extrinsics in the SAME convention
 ```
 
-**Ask the dataset for the calibration.** The conversion is a rotation of the
-world frame, so it must be applied to the poses *and* to `T_mocap_to_cam`
-together. Applied to one only it moves every projection by up to **165 px** and
-raises nothing — measured, and asserted as a negative control in
-`scripts/test_frames.py`. Converting both leaves projections identical to
-1.3e-10 px, which is the property that test exists to check.
+Measured on the published tree, the table normal is **[-0.015, -0.029, 0.999]**
+— +z, 1.9° off — and every rotation has determinant +1. Pass `up_axis="y"` to
+get the raw OptiTrack convention back; the calibration comes back with it.
+
+**Never take the two halves from different places.** The conversion is a
+rotation of the world frame, so it applies to the poses *and* to
+`T_mocap_to_cam`. Applied to one only it moves every projection by up to
+**165 px** and raises nothing. That is not hypothetical: the probe test set
+drew poses from the converted release and calibration from an unconverted tree,
+and every overlay was a median **153 px** off while all of its self-consistency
+checks stayed green — the same wrong matrix was used to draw and to re-verify.
+
+Two things now prevent it. Each camera calibration declares its convention:
+
+```json
+{"T_mocap_to_cam": [...], "up_axis": "z"}
+```
+
+and `toolbox/frames.py` exposes `require_up_axis(cal)`, which raises rather
+than letting a mismatched pair through. A file with **no** `up_axis` key is
+treated as the pre-conversion Y-up it was, not waved past.
+
+`scripts/test_frames.py` asserts both directions: converting poses and cameras
+together leaves projections identical to 8.5e-14 px, and converting one alone
+moves them 165 px. The second check is what makes the first mean anything.
+
+One field is deliberately **not** Z-up. Each parquet's `twm.world_frame`
+declaration carries `raw_h5_offset_m`, whose job is to be added to a pose read
+straight out of the source HDF5 — and that file is Y-up, as recorded. It ships
+with `raw_h5_offset_up_axis: "y"` saying so. Everything else in that blob
+describes the published poses and is Z-up.
 
 The rotation is `R_x(-90°)`: `(x, y, z) → (x, -z, y)`. There are two
 right-handed candidates; the other one leaves the world upside down with

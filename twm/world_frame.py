@@ -61,17 +61,29 @@ VIEWS = ("left", "middle", "right")
 COMMON = "common"
 
 
-def _calib(task: str):
+def _calib(task: str, up_axis: str):
+    """The extrinsics in the convention the CALLER's poses are in.
+
+    calib_dir() returns whatever tree the environment points it at, and after
+    the release was rotated to Z-up that could be either convention -- so the
+    directory is not the answer, the request is. Handed a Y-up calibration
+    beside Z-up poses, this fingerprint reads 199.5 px from the truth.
+    """
+    from react_toolbox.frames import as_up_axis
     from twm.calib_epoch import calib_dir
     d = calib_dir(task)
-    cams = {v: json.loads((d / f"T_mocap_to_cam_{v}.json").read_text())
-            for v in VIEWS}
+    raw = {v: json.loads((d / f"T_mocap_to_cam_{v}.json").read_text())
+           for v in VIEWS}
+    declared = next(iter(raw.values())).get("up_axis") or "y"
+    cal = as_up_axis({"up_axis": declared, "cams": {
+        v: {"T_mocap_to_cam": np.asarray(c["T_mocap_to_cam"], float),
+            "intrinsics": c["intrinsics"]} for v, c in raw.items()}}, up_axis)
     gel = {s: json.loads((d / f"T_gel_to_rigid_{s}.json").read_text())
            for s in ("left", "right")}
-    return cams, gel
+    return cal["cams"], gel
 
 
-def fingerprint(pose7, side: str, task: str) -> dict:
+def fingerprint(pose7, side: str, task: str, *, up_axis: str) -> dict:
     """Median projected gel-centre pixel per camera. The frame's signature.
 
     Median, not mean: a handful of OptiTrack dropouts move a mean by tens of
@@ -80,7 +92,7 @@ def fingerprint(pose7, side: str, task: str) -> dict:
     """
     from scipy.spatial.transform import Rotation
 
-    cams, gel = _calib(task)
+    cams, gel = _calib(task, up_axis)
     p = np.asarray(pose7, float)
     ok = np.isfinite(p).all(1) & (np.linalg.norm(p[:, 3:], axis=1) > 0.5)
     p = p[ok]
@@ -100,7 +112,8 @@ def fingerprint(pose7, side: str, task: str) -> dict:
     return out
 
 
-def verify_fingerprint(pose7, side: str, task: str, stored: dict) -> float:
+def verify_fingerprint(pose7, side: str, task: str, stored: dict, *,
+                      up_axis: str) -> float:
     """Worst per-camera pixel distance between this pose array and `stored`.
 
     Returns the WORST, not the mean: a frame error that happens to be along
@@ -118,7 +131,7 @@ def verify_fingerprint(pose7, side: str, task: str, stored: dict) -> float:
 
     So: no guessing. A malformed `stored` raises.
     """
-    got = fingerprint(pose7, side, task)
+    got = fingerprint(pose7, side, task, up_axis=up_axis)
     if not isinstance(stored, dict) or not all(
             v in stored and len(stored[v]) == 2 for v in VIEWS):
         raise ValueError(
@@ -148,13 +161,16 @@ def build_declaration(task: str, date: str, ep: str, poses: dict) -> dict:
     reason this module exists.
     """
     from twm.calib_epoch import world_offset_m
-    off = list(world_offset_m(task, date, ep))
+    off = list(world_offset_m(task, date, ep, up_axis="y"))
     return {
         "world_frame": COMMON,
         "raw_h5_offset_m": off,
+        "raw_h5_offset_up_axis": "y",
         "raw_h5_note": ("add this to a pose read straight out of the source "
-                        "H5; the published poses already have it"),
-        "fingerprint": {s: fingerprint(poses[s], s, task)
+                        "H5, which is Y-up as recorded; the published poses "
+                        "already have it, expressed Z-up"),
+        # the poses handed in here are the RELEASE's, which are Z-up
+        "fingerprint": {s: fingerprint(poses[s], s, task, up_axis="z")
                         for s in ("left", "right") if s in poses},
         "fingerprint_note": ("median projected gel-centre pixel per camera; "
                              "recompute from your own poses and compare — "

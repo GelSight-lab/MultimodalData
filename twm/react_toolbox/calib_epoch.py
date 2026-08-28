@@ -44,6 +44,8 @@ import json
 from functools import lru_cache
 from pathlib import Path
 
+import numpy as np
+
 REPO = Path(__file__).resolve().parent
 RELEASE = Path("/media/yxma/Disk1/twm/release")
 
@@ -57,7 +59,7 @@ CALIB_DIRS = {
 EXPECTED_EPOCH = {"motherboard": "2026-05-12", "pushT": "2026-06-26"}
 
 
-def calib_dir(task: str) -> Path:
+def calib_dir(task: str, *, up_axis: str | None = None) -> Path:
     """Directory of camera extrinsics valid for `task`.
 
     Looked up in this order, so the module works outside the repository it
@@ -79,14 +81,40 @@ def calib_dir(task: str) -> Path:
     slightly miscalibrated rig, which is how it shipped unnoticed once.
     """
     import os as _os
+
+    def _ok(d: Path) -> Path:
+        """Refuse a tree in the wrong convention instead of returning it.
+
+        This resolves $REACT_RELEASE before the repo's own tree, and the
+        release is now Z-up while every raw-HDF5 reader is Y-up. Returning a
+        path cannot convert anything, so the only honest options are the right
+        tree or an error -- not a 200 px picture that looks plausible.
+        """
+        if up_axis is None:
+            return d
+        if up_axis not in ("y", "z"):
+            raise ValueError(f"up axis must be 'y' or 'z', got {up_axis!r}")
+        f = d / "T_mocap_to_cam_middle.json"
+        got = "y"
+        if f.exists():
+            got = json.loads(f.read_text()).get("up_axis") or "y"
+        if got != up_axis:
+            raise ValueError(
+                f"{d} is a {got}-up calibration but the caller needs "
+                f"{up_axis}-up. Raw HDF5 poses are Y-up as recorded; the "
+                f"published release is Z-up. Point REACT_CALIB at a {up_axis}"
+                f"-up tree, or convert with react_toolbox.frames.as_up_axis "
+                f"after loading.")
+        return d
+
     env = _os.environ.get("REACT_CALIB")
     if env and Path(env).is_dir():
-        return Path(env)
+        return _ok(Path(env))
     rel = _os.environ.get("REACT_RELEASE")
     if rel:
         cand = Path(rel) / task / "calibration"
         if cand.is_dir():
-            return cand
+            return _ok(cand)
     try:
         d = CALIB_DIRS[task]
     except KeyError:
@@ -99,11 +127,16 @@ def calib_dir(task: str) -> Path:
             f"calibration dir for {task!r} missing: {d}. Set REACT_CALIB, or "
             f"REACT_RELEASE so that $REACT_RELEASE/{task}/calibration exists "
             f"(the dataset publishes it there).")
-    return d
+    return _ok(d)
 
 
-def calib_dir_for_path(p: str | Path) -> Path:
+def calib_dir_for_path(p: str | Path, *, up_axis: str = "y") -> Path:
     """Epoch dir inferred from any path containing a task-name component.
+
+    Defaults to `up_axis="y"` because every caller is an interactive viewer
+    reading poses straight out of the source HDF5, which is Y-up as recorded.
+    If $REACT_RELEASE points calib_dir at the Z-up release, this raises rather
+    than viewing through a 200 px error.
 
     For the interactive viewers, whose old default was `calibration/result`
     for every input — June-26 extrinsics under May recordings. No guess on
@@ -113,7 +146,7 @@ def calib_dir_for_path(p: str | Path) -> Path:
     parts = set(Path(p).parts) | set(Path(p).resolve().parts)
     hits = [t for t in CALIB_DIRS if t in parts]
     if len(hits) == 1:
-        return calib_dir(hits[0])
+        return calib_dir(hits[0], up_axis=up_axis)
     raise KeyError(
         f"cannot infer task from {str(p)!r} (matches: {hits or 'none'}); pass "
         f"explicit --cam_calib/--gel_* paths. Known tasks: {sorted(CALIB_DIRS)}")
@@ -158,8 +191,15 @@ def release_episodes(task: str) -> set[str]:
     return set(_episodes(task))
 
 
-def world_offset_m(task: str, date: str, episode: str) -> tuple[float, float, float]:
-    """Offset to ADD to raw-H5 OptiTrack poses to reach the release frame.
+def world_offset_m(task: str, date: str, episode: str, *,
+                   up_axis: str) -> tuple[float, float, float]:
+    """Offset to ADD to poses to reach the release frame, in `up_axis`.
+
+    `up_axis` is REQUIRED and has no default on purpose. The value is stored
+    Z-up because the release is, but the documented use -- adding it to a pose
+    read straight out of the source H5 -- is Y-up. A default would have been
+    right for one caller and silently 175 mm wrong on the wrong axis for the
+    other, which is how this class of bug got in.
 
     Read from the release's own `episodes.jsonl` (`world_frame_offset`), never
     restated. `episode` may be `episode_002` or `2026-05-19/episode_002`.
@@ -178,14 +218,22 @@ def world_offset_m(task: str, date: str, episode: str) -> tuple[float, float, fl
         raise KeyError(
             f"{task}: {key!r} is not in {RELEASE / task / 'episodes.jsonl'}, so "
             f"its world-frame offset is unknown. Refusing to assume zero — "
-            f"2026-05-19 is offset (0.23, 0, 0.175) m and would render wrong.")
+            f"2026-05-19 is offset (0.23, -0.175, 0) m Z-up and would "
+            f"render wrong.")
     off = eps[key].get("world_frame_offset") or (0.0, 0.0, 0.0)
+    stored = eps[key].get("up_axis") or "y"
+    off = np.asarray([float(off[0]), float(off[1]), float(off[2])], float)
+    if stored != up_axis:
+        from react_toolbox.frames import YUP_TO_ZUP
+        M = np.asarray(YUP_TO_ZUP, float)
+        off = (M if up_axis == "z" else M.T) @ off
     return (float(off[0]), float(off[1]), float(off[2]))
 
 
 def describe(task: str, date: str, episode: str) -> str:
     """One line for a status bar, so the applied correction is visible."""
-    dx, dy, dz = world_offset_m(task, date, episode)
+    # a status line for the raw-H5 render paths, so: the Y-up convention
+    dx, dy, dz = world_offset_m(task, date, episode, up_axis="y")
     s = f"calib {epoch_of(task)}"
     if any((dx, dy, dz)):
         s += f" world+({dx:g},{dy:g},{dz:g})m"

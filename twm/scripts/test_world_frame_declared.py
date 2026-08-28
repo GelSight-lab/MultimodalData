@@ -87,7 +87,8 @@ def main() -> int:
             continue
         t = pq.read_table(p).to_pydict()
         pose = np.asarray([x for x in t["sensor_left_pose"]], float)
-        err = verify_fingerprint(pose, "left", "motherboard", d["fingerprint"]["left"])
+        err = verify_fingerprint(pose, "left", "motherboard",
+                                 d["fingerprint"]["left"], up_axis="z")
         if err > TOL_PX:
             bad.append(f"{date}/{ep}: {err:.1f} px")
     check(not bad, "the poses reproduce their own fingerprint",
@@ -102,13 +103,47 @@ def main() -> int:
         t = pq.read_table(rel / date / f"{ep}.parquet").to_pydict()
         pose = np.asarray([x for x in t["sensor_left_pose"]], float)
         raw = pose.copy()
-        raw[:, :3] -= np.asarray(d.get("raw_h5_offset_m") or [0, 0, 0], float)
-        err = verify_fingerprint(raw, "left", "motherboard", d["fingerprint"]["left"])
+        # the offset is declared in the RAW convention; these poses are the
+        # release's, so rotate it before removing it -- otherwise this
+        # negative control would "pass" for the wrong reason.
+        from react_toolbox.frames import YUP_TO_ZUP as _M
+        _o = np.asarray(d.get("raw_h5_offset_m") or [0, 0, 0], float)
+        if (d.get("raw_h5_offset_up_axis") or "y") == "y":
+            _o = np.asarray(_M, float) @ _o
+        raw[:, :3] -= _o
+        err = verify_fingerprint(raw, "left", "motherboard",
+                                 d["fingerprint"]["left"], up_axis="z")
         check(err > 50.0, "a raw-H5 pose array is rejected",
               f"un-offset poses miss the fingerprint by {err:.1f} px "
               f"(tolerance {TOL_PX})")
     else:
         check(False, "a raw-H5 pose array is rejected", "not attempted")
+
+    # 4 — the two published records of the same offset must agree. The
+    #     parquet says what to add to a RAW H5 pose (Y-up); episodes.jsonl
+    #     says where the release frame sits (Z-up). Rotate one into the other
+    #     and they are the same vector, or one of them was half-converted.
+    from react_toolbox.frames import YUP_TO_ZUP
+    from twm.calib_epoch import world_offset_m
+    dis = []
+    for date, ep in cases:
+        d = read_declaration(rel / date / f"{ep}.parquet") or {}
+        off = d.get("raw_h5_offset_m")
+        if off is None:
+            continue
+        ax = d.get("raw_h5_offset_up_axis") or "y"
+        v = np.asarray(off, float)
+        if ax == "y":
+            v = np.asarray(YUP_TO_ZUP, float) @ v
+        want = np.asarray(world_offset_m("motherboard", date, ep,
+                                         up_axis="z"), float)
+        if not np.allclose(v, want, atol=1e-9):
+            dis.append(f"{date}/{ep}: parquet {ax}-up {off} -> "
+                       f"{v.round(4).tolist()} vs episodes.jsonl "
+                       f"{want.round(4).tolist()}")
+    check(not dis, "both published records of the offset agree",
+          f"{len(cases)} episodes; parquet raw_h5_offset_m rotates onto "
+          f"episodes.jsonl world_frame_offset" if not dis else "; ".join(dis))
 
     width = max(len(x) for _, x, _ in RESULTS)
     print()

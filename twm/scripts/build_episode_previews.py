@@ -537,7 +537,7 @@ def main():
         try:
             dx, dy, dz = (args.dx, args.dy, args.dz)
             if (dx, dy, dz) == (0.0, 0.0, 0.0):
-                dx, dy, dz = world_offset_m(args.task, args.date, h5.stem)
+                dx, dy, dz = world_offset_m(args.task, args.date, h5.stem, up_axis="y")
         except KeyError as e:
             print(f"SKIP ({e})", flush=True)
             continue

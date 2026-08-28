@@ -81,7 +81,7 @@ class ReactVideoDataset:
     def __init__(self, task_root, window_length=16, stride=1, window_step=None,
                  mode="segment", streams=ALL_STREAMS, skip_bad=True,
                  which_sensors="any", load_depth=False, tactile_latency=0,
-                 split="all", splits_file="splits.json", up_axis="y"):
+                 split="all", splits_file="splits.json", up_axis="z"):
         self.root = Path(task_root)
         self.W = window_length
         self.stride = stride
@@ -112,18 +112,17 @@ class ReactVideoDataset:
         # contains its frames, so `splits.json` carries a guard of
         # max_train_window - 1 and this loader REFUSES a longer window instead
         # of leaking — a leak here leaves no trace in any metric.
-        # UP AXIS. OptiTrack records Y-up, right-handed — measured, the table
-        # normal sits 4.4 deg off +y. Robotics code overwhelmingly assumes
-        # Z-up, and a reader taking pose[2] as height silently gets a
-        # horizontal coordinate.
+        # UP AXIS. The release ships Z-up (table normal 4.4 deg off +z), which
+        # is what robotics code assumes. OptiTrack itself records Y-up; that is
+        # available as `up_axis="y"` for anything that wants the raw convention.
         #
-        # `up_axis="z"` converts the poses this loader yields. It does NOT
-        # convert your calibration, and converting one without the other moves
-        # every projection by up to 165 px with nothing raised — so use
-        # `.calibration()` below, which returns the extrinsics in whichever
-        # convention this dataset is in.
+        # Either way, take the calibration from `.calibration()` below rather
+        # than loading it yourself: this is a rotation of the world frame, so
+        # poses and `T_mocap_to_cam` must move together. One without the other
+        # shifts every projection by up to 165 px and raises nothing.
         if up_axis not in ("y", "z"):
-            raise ValueError(f"up_axis must be 'y' (as recorded) or 'z', got {up_axis!r}")
+            raise ValueError(f"up_axis must be 'z' (as published) or 'y' (raw "
+                             f"OptiTrack), got {up_axis!r}")
         self.up_axis = up_axis
 
         self.split = split
@@ -157,7 +156,7 @@ class ReactVideoDataset:
         """
         import shutil as _sh, tempfile as _tf
         from react_toolbox.calibration import load_calibration
-        from react_toolbox.frames import convert_calibration
+        from react_toolbox.frames import as_up_axis
         root = Path(calib_dir) if calib_dir else self.root
         if not (root / "calibration").is_dir():
             # The published release ships <task>/calibration/. A working tree
@@ -173,13 +172,17 @@ class ReactVideoDataset:
             raise FileNotFoundError(
                 f"no gel calibration under {root}; the published release ships "
                 f"it at <task>/calibration/. Pass calib_dir= or set REACT_CALIB.")
-        return cal if self.up_axis == "y" else convert_calibration(cal, True)
+        # Whatever tree got staged above may be in either convention, so
+        # CONVERT to the one this dataset is serving rather than assuming
+        # the source was Z-up. The staged epoch directory is Y-up.
+        return as_up_axis(cal, self.up_axis)
 
     def _convert_pose(self, arr):
-        if self.up_axis == "y":
+        # the published data is Z-up; "y" converts BACK to raw OptiTrack.
+        if self.up_axis == "z":
             return arr
         from react_toolbox.frames import convert_poses
-        return convert_poses(arr, True)
+        return convert_poses(arr, to_zup=False)
 
     def _video_dir(self, ep_key):
         date, ep = ep_key.split("/")

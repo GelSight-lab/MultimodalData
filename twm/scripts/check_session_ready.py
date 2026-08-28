@@ -79,7 +79,7 @@ def main() -> int:
         for e in on_disk:
             dt, ep = e.split("/")
             try:
-                world_offset_m(a.task, dt, ep)
+                world_offset_m(a.task, dt, ep, up_axis="z")
             except Exception as ex:
                 bad.append(f"{e}: {type(ex).__name__}")
         note(not bad, "every episode declares a world offset",

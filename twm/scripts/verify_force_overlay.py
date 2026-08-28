@@ -67,7 +67,7 @@ def main(h5_path: str, n: int = 4):
         # ink to their own projection — while measuring the wrong place.
         from twm.calib_epoch import world_offset_m
         from twm.scripts.build_episode_previews import _apply_world_offset
-        _apply_world_offset(ot, *world_offset_m(task, date, ep))
+        _apply_world_offset(ot, *world_offset_m(task, date, ep, up_axis="y"))
         lag = gel_lag_frames(f)
         n_gel = len(f["gelsight/left/frames"])
         gel_at = lambda i: min(int(i) + lag, n_gel - 1)      # noqa: E731

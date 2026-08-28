@@ -29,6 +29,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from react_paths import force_meta, release_root, testset_root   # noqa: E402
 
+from react_toolbox.frames import require_up_axis                 # noqa: E402
+
 import cv2                                                     # noqa: E402
 import numpy as np                                             # noqa: E402
 import pyarrow.parquet as pq                                   # noqa: E402
@@ -93,10 +95,14 @@ def main() -> int:
     if out.exists():
         shutil.rmtree(out)
     (out / "probes").mkdir(parents=True)
-    stage = Path(tempfile.mkdtemp())
-    shutil.copytree(calib_dir("motherboard"), stage / "calibration")
-    cal = T.load_calibration(stage)
-    shutil.copytree(stage / "calibration", out / "calibration")
+    # The calibration must come from the release the POSES come from, not
+    # from calib_dir(): those are two trees, REACT_CALIB can point the second
+    # somewhere else, and when the release was rotated to Z-up and that tree
+    # was not, every overlay silently moved 153 px. Same release, or neither.
+    src_cal = release_root("motherboard") / "calibration"
+    shutil.copytree(src_cal, out / "calibration")
+    cal = T.load_calibration(out)
+    require_up_axis(cal, where=f"{src_cal}")
 
     eps = _episodes()
     splits = json.loads((release_root("motherboard") /

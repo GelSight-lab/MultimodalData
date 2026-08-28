@@ -1,15 +1,22 @@
 """Which way is up — declared, and converted as one piece or not at all.
 
-WHAT THE DATA ACTUALLY IS
+WHAT THE DATA IS, AND WHAT IT WAS
 
-OptiTrack records **Y-up, right-handed**. Measured on this release: the table
-normal in world coordinates is (0.053, 0.997, 0.056), i.e. 4.4 degrees off +y,
-and both the pose rotations and `T_mocap_to_cam` have determinant +1.
+The release is now **Z-up, right-handed**: the table normal in world
+coordinates is (0.053, -0.056, 0.997), 4.4 degrees off +z, and both the pose
+rotations and `T_mocap_to_cam` have determinant +1.
 
-That convention was documented nowhere. Robotics code overwhelmingly assumes
-Z-up, so a reader taking `pose[2]` as height gets a horizontal coordinate and
-nothing complains — the numbers are plausible, the plots look fine, and the
-error only shows up as a model that never learns which way gravity points.
+OptiTrack RECORDS Y-up. The release used to ship that unchanged and said so
+nowhere, which is the worse half of the problem: robotics code overwhelmingly
+assumes Z-up, and a reader taking `pose[2]` as height got a horizontal
+coordinate with nothing to complain — plausible numbers, fine-looking plots,
+and an error that surfaces only as a model that never learns which way gravity
+points.
+
+Poses and extrinsics were converted together, so every projection is
+unchanged and every rendered preview, overlay and clip stayed valid. Only the
+numbers moved. `ZUP_TO_YUP` converts back for anything that still wants the
+raw OptiTrack convention.
 
 THE CONVERSION, AND THE TRAP IN IT
 
@@ -34,7 +41,7 @@ from __future__ import annotations
 
 import numpy as np
 
-UP_AXIS_RECORDED = "y"
+UP_AXIS_RECORDED = "z"
 UP_AXIS_ROBOTICS = "z"
 
 # (x, y, z)_yup -> (x, -z, y)_zup.  det = +1, and it sends +y to +z.
@@ -74,6 +81,7 @@ def convert_calibration(cal: dict, to_zup: bool = True) -> dict:
     """
     M = _R(to_zup)
     out = {k: v for k, v in cal.items()}
+    out["up_axis"] = "z" if to_zup else "y"
     out["cams"] = {}
     for name, c in cal["cams"].items():
         T = np.asarray(c["T_mocap_to_cam"], float).copy()
@@ -89,3 +97,47 @@ def to_zup(poses7, cal: dict):
     one piece.
     """
     return convert_poses(poses7, True), convert_calibration(cal, True)
+
+
+def require_up_axis(cal: dict, expected: str = UP_AXIS_RECORDED, where: str = ""):
+    """Raise unless `cal` declares the up-axis convention `expected`.
+
+    WHY THIS EXISTS. Poses and calibration are two halves of one convention,
+    and they are read from two paths. Rotating only one half leaves every
+    self-consistency check green -- projections still recompute exactly from
+    the same wrong matrix -- while the pictures are wrong. That happened: the
+    probe test set drew its poses from the Z-up release and its calibration
+    from a Y-up tree, and every overlay was a median 153 px off.
+
+    So the halves must be paired loudly, not by convention. A file with no
+    declaration is treated as the pre-conversion Y-up it was.
+    """
+    got = cal.get("up_axis")
+    if got != expected:
+        raise ValueError(
+            f"calibration up-axis mismatch{' in ' + where if where else ''}: "
+            f"declared {got!r}, need {expected!r}. Poses and calibration must "
+            f"come from the same release. A missing declaration means a "
+            f"pre-conversion Y-up file -- convert it with "
+            f"scripts/convert_release_zup.py, or take the calibration from "
+            f"the release the poses came from.")
+    return cal
+
+
+def as_up_axis(cal: dict, want: str) -> dict:
+    """Return `cal` in the convention `want`, converting only if it must.
+
+    `require_up_axis` refuses a mismatch; this one repairs it. Use it when the
+    caller genuinely knows which convention its POSES are in -- a raw-HDF5
+    reader wants "y", a release reader wants "z" -- and should not have to care
+    which directory the calibration happened to come from.
+
+    An undeclared calibration is the pre-conversion Y-up it was, so this
+    converts it rather than trusting it.
+    """
+    if want not in ("y", "z"):
+        raise ValueError(f"up axis must be 'y' or 'z', got {want!r}")
+    got = cal.get("up_axis") or "y"
+    if got == want:
+        return cal
+    return convert_calibration(cal, to_zup=(want == "z"))

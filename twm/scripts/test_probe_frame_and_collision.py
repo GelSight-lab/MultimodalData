@@ -52,11 +52,12 @@ def main() -> int:
 
     import react_toolbox as T
     from react_toolbox.synth_actions import COLLISION_DIAMETER_M, sample_probe
+    from react_toolbox.frames import as_up_axis
     from twm.calib_epoch import calib_dir
 
     stage = Path(tempfile.mkdtemp())
     shutil.copytree(calib_dir("motherboard"), stage / "calibration")
-    cal = T.load_calibration(stage)
+    cal = as_up_axis(T.load_calibration(stage), "z")  # release poses
     cam = cal["cams"]["middle"]
 
     check(abs(COLLISION_DIAMETER_M - COLLISION_M) < 1e-9,

@@ -28,6 +28,8 @@ from react_paths import release_root, testset_root   # noqa: E402
 
 import numpy as np                                             # noqa: E402
 
+import react_toolbox.calibration as T_                          # noqa: E402
+
 RESULTS: list[tuple[bool, str, str]] = []
 ROOT = testset_root()
 
@@ -270,6 +272,42 @@ def main() -> int:
           "the context carries its numeric channels as well as images",
           f"{len(cols)} per-row arrays: "
           f"{', '.join(sorted(c[8:] for c in cols)[:4])}...")
+
+    # 14 — the shipped calibration is the SAME one the poses came from.
+    # The poses are copied out of the release parquet. The calibration used to
+    # be copied from calib_dir(), a separate tree. When the release was rotated
+    # to Z-up and that tree was not, the two silently disagreed and every
+    # overlay was 153 px off with nothing raising.
+    import hashlib
+    rel_c = release_root("motherboard") / "calibration"
+    ours = sorted((ROOT / "calibration").glob("T_*.json"))
+    def _h(f):
+        return hashlib.sha256(f.read_bytes()).hexdigest()[:12]
+    mism = [f.name for f in ours if not (rel_c / f.name).exists()
+            or _h(f) != _h(rel_c / f.name)]
+    check(bool(ours) and not mism,
+          "calibration is byte-identical to the release the poses come from",
+          f"{len(ours)} files match {rel_c}" if not mism
+          else f"DIFFER from the release: {', '.join(mism)}")
+
+    up = {json.loads(f.read_text()).get("up_axis") for f in ours
+          if f.name.startswith("T_mocap_to_cam_")}
+    check(up == {"z"},
+          "every camera calibration declares the Z-up convention",
+          f"declared up_axis={sorted(str(u) for u in up)} "
+          f"(None means a pre-conversion Y-up file)")
+
+    # 15 — physical cross-check, independent of any file's own label: the
+    # middle camera looks down at the table, so the world vertical axis must
+    # point nearly AT it. A Y-up calibration paired with Z-up poses puts the
+    # in-plane component at 1.00 instead of ~0.03.
+    Tm = T_.load_calibration(ROOT)["cams"]["middle"]["T_mocap_to_cam"][:3, :3]
+    d = Tm @ np.array([0.0, 0.0, 1.0])
+    inpl = float(np.hypot(d[0], d[1]))
+    check(inpl < 0.20 and d[2] < 0.0,
+          "world +z points at the top-down middle camera",
+          f"in-plane {inpl:.3f} (a Y-up calibration gives 1.00), "
+          f"depth {d[2]:+.3f} (negative = toward the camera)")
 
     w = max(len(x) for _, x, _ in RESULTS)
     print()
