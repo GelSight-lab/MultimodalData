@@ -82,6 +82,7 @@ def main() -> int:
               "draw_projection_overlay has no `targets_7` parameter")
         check(False, "no force means no target marker", "not attempted")
         check(False, "the marker sits at the projected target", "not attempted")
+        check_preview_frames()
         _report()
         return 1
     check(True, "the overlay accepts a virtual target",
@@ -156,8 +157,84 @@ def main() -> int:
           f"k={k} N/mm: 1 N -> {gaps[0]:.1f} px, 3 N -> {gaps[1]:.1f} px, "
           f"6 N -> {gaps[2]:.1f} px")
 
+    check_preview_frames()
     _report()
     return 1 if sum(not ok for ok, _, _ in RESULTS) else 0
+
+
+def check_preview_frames() -> None:
+    """The preview draws the target from RELEASE poses over RAW-H5 frames.
+
+    Everything else in build_episode_previews works in the recorded Y-up
+    convention: it reads poses out of the HDF5, adds the Y-up world offset and
+    projects with the Y-up extrinsics. The DexForce target alone comes from
+    `_release_poses`, deliberately, so the drawn target is the published one.
+
+    After the release was rotated to Z-up those two stopped being the same
+    frame, and the target markers left the picture entirely -- magenta lines
+    running off the bottom of every panel. The checks above did not see it:
+    they exercise the drawing primitive on synthetic input, where both ends
+    come from the same array.
+
+    So compare the two SOURCES, not the drawing: same episode, same rows.
+    """
+    import sys as _s
+    from pathlib import Path as _P
+    _s.path.insert(0, str(_P(__file__).resolve().parent))
+    import numpy as _np
+    try:
+        import h5py
+        import importlib.util as _il
+        _sp = _il.spec_from_file_location(
+            "_bep", _P(__file__).resolve().parent / "build_episode_previews.py")
+        _b = _il.module_from_spec(_sp); _sp.loader.exec_module(_b)
+        from twm.calib_epoch import world_offset_m
+    except Exception as ex:
+        check(False, "release poses and raw H5 poses are in one frame",
+              f"could not load the preview module: {type(ex).__name__}")
+        return
+    task, date, ep = "motherboard", "2026-05-19", "episode_000"
+    h5 = _P("/media/yxma/Disk1/twm/data") / task / date / f"{ep}.h5"
+    rel = _b._release_poses(task, date, ep)
+    if not h5.exists() or not rel:
+        check(True, "release poses and raw H5 poses are in one frame",
+              "raw HDF5 not on this machine — skipped, not asserted")
+        return
+    # Align the way the RENDERER does. `source_h5_frame` is a CAMERA frame
+    # index; OptiTrack runs at its own rate and the release interpolates to
+    # camera timestamps. Indexing the OptiTrack array by camera frame samples
+    # a different instant and reads ~100 mm even on a date with no offset --
+    # a floor that hides exactly the error this is looking for.
+    import pyarrow.parquet as _pq
+    from react_preprocess.config import STAGE_ROOT as _SR
+    from viz import optitrack_at as _at
+    from twm.visualize import load_optitrack as _lo
+    pf = _SR / task / "meta" / date / f"{ep}.parquet"
+    t = _pq.read_table(str(pf), columns=["source_h5_frame"]).to_pydict()
+    idx = _np.asarray(t["source_h5_frame"], int)
+    off = _np.asarray(world_offset_m(task, date, ep, up_axis="y"), float)
+    with h5py.File(h5, "r") as f:
+        lut = _lo(f)
+        _b._apply_world_offset(lut, *off)
+        cam_ts = f["timestamps"][:]
+    R = rel["left"]
+    e = []
+    for k in range(0, min(len(idx), len(R)), 7):
+        i = int(idx[k])
+        if i >= len(cam_ts):
+            continue
+        q = _at(lut, float(cam_ts[i])).get("sensor_left")
+        if q is None:
+            continue
+        e.append(float(_np.linalg.norm(
+            _np.asarray(q[1][:3], float) - R[k, :3]) * 1000.0))
+    e = _np.asarray([x for x in e if _np.isfinite(x)])
+    d = float(_np.median(e)) if len(e) else float("inf")
+    check(len(e) > 50 and d < 1.0,
+          "the target's poses and the drawn poses are one frame",
+          f"{len(e)} rows, median {d:.2f} mm, max "
+          f"{(e.max() if len(e) else float('nan')):.2f} mm "
+          f"(a Y-up/Z-up mix reads 515 mm and puts the target off-frame)")
 
 
 def _report() -> None:

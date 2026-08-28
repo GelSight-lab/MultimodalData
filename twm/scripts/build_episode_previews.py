@@ -248,7 +248,15 @@ def _release_poses(task: str, date: str, ep: str) -> dict:
     if not cols:
         return {}
     t = pq.read_table(str(f), columns=cols).to_pydict()
-    return {c.split("_")[1]: _np.asarray([x for x in t[c]], float) for c in cols}
+    out = {c.split("_")[1]: _np.asarray([x for x in t[c]], float) for c in cols}
+    # ...but this renderer works in the RECORDED Y-up frame: it reads poses out
+    # of the HDF5, adds the Y-up world offset and projects with the Y-up
+    # extrinsics. The release is published Z-up. Handing the two to the same
+    # drawing put the DexForce target 515 mm away -- magenta lines running off
+    # the bottom of every panel. Convert here, where the source is known.
+    from react_toolbox.frames import convert_poses as _cp
+    from react_toolbox.calibration import load_calibration as _lc
+    return {k: _cp(v, to_zup=False) for k, v in out.items()}
 
 
 def _flagged_intervals(task: str, date: str, ep: str) -> list[tuple[int, int, str]]:
