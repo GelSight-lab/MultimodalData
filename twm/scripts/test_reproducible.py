@@ -19,15 +19,20 @@ checked.
 """
 from __future__ import annotations
 
-from react_toolbox.staging import staging_dir
 
 import json
 import os
 import shutil
 import subprocess
 import sys
+
+
 import tempfile
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from react_toolbox.staging import staging_dir
 
 RESULTS: list[tuple[bool, str, str]] = []
 REPO = "yxma/React"

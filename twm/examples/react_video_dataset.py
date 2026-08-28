@@ -35,7 +35,6 @@ from pathlib import Path
 
 import numpy as np
 
-from react_toolbox.staging import staging_dir
 import pyarrow.parquet as pq
 
 try:
@@ -158,6 +157,7 @@ class ReactVideoDataset:
         """
         import shutil as _sh, tempfile as _tf
         from react_toolbox.calibration import load_calibration
+        from react_toolbox.staging import staging_dir
         from react_toolbox.frames import as_up_axis
         root = Path(calib_dir) if calib_dir else self.root
         if not (root / "calibration").is_dir():

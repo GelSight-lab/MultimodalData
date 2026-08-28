@@ -18,7 +18,6 @@ overlay canvases actually cover their images.
 """
 from __future__ import annotations
 
-from react_toolbox.staging import staging_dir
 
 import argparse
 import asyncio
@@ -30,6 +29,8 @@ import urllib.request
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from react_toolbox.staging import staging_dir
 
 RESULTS: list[tuple[bool, str, str]] = []
 BASE = "https://yxma-react-force-recovery.static.hf.space"
