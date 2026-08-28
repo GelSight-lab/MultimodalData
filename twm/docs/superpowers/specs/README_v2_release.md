@@ -65,7 +65,7 @@ data/<task>/
 | `episode` / `episode_index` | str / int | source episode key and its 0-based index within the task |
 | `task` / `task_index` | str / int | task name and index (0=motherboard, 1=pushT) |
 | `timestamp` | float64 | camera clock (s) |
-| `sensor_left_pose`, `sensor_right_pose` | list[7] | OptiTrack world pose of each GelSight (xyz + quat wxyz) |
+| `sensor_left_pose`, `sensor_right_pose` | list[7] | OptiTrack world pose of each GelSight (xyz metres + quat **xyzw**, scalar-LAST — `scipy...Rotation.from_quat` takes it as-is) |
 | `object_pose` | list[7] | OptiTrack world pose of the manipulated object (NaN where the object body was not tracked — e.g. all pushT) |
 | `tactile_{L,R}_{intensity,area,mixed}` | float32 | contact metrics (computed at full 640×480) |
 | `source_h5_frame` | int | index into the original recording |

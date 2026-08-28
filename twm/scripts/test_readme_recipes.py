@@ -139,6 +139,43 @@ def main() -> int:
                                 f"{label} inside the gel ({val:.3f} mm) — "
                                 f"on this sample")
 
+    # The README's quaternion order, checked against the data rather than
+    # against another document. It said "wxyz" while every line of code that
+    # touches these columns is scalar-last; a reader who believed it moved the
+    # gel a median 40 px. Documents agree with each other easily; this asks
+    # the parquet.
+    import re as _re
+    from react_toolbox.calibration import load_calibration, project_gel_to_pixel
+    from react_paths import release_root as _rr
+    readme = (Path(__file__).resolve().parents[1] /
+              "docs/superpowers/specs/README_v2_release.md").read_text()
+    m = _re.search(r"sensor_left_pose.*?\|.*?\|(.*?)\|", readme, _re.S)
+    says_last = bool(m and _re.search(r"xyzw|scalar-?LAST", m.group(1), _re.I))
+    cal = load_calibration(_rr("motherboard"))
+    P = None
+    for q, t in _published(1):
+        P = np.asarray([x for x in t["sensor_left_pose"]], float)
+        break
+    P = P[np.isfinite(P).all(1) & (np.linalg.norm(P[:, 3:], axis=1) > .5)][:200]
+    Q = P.copy(); Q[:, 3:7] = P[:, [6, 3, 4, 5]]
+    d = []
+    for x, y in zip(P[::7], Q[::7]):
+        ua = project_gel_to_pixel(x, cal["gel_left"], cal["cams"]["middle"])
+        ub = project_gel_to_pixel(y, cal["gel_left"], cal["cams"]["middle"])
+        if ua and ub:
+            d.append(float(np.hypot(ua[0]-ub[0], ua[1]-ub[1])))
+    swapped = float(np.median(d)) if d else 0.0
+    if not says_last:
+        problems.append("README does not state scalar-last (xyzw) for the pose "
+                        "columns; reading them as wxyz moves the gel a median "
+                        f"{swapped:.0f} px")
+    elif swapped < 5.0:
+        problems.append("the wxyz/xyzw negative control is toothless "
+                        f"({swapped:.1f} px) — this check proves nothing")
+    else:
+        print(f"[recipe] quaternion order: README says scalar-last; reading "
+              f"it as wxyz instead moves the gel a median {swapped:.0f} px")
+
     print(f"[recipe] {n_files} published episodes, "
           f"{n_free:,} free-space rows, {n_contact:,} contact rows")
     for p in problems[:20]:
