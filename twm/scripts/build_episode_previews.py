@@ -43,7 +43,10 @@ sys.path.insert(0, "/home/yxma/MultimodalData")
 
 from twm.data_collection import REALSENSE_SERIALS    # noqa
 from twm.viz import (
+    DISPLAY_ORDER,
     GS_THUMB_W,
+    RS_THUMB_H,
+    RS_THUMB_W,
     ROW2_Y,
     build_preview_panel,
     draw_projection_overlay,
@@ -102,11 +105,60 @@ def _apply_world_offset(ot_lookup, dx, dy, dz):
             poses[:, 2] += dz
 
 
+# The world gizmo sits in the MIDDLE camera tile: the 1280x480 panel is four
+# tiles wide and the middle camera is the second, x in [320, 640). At the
+# frame's own top-left it would sit on the LEFT camera and still look
+# deliberate. Sized for a 320x240 tile, not for the 640x480 probe overlays.
+# DERIVED, not restated: display position 1 is the middle tile, and
+# DISPLAY_ORDER says which H5 camera index that tile shows.
+MIDDLE_CAM_IDX = DISPLAY_ORDER[1]
+GIZMO_SIZE = 26
+GIZMO_MARGIN = 10
+GIZMO_ORIGIN = (RS_THUMB_W + GIZMO_MARGIN + GIZMO_SIZE + 22,
+                GIZMO_MARGIN + GIZMO_SIZE + 22)   # + the label reach
+
+
+def draw_world_gizmo_on_panel(panel, project_cams, up_axis_of_source):
+    """Draw the PUBLISHED world frame in the middle camera tile, in place.
+
+    This renderer works entirely in the recorded Y-up frame, but every number
+    a reader downloads is Z-up. Labelling the axes with the convention this
+    process happens to hold would ship a video whose axis names contradict
+    the parquet beside it. So the extrinsics are converted for the gizmo --
+    and only for the gizmo; nothing else here moves.
+    """
+    from react_toolbox.frames import as_up_axis, UP_AXIS_RECORDED
+    from react_toolbox.viz import draw_world_gizmo
+
+    cam = next((c for c in project_cams if c["index"] == MIDDLE_CAM_IDX), None)
+    if cam is None:
+        return panel
+    cal = as_up_axis({"up_axis": up_axis_of_source or "y",
+                      "cams": {"middle": {
+                          "T_mocap_to_cam": np.asarray(cam["T_mocap_to_cam"],
+                                                       float),
+                          "intrinsics": cam["intrinsics"]}}},
+                     UP_AXIS_RECORDED)
+    # This panel is BGR; react_toolbox.viz's axis palette is written for RGB
+    # images. Drawn straight it gave a blue x and an orange z next to sensor
+    # triads whose X is red -- two colour conventions in one frame, and no
+    # position check or text search can see it. Swap in, swap back.
+    tile = panel[:RS_THUMB_H, RS_THUMB_W:2 * RS_THUMB_W]
+    drawn = draw_world_gizmo(tile[:, :, ::-1], cal["cams"]["middle"],
+                             corner="tl", size=GIZMO_SIZE,
+                             margin=GIZMO_MARGIN,
+                             title=f"world ({UP_AXIS_RECORDED}-up)")
+    tile[:] = drawn[:, :, ::-1]
+    return panel
+
+
 def _load_proj_calibs(task: str):
     """Extrinsics for THIS task's calibration epoch, verified on load."""
     check_epoch(task)                       # refuses the wrong epoch loudly
     cdir = calib_dir(task)
     print(f"  calibration epoch {epoch_of(task)}  ({cdir.name})")
+    up_axis = (json.loads((cdir / "T_mocap_to_cam_middle.json").read_text())
+               .get("up_axis") or "y")
     cam_calib = [
         str(cdir / "T_mocap_to_cam_middle.json"),
         str(cdir / "T_mocap_to_cam_left.json"),
@@ -130,10 +182,10 @@ def _load_proj_calibs(task: str):
                 "serial":         c["camera_serial"],
                 "rmse":           c.get("rmse_mm", 0.0),
             })
-        return project_cams, gel_center_left, gel_center_right
+        return project_cams, gel_center_left, gel_center_right, up_axis
     except Exception as e:
         print(f"  WARN: calibration load failed ({e}); previews will lack projection overlay")
-        return [], None, None
+        return [], None, None, "y"
 
 
 from twm.tactile_align import describe as gel_describe, gel_lag_frames
@@ -281,7 +333,8 @@ def _flagged_intervals(task: str, date: str, ep: str) -> list[tuple[int, int, st
 def build_one_preview(h5_path: Path, out_mp4: Path,
                       clip_s: float, speed: float,
                       project_cams, gel_center_left, gel_center_right,
-                      dx: float = 0.0, dy: float = 0.0, dz: float = 0.0) -> None:
+                      dx: float = 0.0, dy: float = 0.0, dz: float = 0.0,
+                      proj_up_axis: str = "y") -> None:
     output_fps = SOURCE_FPS * speed
     n_frames_target = int(round(clip_s * SOURCE_FPS))   # e.g. 30s * 30fps = 900
     task_name = h5_path.parent.parent.name
@@ -419,6 +472,10 @@ def build_one_preview(h5_path: Path, out_mp4: Path,
                             cv2.FONT_HERSHEY_SIMPLEX, 0.42, (60, 120, 255), 1,
                             cv2.LINE_AA)
 
+            if project_cams:
+                draw_world_gizmo_on_panel(panel, project_cams,
+                                          proj_up_axis)
+
             if frame_forces:
                 draw_legend(panel, 4 * GS_THUMB_W + 26, ROW2_Y + 96)
 
@@ -529,7 +586,7 @@ def main():
           f"(first {args.clip_s:.0f}s of post-trim data @ {args.speed:.1f}x speed -> "
           f"{args.clip_s / args.speed:.0f}s output)", flush=True)
 
-    project_cams, glc, grc = _load_proj_calibs(args.task)
+    project_cams, glc, grc, proj_up_axis = _load_proj_calibs(args.task)
     if project_cams:
         print(f"  projection overlay: ON ({len(project_cams)} cameras)", flush=True)
 
@@ -552,7 +609,8 @@ def main():
         try:
             build_one_preview(h5, out_mp4, args.clip_s, args.speed,
                               project_cams, glc, grc,
-                              dx=dx, dy=dy, dz=dz)
+                              dx=dx, dy=dy, dz=dz,
+                              proj_up_axis=proj_up_axis)
             print(f"OK  -> {out_mp4.relative_to(OUT_ROOT.parent.parent.parent)}  "
                   f"({out_mp4.stat().st_size / 1024:.0f} KB)", flush=True)
         except Exception as e:
