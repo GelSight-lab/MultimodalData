@@ -300,6 +300,71 @@ def main() -> int:
           f"excluded by the set: {sorted(excl) or 'none'}"
           + (f"; LEAKED {leaked}" if leaked else ""))
 
+    # --- every sub-page is REACHABLE by clicking, and the click lands on
+    #     OUR page. Two ways to get this wrong, and I got both:
+    #
+    #     /probes/, /testset/ and /sim/ were published with nothing linking
+    #     to them, so the only way in was to type the path.
+    #
+    #     Then the links were added as "sim/" -- and Hugging Face static
+    #     Spaces do not serve directory indexes. `/sim/` answers 302 to
+    #     `huggingface.co/sim`, a stranger's profile page. My first version of
+    #     this check called urlopen, which FOLLOWS redirects, saw 200 from
+    #     that stranger's page and passed. Only `<dir>/index.html` is ours.
+    #
+    #     So: no redirects, and then actually click it and look at where the
+    #     browser ended up.
+    import urllib.request as _u
+    subs = ["probes", "testset", "sim"]
+    home = _u.urlopen(f"{a.base}/index.html", timeout=30).read().decode()
+
+    class _NoRedirect(_u.HTTPRedirectHandler):
+        def redirect_request(self, *args, **kw):
+            return None
+    op = _u.build_opener(_NoRedirect)
+    codes = {}
+    for x in subs:
+        for path in (f"{x}/index.html", f"{x}/"):
+            try:
+                codes[path] = op.open(f"{a.base}/{path}", timeout=30).getcode()
+            except Exception as ex:
+                codes[path] = getattr(ex, "code", "ERR")
+    unlinked = [x for x in subs if f'href="{x}/index.html"' not in home]
+    notours = [x for x in subs if codes.get(f"{x}/index.html") != 200]
+
+    async def click_through():
+        from playwright.async_api import async_playwright
+        landed = {}
+        async with async_playwright() as pw:
+            b = await pw.chromium.launch()
+            for x in subs:
+                pg = await b.new_page()
+                await pg.goto(f"{a.base}/index.html", wait_until="load")
+                try:
+                    await pg.click(f'nav a[href="{x}/index.html"]')
+                    await pg.wait_for_load_state("load")
+                    ok = await pg.evaluate(
+                        "!!(document.querySelector('[data-stream]') "
+                        "|| document.querySelector('video') "
+                        "|| document.querySelector('img'))")
+                    landed[x] = (pg.url, bool(ok))
+                except Exception as ex:
+                    landed[x] = (f"{type(ex).__name__}", False)
+                await pg.close()
+            await b.close()
+        return landed
+    landed = asyncio.run(click_through())
+    strayed = [x for x, (u, ok) in landed.items()
+               if not u.startswith(a.base) or not ok]
+    check(not unlinked and not notours and not strayed,
+          "clicking each sub-page link lands on our own page",
+          f"{len(subs)} links, all resolve on {a.base} with content"
+          if not (unlinked or notours or strayed) else
+          f"not linked: {unlinked}; not 200 without following redirects: "
+          f"{notours}; click strayed off-site: "
+          f"{ {x: landed[x][0] for x in strayed} }; statuses {codes}")
+
+
     w = max(len(x) for _, x, _ in RESULTS)
     print()
     for ok, name, ev in RESULTS:

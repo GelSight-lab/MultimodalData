@@ -35,8 +35,8 @@ CACHE = OUT_ROOT / "feature_cache"
 # passed — the budget exists to stop prose sprawl, and a caption that states a
 # measured number is not sprawl. If it needs raising again, that is a signal
 # the page has taken on a second job and should split.
-WORD_BUDGET = {"index.html": 400, "method.html": 600, "results.html": 560,
-               "sensors.html": 350, "gallery.html": 150, "workbench.html": 250}
+WORD_BUDGET = {"index.html": 393, "method.html": 593, "results.html": 553,
+               "sensors.html": 343, "gallery.html": 143, "workbench.html": 243}
 
 CSS = """
 :root{--bg:#0b1020;--fg:#e8eefb;--dim:#8ea0c2;--line:#1e2a45;--card:#111a2e;
@@ -58,6 +58,8 @@ nav a{display:inline-block;padding:10px 16px;min-height:44px;line-height:24px;
 border:1px solid var(--line);border-radius:999px;text-decoration:none;
 background:var(--card)}
 nav a[aria-current]{border-color:var(--accent)}
+/* built by other scripts and published beside this site */
+nav a.ext{border-style:dashed}
 .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));
 gap:12px;margin:20px 0}
 .card{background:var(--card);border:1px solid var(--line);border-radius:12px;
@@ -120,12 +122,28 @@ PAGES = [("index.html", "overview"), ("method.html", "method"),
          ("results.html", "results"), ("sensors.html", "sensors"),
          ("gallery.html", "gallery"), ("workbench.html", "3D workbench")]
 
+# Published beside this site but built by other scripts, so they are not in
+# PAGES and nothing linked to them. /probes/, /testset/ and /sim/ sat on the
+# Space for weeks reachable only by typing the path from memory -- which is
+# exactly how one of them came back reported as broken, from a URL that had
+# been mangled by hand.
+#
+# Link to <dir>/index.html, never to <dir>/. Hugging Face static Spaces do
+# not serve directory indexes: `/sim/` answers 302 to `huggingface.co/sim`,
+# which is a stranger's profile page and returns a perfectly healthy 200. A
+# link to the directory is a link off the site.
+EXTRA_PAGES = [("probes/index.html", "probe clips"),
+               ("testset/index.html", "test set"),
+               ("sim/index.html", "simulator")]
+
 
 def _nav(current: str) -> str:
     out = []
     for href, label in PAGES:
         cur = ' aria-current="page"' if href == current else ""
         out.append(f'<a href="{href}"{cur}>{label}</a>')
+    for href, label in EXTRA_PAGES:
+        out.append(f'<a href="{href}" class="ext">{label}</a>')
     return "<nav>" + "".join(out) + "</nav>"
 
 
@@ -199,7 +217,19 @@ def _release_line(rc: dict) -> str:
 
 
 def words(html: str) -> int:
-    body = re.sub(r"<(script|style|table)[^>]*>.*?</\1>", " ", html, flags=re.S)
+    """Prose words. NAV IS NOT PROSE.
+
+    The budget exists to stop pages filling with paragraphs. It used to count
+    the navigation too, so adding one link to the site charged every page for
+    it out of its content allowance and results.html -- which sits exactly at
+    its cap -- went over by the five words of three new labels.
+
+    Stripping <nav> would hand every page seven free words, so the budgets
+    below were each reduced by seven at the same time: the nav that existed
+    when this changed was exactly seven words. No page's prose allowance
+    moved; the two things are simply no longer coupled.
+    """
+    body = re.sub(r"<(script|style|table|nav)[^>]*>.*?</\1>", " ", html, flags=re.S)
     body = re.sub(r"<[^>]+>", " ", body)
     return len(re.findall(r"[A-Za-z']+", body))
 
