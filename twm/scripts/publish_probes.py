@@ -9,6 +9,7 @@ directory:
     python scripts/build_probe_testset.py     ->  dataset test_sets/probes_v1/
     python scripts/build_probe_clips.py       ->  space  probes/
     python scripts/build_testset_page.py      ->  space  testset/
+    python scripts/build_sim.py               ->  space  sim/
     python scripts/publish_probes.py
 
 Deletes remote files under `test_sets/probes_v1/` that the local package no
@@ -33,7 +34,8 @@ from react_paths import out_root, testset_root                  # noqa: E402
 SPACE_ID = "yxma/react-force-recovery"
 DATASET = "yxma/React"
 TESTSET_PATH = "test_sets/probes_v1"
-PAGES = (("probe_clips", "probes"), ("testset_page", "testset"))
+PAGES = (("probe_clips", "probes"), ("testset_page", "testset"),
+         ("sim", "sim"))
 
 
 def stale() -> list[str]:
@@ -44,6 +46,14 @@ def stale() -> list[str]:
     t = src.stat().st_mtime
     bad = []
     for local, _ in PAGES:
+        if local == "sim":
+            # built from the release, not from the probe package, so the
+            # probe manifest's mtime says nothing about it. Only require that
+            # it exists -- claiming to check its freshness against an
+            # unrelated file would be worse than not checking.
+            if not (out_root(local) / "index.html").exists():
+                bad.append(f"{local}/index.html missing — run build_sim.py")
+            continue
         idx = out_root(local) / "index.html"
         if not idx.exists():
             bad.append(f"{local}/index.html missing — rebuild it")
