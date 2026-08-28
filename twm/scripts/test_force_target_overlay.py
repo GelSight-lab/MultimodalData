@@ -193,7 +193,30 @@ def check_preview_frames() -> None:
         check(False, "release poses and raw H5 poses are in one frame",
               f"could not load the preview module: {type(ex).__name__}")
         return
-    task, date, ep = "motherboard", "2026-05-19", "episode_000"
+    # EVERY task. The first version checked motherboard only, and pushT --
+    # which was still Y-up while this code assumed the release was Z-up --
+    # had its DexForce target rotated into nonsense and drawn off-frame for
+    # as long as that went unnoticed.
+    from react_paths import release_root as _rr2
+    for task in sorted(q.name for q in _rr2().iterdir()
+                       if (q / "episodes.jsonl").exists()):
+        _one_task(task)
+
+
+def _one_task(task: str) -> None:
+    import json
+    import numpy as _np
+    import h5py
+    import importlib.util as _il
+    from pathlib import Path as _P
+    _sp = _il.spec_from_file_location(
+        "_bep", _P(__file__).resolve().parent / "build_episode_previews.py")
+    _b = _il.module_from_spec(_sp); _sp.loader.exec_module(_b)
+    from twm.calib_epoch import world_offset_m
+    from react_paths import release_root as _rr3
+    ejs = (_rr3(task) / "episodes.jsonl").read_text().splitlines()
+    key = json.loads([l for l in ejs if l.strip()][0])["episode"]
+    date, ep = key.split("/")
     h5 = _P("/media/yxma/Disk1/twm/data") / task / date / f"{ep}.h5"
     rel = _b._release_poses(task, date, ep)
     if not h5.exists() or not rel:

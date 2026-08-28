@@ -61,9 +61,19 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--dry-run", action="store_true")
     a = ap.parse_args()
+    # EVERY task. This was hard-coded to "motherboard", so when pushT was
+    # finally converted the repair that goes with it would have skipped it in
+    # silence -- the same single-task blind spot that let pushT ship Y-up
+    # beside a Z-up motherboard in the first place.
+    tasks = sorted(q.name for q in release_root().iterdir()
+                   if (q / "episodes.jsonl").exists())
+    print(f"tasks: {', '.join(tasks)}")
     total = 0
-    for name, d in (("release", release_root("motherboard") / "meta"),
-                    ("release_force", force_meta("motherboard"))):
+    pairs = []
+    for t in tasks:
+        pairs.append((f"release/{t}", release_root(t) / "meta"))
+        pairs.append((f"release_force/{t}", force_meta(t)))
+    for name, d in pairs:
         if not d.is_dir():
             print(f"  {name}: {d} missing, skipped")
             continue

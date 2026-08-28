@@ -303,11 +303,41 @@ def _release_poses(task: str, date: str, ep: str) -> dict:
     out = {c.split("_")[1]: _np.asarray([x for x in t[c]], float) for c in cols}
     # ...but this renderer works in the RECORDED Y-up frame: it reads poses out
     # of the HDF5, adds the Y-up world offset and projects with the Y-up
-    # extrinsics. The release is published Z-up. Handing the two to the same
-    # drawing put the DexForce target 515 mm away -- magenta lines running off
-    # the bottom of every panel. Convert here, where the source is known.
+    # extrinsics. Handing a Z-up release pose to the same drawing put the
+    # DexForce target 515 mm away -- magenta lines off the bottom of every
+    # panel.
+    #
+    # READ the convention, do not assume it -- but read it somewhere it is
+    # actually written. This first assumed "the release is Z-up" and rotated
+    # unconditionally, which was nonsense for pushT while pushT was still
+    # Y-up. The obvious repair -- read the parquet's twm.world_frame -- was
+    # ALSO wrong: this tree carries no such metadata (only the force export
+    # does), so every pose read as "y" and the rotation stopped happening at
+    # all. Both failures look like a working renderer.
+    #
+    # episodes.jsonl and the calibration beside these poses do carry it.
     from react_toolbox.frames import convert_poses as _cp
-    from react_toolbox.calibration import load_calibration as _lc
+    got = None
+    md = pq.read_schema(str(f)).metadata or {}
+    if md.get(b"twm.world_frame"):
+        got = json.loads(md[b"twm.world_frame"].decode()).get("up_axis")
+    if got is None:
+        ej = _SR / task / "episodes.jsonl"
+        if ej.exists():
+            for line in ej.read_text().splitlines():
+                if not line.strip():
+                    continue
+                r = json.loads(line)
+                if r.get("episode", "").endswith(ep):
+                    got = r.get("up_axis")
+                    break
+    if got is None:
+        cj = _SR / task / "calibration" / "T_mocap_to_cam_middle.json"
+        if cj.exists():
+            got = json.loads(cj.read_text()).get("up_axis")
+    got = got or "y"
+    if got == "y":
+        return out                      # already the frame this renderer uses
     return {k: _cp(v, to_zup=False) for k, v in out.items()}
 
 

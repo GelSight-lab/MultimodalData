@@ -216,6 +216,30 @@ def main() -> int:
           f"asking for y-up raised [{raised}]; asking for z-up returned "
           f"{got_z.name}/")
 
+    # 10 — a column with NOTHING tracked in it must convert, not explode.
+    #      pushT never tracked an object body, so its whole object_pose column
+    #      is NaN. The valid-row mask then selects zero rows and scipy raises
+    #      "Found zero norm quaternions" on the empty array -- which is how
+    #      the pushT half of the release went unconverted long enough to ship
+    #      beside a Z-up motherboard.
+    allnan = np.full((5, 7), np.nan)
+    mixed = np.vstack([allnan[:2], P[:3]])
+    try:
+        a1 = convert_poses(allnan, True)
+        a2 = convert_poses(mixed, True)
+        err = ""
+    except Exception as ex:
+        a1 = a2 = None
+        err = f"{type(ex).__name__}: {ex}"
+    ok10 = (err == "" and a1.shape == (5, 7) and np.isnan(a1).all()
+            and np.isnan(a2[:2]).all()
+            and np.allclose(a2[2:], convert_poses(P[:3], True)))
+    check(ok10,
+          "an all-NaN pose column converts to all-NaN instead of raising",
+          "5 untracked rows pass through; a mixed array converts only its "
+          "tracked rows and leaves the rest NaN"
+          if ok10 else (err or "shape or values wrong"))
+
     w = max(len(x) for _, x, _ in RESULTS)
     print()
     for ok, name, ev in RESULTS:

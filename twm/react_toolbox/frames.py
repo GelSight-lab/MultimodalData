@@ -66,8 +66,15 @@ def convert_poses(poses7, to_zup: bool = True) -> np.ndarray:
     p = np.atleast_2d(np.asarray(poses7, float)).copy()
     M = _R(to_zup)
     ok = np.isfinite(p).all(1) & (np.linalg.norm(p[:, 3:7], axis=1) > 0.5)
-    p[ok, :3] = p[ok, :3] @ M.T
-    p[ok, 3:7] = (Rotation.from_matrix(M) * Rotation.from_quat(p[ok, 3:7])).as_quat()
+    # A column can be entirely untracked -- pushT never tracked an object
+    # body, so its object_pose is NaN from end to end. scipy raises "Found
+    # zero norm quaternions" on the resulting EMPTY array, and that exception
+    # is why the pushT half of the release stayed unconverted while the
+    # motherboard half went Z-up. Nothing to rotate is not an error.
+    if ok.any():
+        p[ok, :3] = p[ok, :3] @ M.T
+        p[ok, 3:7] = (Rotation.from_matrix(M)
+                      * Rotation.from_quat(p[ok, 3:7])).as_quat()
     return p[0] if np.ndim(poses7) == 1 else p
 
 
