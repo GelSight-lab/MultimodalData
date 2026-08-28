@@ -157,9 +157,88 @@ def main() -> int:
           f"k={k} N/mm: 1 N -> {gaps[0]:.1f} px, 3 N -> {gaps[1]:.1f} px, "
           f"6 N -> {gaps[2]:.1f} px")
 
+    check_press_arrow()
     check_preview_frames()
     _report()
     return 1 if sum(not ok for ok, _, _ in RESULTS) else 0
+
+
+def check_press_arrow() -> None:
+    """The overlay must SHOW which way the force acts.
+
+    GelSight Mini reports a normal force along the gel's own normal, in the
+    SENSOR's local frame -- `gel_axis_in_rigid`, roughly local -y but not
+    exactly any axis: (-0.17, -0.93, -0.32) on the left. A viewer reading a
+    scalar "2.0 N" off the panel has no way to know that, and the natural
+    guess -- world vertical -- is off by a median 7.7 deg on motherboard and
+    23.3 deg on pushT.
+
+    Checked against R(q) @ gel_axis projected into the image, NOT against a
+    coordinate axis, and separately checked to be distinguishable from all
+    three of them: an annotation that lands on top of an axis already drawn
+    tells the viewer nothing new.
+    """
+    import numpy as _np
+    from scipy.spatial.transform import Rotation as _R
+    import viz as _v
+    from force_recovery.dexforce import gel_axis as _ga
+
+    cam = {"index": 2,
+           "T_mocap_to_cam": _np.array([[1, 0, 0, 0], [0, 0, -1, 0],
+                                        [0, 1, 0, 900.0], [0, 0, 0, 1]]),
+           "intrinsics": {"fx": 600.0, "fy": 600.0, "ppx": 320.0, "ppy": 240.0}}
+    q = _R.from_euler("xyz", [12, -20, 33], degrees=True).as_quat()
+    pose = _np.array([0.100, -0.060, 0.040, *q])      # metres, as everywhere
+    gel = _np.array([-42.6, -36.6, -34.2])
+    ax = _ga("motherboard", "left")
+
+    if not hasattr(_v, "press_arrow_pixels"):
+        check(False, "the panel shows the direction the force acts along",
+              "viz.press_arrow_pixels does not exist")
+        return
+    panel = _np.zeros((480, 1280, 3), _np.uint8)
+    before = panel.copy()
+    _v.draw_projection_overlay(panel, {"sensor_left": (0, pose)},
+                               [cam], gel, gel, forces_n={"left": 4.0},
+                               press_axis={"left": ax, "right": ax})
+    drew = _np.abs(panel.astype(int) - before.astype(int)).max(2) > 0
+    got = _v.press_arrow_pixels(pose, gel, ax, cam)
+    if got is None or not drew.any():
+        check(False, "the panel shows the direction the force acts along",
+              "nothing drawn, or the arrow does not project")
+        return
+    (u0, v0), (u1, v1) = got
+    # press_arrow_pixels answers in FULL camera pixels (640x480). The panel
+    # holds 320x240 thumbnails side by side, so the drawn ink is at
+    # thumb(u,v) + the slot offset. Comparing the two spaces directly was the
+    # first version of this check and it failed on correct drawing.
+    from viz import _scale_to_thumb as _s2t, DISPLAY_POSITION, RS_THUMB_W
+    tx, ty = _s2t(u1, v1)
+    tx += DISPLAY_POSITION[cam["index"]] * RS_THUMB_W
+    win = drew[max(0, ty - 5):ty + 6, max(0, tx - 5):tx + 6]
+    d = _np.array([u1 - u0, v1 - v0], float)
+    d /= (_np.linalg.norm(d) or 1)
+    seps = []
+    for k in range(3):
+        e = _np.zeros(3); e[k] = 1.0
+        t = _v.press_arrow_pixels(pose, gel, e, cam)
+        if t is None:
+            continue
+        a2 = _np.array([t[1][0] - t[0][0], t[1][1] - t[0][1]], float)
+        a2 /= (_np.linalg.norm(a2) or 1)
+        seps.append(float(_np.degrees(_np.arccos(abs(_np.clip(d @ a2, -1, 1))))))
+    okarrow = bool(win.any())
+    okdist = bool(seps) and min(seps) > 8.0
+    check(okarrow and okdist,
+          "the panel shows the direction the force acts along",
+          (f"ink reaches the projected R(q) @ gel_axis tip at panel "
+           f"({tx}, {ty}); the closest body axis is {min(seps):.1f} deg away, "
+           f"so it is not a relabelled axis")
+          if okarrow and okdist else
+          (f"arrow tip at panel ({tx}, {ty}): "
+           f"{'no ink there' if not okarrow else 'ink ok'}; "
+           f"closest body axis {min(seps) if seps else float('nan'):.1f} deg "
+           f"(needs > 8)"))
 
 
 def check_preview_frames() -> None:

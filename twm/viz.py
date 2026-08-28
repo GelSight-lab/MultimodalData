@@ -182,6 +182,48 @@ def project_gel_pose(rigid_pose_7, gel_center_in_rigid_mm,
     return center, axes
 
 
+PRESS_BGR = (60, 220, 255)          # amber; not one of the three axis colours
+
+
+def press_arrow_pixels(rigid_pose_7, gel_center_in_rigid_mm,
+                       gel_axis_in_rigid, cam, length_mm: float = 70.0):
+    """Pixel endpoints of the pressing-direction arrow, or None.
+
+    GelSight Mini's normal force acts along the gel normal expressed in the
+    SENSOR's own frame (`gel_axis_in_rigid`). Rotating the world does not move
+    it; it is not one of the body axes either -- (-0.17, -0.93, -0.32) on the
+    left unit -- so a viewer cannot infer it from the axes already drawn, and
+    the natural guess of "straight down" is off by a median 7.7 deg on
+    motherboard and 23.3 deg on pushT.
+
+    Returned rather than only drawn so a test can compare the drawn arrow
+    against this geometry instead of against the drawing itself.
+    """
+    # `rigid_pose_7` is METRES + quaternion, exactly like project_gel_pose:
+    # one unit convention for both, so the arrow cannot drift from the axes.
+    T = pose7_to_T(np.asarray(rigid_pose_7, float))
+    if T is None or np.allclose(rigid_pose_7, 0.0):
+        return None
+    R = T[:3, :3]
+    P_gel = (T @ np.append(np.asarray(gel_center_in_rigid_mm, float), 1.0))[:3]
+    n = np.asarray(gel_axis_in_rigid, float)
+    n = n / (np.linalg.norm(n) or 1.0)
+    Tm = np.asarray(cam["T_mocap_to_cam"], float)
+    K = cam["intrinsics"]
+
+    def _p(P):
+        C = (Tm @ np.append(P, 1.0))[:3]
+        if C[2] <= 0:
+            return None
+        u = K["fx"] * C[0] / C[2] + K["ppx"]
+        v = K["fy"] * C[1] / C[2] + K["ppy"]
+        return (float(u), float(v)) if np.isfinite(u) and np.isfinite(v) else None
+
+    a = _p(P_gel)
+    b = _p(P_gel + R @ (n * length_mm))
+    return None if (a is None or b is None) else (a, b)
+
+
 def load_calibrations(cam_calib_paths: Iterable[str | Path],
                       gel_left_path: str | Path,
                       gel_right_path: str | Path):
@@ -386,6 +428,7 @@ def draw_projection_overlay(panel: np.ndarray,
                              frozen_side: Optional[str] = None,
                              forces_n: Optional[dict] = None,
                              targets_7: Optional[dict] = None,
+                             press_axis=None,
                              axis_len_mm: float = 120.0) -> None:
     """Draw GelSight projection (center dot + 3 axis tips) on each cam thumb.
 
@@ -479,6 +522,51 @@ def draw_projection_overlay(panel: np.ndarray,
                 if 0 <= tx < W and 0 <= ty < H:
                     cv2.putText(big, al, (tx_b + 6, ty_b - 6),
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.64, ac, 2, cv2.LINE_AA)
+            # WHICH WAY THE FORCE ACTS. The panel prints a scalar "2.0 N"
+            # and draws three body axes; neither says that GelSight Mini's
+            # normal force acts along the gel normal in the SENSOR's frame.
+            # The natural guess -- straight down -- is off by a median 7.7 deg
+            # on motherboard and 23.3 deg on pushT, where 70% of contact
+            # frames exceed 15 deg. Drawn in amber so it cannot be mistaken
+            # for one of the axes.
+            if press_axis is not None:
+                pa = press_arrow_pixels(pose_tuple[1],
+                                        gel, press_axis.get(side)
+                                        if isinstance(press_axis, dict)
+                                        else press_axis,
+                                        {"T_mocap_to_cam": pc["T_mocap_to_cam"],
+                                         "intrinsics": pc["intrinsics"]})
+                if pa is not None:
+                    (pu0, pv0), (pu1, pv1) = pa
+                    ax0 = _scale_to_thumb(pu0, pv0)
+                    ax1 = _scale_to_thumb(pu1, pv1)
+                    p0 = (int((ax0[0] + x_offset) * SCALE), int(ax0[1] * SCALE))
+                    p1 = (int((ax1[0] + x_offset) * SCALE), int(ax1[1] * SCALE))
+                    span = float(np.hypot(p1[0] - p0[0], p1[1] - p0[1])) / SCALE
+                    if span >= 7.0:
+                        cv2.arrowedLine(big, p0, p1, PRESS_BGR, 3, cv2.LINE_AA,
+                                        tipLength=0.22)
+                        lab = (p1[0] + 6, p1[1] + 14)
+                    else:
+                        # The press direction points into the table and the
+                        # middle camera looks down at it, so the arrow
+                        # foreshortens to nothing there. A 3 px stub reads as
+                        # "no force direction"; the circled cross is the same
+                        # convention the world gizmo uses for an axis aimed
+                        # away from the viewer.
+                        r = 7 * SCALE
+                        cv2.circle(big, p0, r, PRESS_BGR, 3, cv2.LINE_AA)
+                        d = int(r * 0.62)
+                        cv2.line(big, (p0[0] - d, p0[1] - d),
+                                 (p0[0] + d, p0[1] + d), PRESS_BGR, 3, cv2.LINE_AA)
+                        cv2.line(big, (p0[0] - d, p0[1] + d),
+                                 (p0[0] + d, p0[1] - d), PRESS_BGR, 3, cv2.LINE_AA)
+                        lab = (p0[0] + r + 4, p0[1] + 5 * SCALE)
+                    if 0 <= ax1[0] + x_offset < W and 0 <= ax1[1] < H:
+                        cv2.putText(big, "F", lab,
+                                    cv2.FONT_HERSHEY_SIMPLEX, 0.62, PRESS_BGR,
+                                    2, cv2.LINE_AA)
+
             # DexForce virtual target: same projection, target pose.
             tgt7 = (targets_7 or {}).get(side)
             # NO CONTACT IS DECIDED ON THE POSE, NOT ON PIXELS. The exporter

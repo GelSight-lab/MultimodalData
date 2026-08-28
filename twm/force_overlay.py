@@ -237,3 +237,16 @@ def draw_legend(panel: np.ndarray, x: int, y: int,
                 f"target (k={STIFFNESS_N_PER_M/1000:g} N/mm, gap x{TARGET_GAIN:g})",
                 (x + 20, baseline + 21), cv2.FONT_HERSHEY_SIMPLEX, 0.36,
                 (210, 210, 210), 1, cv2.LINE_AA)
+
+    # WHICH WAY THE FORCE ACTS, said in words. The panel prints a scalar in
+    # newtons; a reader has no way to know from that alone that GelSight Mini
+    # measures along the gel normal in the SENSOR's own frame rather than
+    # along world vertical -- a median 7.7 deg apart on motherboard and
+    # 23.3 deg on pushT.
+    from twm.viz import PRESS_BGR
+    y2 = baseline + 37
+    cv2.arrowedLine(panel, (x + 1, y2 - 4), (x + 14, y2 - 4), PRESS_BGR, 2,
+                    cv2.LINE_AA, tipLength=0.34)
+    cv2.putText(panel, "F: gel normal (sensor frame), (x) = into view",
+                (x + 20, y2), cv2.FONT_HERSHEY_SIMPLEX, 0.36,
+                (210, 210, 210), 1, cv2.LINE_AA)

@@ -364,7 +364,8 @@ def build_one_preview(h5_path: Path, out_mp4: Path,
                       clip_s: float, speed: float,
                       project_cams, gel_center_left, gel_center_right,
                       dx: float = 0.0, dy: float = 0.0, dz: float = 0.0,
-                      proj_up_axis: str = "y") -> None:
+                      proj_up_axis: str = "y",
+                      press_axes=None) -> None:
     output_fps = SOURCE_FPS * speed
     n_frames_target = int(round(clip_s * SOURCE_FPS))   # e.g. 30s * 30fps = 900
     task_name = h5_path.parent.parent.name
@@ -483,6 +484,7 @@ def build_one_preview(h5_path: Path, out_mp4: Path,
                         gel_center_left, gel_center_right,
                         forces_n=frame_forces or None,
                         targets_7=frame_targets or None,
+                        press_axis=press_axes,
                     )
                 except Exception as e:
                     # Was `except Exception: pass`. A frame that failed to
@@ -617,6 +619,15 @@ def main():
           f"{args.clip_s / args.speed:.0f}s output)", flush=True)
 
     project_cams, glc, grc, proj_up_axis = _load_proj_calibs(args.task)
+    # The direction GelSight Mini's normal force acts along, in the SENSOR's
+    # own frame. Task-specific because each rig has its own gel calibration.
+    from force_recovery.dexforce import gel_axis as _gax
+    try:
+        press_axes = {s: _gax(args.task, s) for s in ("left", "right")}
+    except Exception as e:
+        print(f"  WARN: no gel axis for {args.task} ({type(e).__name__}); "
+              f"the force-direction arrow will be omitted")
+        press_axes = None
     if project_cams:
         print(f"  projection overlay: ON ({len(project_cams)} cameras)", flush=True)
 
@@ -640,7 +651,8 @@ def main():
             build_one_preview(h5, out_mp4, args.clip_s, args.speed,
                               project_cams, glc, grc,
                               dx=dx, dy=dy, dz=dz,
-                              proj_up_axis=proj_up_axis)
+                              proj_up_axis=proj_up_axis,
+                              press_axes=press_axes)
             print(f"OK  -> {out_mp4.relative_to(OUT_ROOT.parent.parent.parent)}  "
                   f"({out_mp4.stat().st_size / 1024:.0f} KB)", flush=True)
         except Exception as e:
