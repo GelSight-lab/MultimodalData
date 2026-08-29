@@ -10,6 +10,60 @@ tour.
 
 ---
 
+## Start here
+
+Two bimanual tasks recorded with three cameras, two touch sensors and motion
+capture. Each episode is a parquet table (one row per camera frame) plus five
+videos.
+
+```python
+from react_video_dataset import ReactVideoDataset
+ds  = ReactVideoDataset("data/motherboard", split="train", window_length=16)
+cal = ds.calibration()          # poses and cameras in the SAME convention
+```
+
+Six things that bite, each explained below:
+
+| | |
+|---|---|
+| **Up is +z** | recorded Y-up, published Z-up. Take poses and cameras from the same place, or every overlay moves by up to 165 px. §1 |
+| **Quaternions are xyzw** | scalar-last, as `scipy` wants. §1 |
+| **Touch updates on ~29 % of rows** | the rest repeat the previous value. Check `tactile_*_is_new` before averaging. §2 |
+| **Force is a magnitude** | direction comes from the sensor's own frame, not from world "down". §2 |
+| **Held-out data is intervals, not episodes** | a training window that starts just before one still sees it; the loader raises instead of leaking. §3 |
+| **Frame rate is not 30 Hz everywhere** | read `timestamp`, never assume. §5 |
+
+## 0. Terms
+
+Plain definitions for the words used throughout.
+
+| term | what it means here |
+|---|---|
+| **motion capture / OptiTrack** | cameras that track reflective markers and report where an object is, at ~120 Hz |
+| **rigid body** | a marker cluster the system treats as one object. Its local axes are fixed when the body is created, and are not a property of the hardware |
+| **pose** | position + orientation: `[x, y, z, qx, qy, qz, qw]`, metres and a unit quaternion |
+| **scalar-last (xyzw)** | the `w` of the quaternion comes last. `wxyz` is the other common order and silently gives wrong rotations |
+| **world frame** | the shared coordinate system all poses are in — here, OptiTrack's, with the 2026-05-10 origin |
+| **up axis** | which axis points away from gravity. This release: `+z` |
+| **extrinsics** (`T_mocap_to_cam`) | where a camera sits in the world frame, as a 4×4 matrix |
+| **intrinsics** | a camera's focal lengths and optical centre, which turn a 3-D point into a pixel |
+| **GelSight Mini** | a touch sensor: a soft gel pad filmed from inside, so contact shows up as an image |
+| **gel** | that soft pad. **Gel centre** is its middle, **gel normal** the direction perpendicular to its surface |
+| **normal force** | how hard the gel is pressed, in newtons. A single number, no direction attached |
+| **penetration** | how far the gel would be pushed in: `force / k`, with stiffness `k = 2 N/mm` |
+| **virtual target** | the pose a stiffness controller would have been commanded to reach: the observed pose pushed `penetration` further along the gel normal |
+| **held-out interval** | a stretch of frames inside an episode reserved for testing |
+| **guard** | frames next to a held-out interval that training must also avoid, because a window starting there would contain held-out frames |
+| **segment** | a stretch curated as clean; `mode="segment"` uses only these |
+| **bad frame** | a frame flagged as corrupt: a sensor spike, a pose jump, a tracking dropout |
+| **calibration epoch** | one camera-calibration session. Sessions recorded under different epochs need different extrinsics |
+| **probe set** | synthetic single-axis motions used to ask whether a model follows a commanded action, as opposed to predicting a recording |
+| **reprojection error** | how far a known 3-D point lands from where the calibration says it should, in pixels or millimetres — the noise floor for any overlay |
+| **fingerprint** | a few stored pixel coordinates you can recompute from your own poses to confirm you are in the same frame as the release |
+| **trim** | the offset between a published row and its frame in the original recording (`source_h5_frame`) |
+
+---
+
 ## 1. Conventions, stated once
 
 | | |
@@ -24,11 +78,12 @@ tour.
 
 ### Up is +z — converted, not recorded
 
-OptiTrack records **Y-up**. This release is published **Z-up**, because
-robotics code overwhelmingly assumes Z-up and reading `pose[2]` as height under
-the recorded convention silently returns a *horizontal* coordinate: the numbers
-stay plausible, the plots look fine, and it surfaces only as a model that never
-learns which way gravity points.
+OptiTrack records **Y-up**. This release is published **Z-up**, because most
+robotics code assumes Z-up.
+
+Why it matters: under Y-up, `pose[2]` is not height — it is a horizontal
+coordinate. The numbers still look reasonable and the plots still look fine.
+The only symptom is a model that never learns which way gravity points.
 
 So the conversion was done once, in the data:
 
@@ -182,10 +237,11 @@ what it must generalise over is dynamics within a scene, not scenes.
 Measured with a 64-frame training window: **test 12.1 %, guard 9.4 %,
 train 78.5 %**, over 147 intervals plus 2 wholly-held-out episodes.
 
-A training window starting shortly **before** a held-out interval still contains
-its frames, so starts in `[a-(S-1), b]` must be rejected, not just `[a, b]`.
-`splits.json` records `guard_frames = max_train_window - 1`, and the loader
-**raises** on a longer window rather than leaking:
+A window of length `S` that starts shortly **before** a held-out interval still
+contains part of it. So the rejected range is `[a-(S-1), b]`, not just `[a, b]`
+— that is what the guard is for. `splits.json` stores
+`guard_frames = max_train_window - 1`, and the loader **raises** rather than
+leak if your window is longer:
 
 ```
 ValueError: window spans 128 frames but the split has guard_frames=63 …
@@ -209,10 +265,12 @@ python scripts/build_splits.py --max-train-window 128
 | `split="test"` | can the model predict what actually happened? | real frames, real actions, real futures |
 | **probe set** | does it *follow the action it is given*? | commanded motions nobody performed; ground truth is geometric |
 
-The held-out split cannot isolate action-following, because the action in a
-recording is whatever the human happened to do. The probes command motions one
-axis at a time, so a failure names a direction. Probe start frames are drawn
-**only from held-out intervals**.
+The held-out split cannot test action-following on its own: in a recording, the
+action is whatever the person happened to do, so you cannot ask "what if it had
+moved 5 mm the other way".
+
+The probes command one axis at a time, so a failure names a direction. Their
+start frames come **only from held-out intervals**.
 
 ## 5. What was done to the data before you got it
 
@@ -273,11 +331,14 @@ All projection goes through `calibration.project_gel_to_pixel`, the same
 function the previews and the release fingerprint use, so an overlay you draw
 cannot disagree with a stored one.
 
-**What "correct" means.** Camera reprojection rmse is 4.7 / 5.3 / 7.5 mm for
-left / middle / right → **3.6 / 4.0 / 5.7 px** at 800 mm; the gel centre in the
-rigid frame is good to ~5 mm → ~3.8 px. **Agreement within about 6 px is at the
-noise floor.** `rollout_error` reports millimetres *and* pixels because they
-differ by depth.
+**What "correct" means.** Two error sources set the floor. Camera reprojection
+rmse is 4.7 / 5.3 / 7.5 mm for left / middle / right,
+which is **3.6 / 4.0 / 5.7 px** at 800 mm. The gel centre is good to ~5 mm,
+another ~3.8 px.
+
+So **agreement within about 6 px is as good as this rig can tell.** Do not read
+a 3 px difference as a result. `rollout_error` gives millimetres *and* pixels,
+because the same millimetre is more pixels up close.
 
 ## 7. Known problems, stated rather than hidden
 
