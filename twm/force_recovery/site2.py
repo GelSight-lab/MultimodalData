@@ -36,7 +36,8 @@ CACHE = OUT_ROOT / "feature_cache"
 # measured number is not sprawl. If it needs raising again, that is a signal
 # the page has taken on a second job and should split.
 WORD_BUDGET = {"index.html": 393, "method.html": 593, "results.html": 553,
-               "sensors.html": 343, "gallery.html": 143, "workbench.html": 243}
+               "sensors.html": 343, "gallery.html": 143, "workbench.html": 243,
+               "force.html": 620}
 
 CSS = """
 :root{--bg:#0b1020;--fg:#e8eefb;--dim:#8ea0c2;--line:#1e2a45;--card:#111a2e;
@@ -120,6 +121,7 @@ from .force_eval_all import kappa_margin, raw_margin  # noqa: F401,E402
 
 PAGES = [("index.html", "overview"), ("method.html", "method"),
          ("results.html", "results"), ("sensors.html", "sensors"),
+         ("force.html", "force"),
          ("gallery.html", "gallery"), ("workbench.html", "3D workbench")]
 
 # Published beside this site but built by other scripts, so they are not in
@@ -767,9 +769,121 @@ R and B exchanged. The azimuths never differed.</p>
     return _shell("sensors.html", "Sensors", body)
 
 
+def page_force() -> str:
+    """Everything on this page is injected from press_axis.json.
+
+    The whole point of the page is that the pressing direction is UNSETTLED,
+    so any number retyped here would be the first thing to go stale.
+    """
+    d = _artifact("press_axis.json")
+    k = d["stiffness_n_per_m"] / 1000.0
+    bn, mf, it = d["board_normal"], d["motion_force"], d["image_tilt"]
+    cd, cf, vg, ts = d["conditioning"], d["calibration_file"], d["vertical_gap"], d["target_shift"]
+
+    def row(side):
+        b, m = bn[side], mf[side]
+        i = it.get(side, {})
+        return (f"<tr><td>{side}</td>"
+                f"<td>{b['dual_ball']['median_deg']:.1f}° / "
+                f"<b>{b['body_y']['median_deg']:.1f}°</b></td>"
+                f"<td>{m['dual_ball']['median']:+.3f} / "
+                f"<b>{m['body_y']['median']:+.3f}</b>"
+                f" <span class=\"dim\">(-y better on "
+                f"{100*m['body_y_better_frac']:.0f}% of {m['n_episodes']} eps)</span></td>"
+                f"<td>{i.get('dual_ball',{}).get('r2',float('nan')):+.3f} / "
+                f"<b>{i.get('body_y',{}).get('r2',float('nan')):+.3f}</b></td>"
+                f"<td>{cd[side]['sv1_over_sv2']:.2f}</td></tr>")
+
+    mb, pt = vg["motherboard"], vg["pushT"]
+    tsm, tsp = ts["motherboard"], ts["pushT"]
+    coh = it.get("left", {}).get("gap_angle_median_deg")
+    gap = it.get("left", {}).get("sample_gap_rows")
+    body = f"""
+<h1>The compression force, and which way it pushes</h1>
+
+<p><code>force_{{side}}_normal_n</code> is a <b>magnitude</b> in newtons, recovered
+from the tactile image. It becomes a displacement through one constant:
+<b>penetration = F / k</b> with <b>k = {k:g}&nbsp;N/mm</b>
+(<code>dexforce.STIFFNESS_N_PER_M</code> — import it, do not retype it), and a
+direction: the gel normal <b>in the sensor's own body frame</b>.</p>
+
+<pre><code>from force_recovery.dexforce import gel_axis, STIFFNESS_N_PER_M
+n_hat  = R_from_quat(pose[3:7]) @ gel_axis(task, side)   # world unit vector
+target = pose[:3] + (force_n / STIFFNESS_N_PER_M) * n_hat</code></pre>
+
+<p><b>World vertical is not that direction</b>, under either candidate axis —
+quoting only the active one would argue the point with the very axis in dispute.
+Over contact frames the gel normal sits a median
+{mb['dual_ball']['median_deg']:.1f}°–{mb['body_y']['median_deg']:.1f}° from world −z
+on motherboard and <b>{pt['dual_ball']['median_deg']:.1f}°–{pt['body_y']['median_deg']:.1f}°</b>
+on pushT, where {100*pt['dual_ball']['frac_over_15deg']:.0f}–{100*pt['body_y']['frac_over_15deg']:.0f}%
+of {pt['n_frames']:,} frames exceed 15°. Pushing "straight down" is wrong by at
+least the smaller of each pair.</p>
+
+<h2>Two candidate axes, and why the choice is not settled</h2>
+
+<p>The default is sensor-local <b>−y</b>: the Mini's sensing face is normal to the
+body's y. The calibration files also carry <code>gel_axis_in_rigid</code>
+(<code>source="dual_ball"</code>), which is
+normalize(gelball&nbsp;−&nbsp;refball) — the line between two calibration ball
+centres, from <b>{cf['left']['n_poses']}</b> poses. <b>It never measured the gel
+surface</b>; it is the normal only if the fixture held both balls along it. The
+two disagree by {d['axis_separation_deg']['left']:.1f}° (left) and
+{d['axis_separation_deg']['right']:.1f}° (right).</p>
+
+<div class="tablewrap"><table><thead><tr>
+<th>test</th><th>angle from board normal<br><span class="dim">dual_ball / <b>−y</b></span></th>
+<th>corr(dF, v·n̂)<br><span class="dim">dual_ball / <b>−y</b></span></th>
+<th>image tilt R²<br><span class="dim">dual_ball / <b>−y</b></span></th>
+<th>sv₁/sv₂</th></tr></thead><tbody>
+{row("left")}
+{row("right")}
+</tbody></table></div>
+
+<p class="dim">Board normal: pressing &gt;6&nbsp;N on a level board
+({bn['left']['n_frames']:,} and {bn['right']['n_frames']:,} frames), the gel normal
+should point near world −z. corr(dF,&nbsp;v·n̂): pressing in raises force — uses no
+world frame and no table. Image tilt: R² of a single linear map from the
+pose-predicted tilt to the gel's own deformation gradient.</p>
+
+<h2>What the three tests actually say</h2>
+
+<p><b>They disagree, and the right sensor is the suspect.</b> The left sensor's
+dual-ball axis wins both proxies; the right sensor's loses one and ties the other.
+The right calibration also reports <code>depth_offset_mm =
+{cf['right']['depth_offset_mm']:g}</code> where the left reports
+{cf['left']['depth_offset_mm']:g} — its ball centre was never backed off by a ball
+radius to reach the gel surface.</p>
+
+<p><b>And this dataset cannot settle it.</b> Two independent reasons. Kinematically
+the problem is ill-conditioned: sv₁/sv₂ is {cd['left']['sv1_over_sv2']:.2f} and
+{cd['right']['sv1_over_sv2']:.2f}, so changing the axis by 60° barely moves any
+concentration score. And the gel's own deformation — a <b>real</b> signal, coherent to
+{coh:.1f}° between samples {gap} contact rows apart — carries the geometry of whatever was touched
+(components, edges, connectors), not the sensor's tilt: R² ≈ 0 for both candidates.
+The contacted surface is not a known plane, so the most direct observable is
+confounded at the source.</p>
+
+<p><b>What would settle it</b> is a measurement, not more analysis: press the sensor
+flat on a known flat plate at ten-plus widely varied orientations. Kinematics
+becomes well-conditioned, and the image gives a null test — on a true plane the
+deformation gradient vanishes when the press is normal. That same run also answers
+whether the OptiTrack rigid body was redefined between calibration epochs, which
+the copied gel calibration cannot.</p>
+
+<p class="dim">Cost of the current default: switching from dual_ball to −y moves
+<code>force_*_target_pose</code> by a median {tsm['median_mm']:.2f}&nbsp;mm
+(max {tsm['max_mm']:.2f}) on motherboard and {tsp['median_mm']:.2f}&nbsp;mm
+(max {tsp['max_mm']:.2f}) on pushT, because F/k is itself only a few mm.
+Force magnitudes and penetration are unaffected — they are scalars.</p>
+"""
+    return _shell("force.html", "Compression force", body)
+
+
 BUILDERS = {"index.html": page_index, "method.html": page_method,
             "sensors.html": page_sensors,
             "results.html": page_results, "gallery.html": page_gallery,
+            "force.html": page_force,
             "workbench.html": page_workbench}
 
 

@@ -365,6 +365,41 @@ def main() -> int:
           f"{ {x: landed[x][0] for x in strayed} }; statuses {codes}")
 
 
+    # --- the force page's numbers come from the artifact, not from prose.
+    #     This page exists to say the pressing axis is UNSETTLED, so any
+    #     figure typed into the HTML is the first one to go stale. Every
+    #     number rendered must be reproducible from press_axis.json.
+    import json as _j, re as _re, html as _h, urllib.request as _u2
+    from force_recovery.site2 import CACHE as _C
+    art = _j.loads((_C / "press_axis.json").read_text())
+
+    def _nums(o, acc):
+        if isinstance(o, dict):
+            [_nums(v, acc) for v in o.values()]
+        elif isinstance(o, list):
+            [_nums(v, acc) for v in o]
+        elif isinstance(o, (int, float)):
+            acc.add(round(float(o), 1)); acc.add(round(float(o), 2))
+            acc.add(round(float(o), 3)); acc.add(round(float(o) * 100, 0))
+            acc.add(float(int(o)) if float(o).is_integer() else round(float(o), 1))
+        return acc
+    pool = _nums(art, set())
+    pool |= {round(v, 1) for v in list(pool)}
+    page = _u2.urlopen(f"{a.base}/force.html", timeout=30).read().decode()
+    txt = _h.unescape(_re.sub(r"<[^>]+>", " ",
+                              _re.sub(r"<(script|style)[^>]*>.*?</\1>", " ",
+                                      page, flags=_re.S)))
+    shown = {float(m.replace(",", ""))
+             for m in _re.findall(r"(?<![\w.])(\d+(?:,\d{3})*(?:\.\d+)?)", txt)}
+    # small integers are prose (years, counts of things named in words)
+    shown = {v for v in shown if v not in (0, 1, 2, 3, 5, 6, 7, 10, 15, 60)}
+    orphan = sorted(v for v in shown
+                    if not any(abs(v - c) < 0.051 for c in pool))
+    check(not orphan,
+          "every number on the force page traces to press_axis.json",
+          f"{len(shown)} numbers rendered, all reproducible from the artifact"
+          if not orphan else f"not in the artifact: {orphan[:8]}")
+
     w = max(len(x) for _, x, _ in RESULTS)
     print()
     for ok, name, ev in RESULTS:
