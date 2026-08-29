@@ -310,6 +310,7 @@ assume a rate.
 | `toolbox/synth_actions.py` | generate the synthetic single-axis probes |
 | `toolbox/probe_eval.py` | project ground truth, overlay it, score a rollout |
 | `toolbox/world_frame.py` | declare and verify which world frame a pose array is in |
+| `toolbox/conformance.py` | check **your** poses against this release's conventions — see §6b |
 | `toolbox/splits.py` | build / read the held-out interval split |
 | `toolbox/calib_epoch.py` | which calibration epoch and world transform a session uses |
 
@@ -339,6 +340,70 @@ another ~3.8 px.
 So **agreement within about 6 px is as good as this rig can tell.** Do not read
 a 3 px difference as a result. `rollout_error` gives millimetres *and* pixels,
 because the same millimetre is more pixels up close.
+
+## 6b. Checking your own usage
+
+Every other test here validates the dataset. This one validates *your* use of
+it, which is the half that goes wrong. The data can be perfect and still be
+read in millimetres, or with `w` first, or paired with extrinsics from the
+other up-axis. **None of those raise.** They shift every projection and leave
+your own self-consistency checks green, because the same wrong assumption both
+draws and re-verifies.
+
+```
+python -m react_toolbox.conformance --release data/motherboard \
+    --task motherboard --episode 2026-05-10/episode_000
+```
+
+```
+conformance: PASS
+  ok    quaternion norm deviates by at most 2.22e-16 from 1
+  ok    median |position| = 0.435; expected metres, not millimetres
+  ok    6890 poses given, episode has 6890 valid rows
+  ok    worst-camera fingerprint error 0.00 px (tolerance 6)
+        would read: other up-axis 364 px, quaternion as wxyz 55 px
+```
+
+Exit code 0 on pass, 1 on failure, so it drops into CI. Pass `--poses my.npy`
+to check an array your own pipeline produced, or call `check_poses(...)` and
+read `Report.failures`.
+
+**A passing report still prints what each mistake would have read.** A
+validator that only ever says "ok" tells you nothing about whether it *can*
+say anything else.
+
+### Is there a standard process for this?
+
+Yes, and it has a name: a **conformance suite** over a **golden fixture**. The
+same shape appears in
+[BIDS](https://bids-standard.github.io/bids-validator/) for neuroimaging,
+[Frictionless](https://framework.frictionlessdata.io/) for tabular data, and
+[Croissant](https://mlcommons.org/croissant/) for ML dataset metadata. Four
+parts, and where each one lives here:
+
+| part | here |
+|---|---|
+| **1. Machine-readable declaration** of every convention | `up_axis` in each calibration JSON and in each parquet's `twm.world_frame` |
+| **2. Golden values** the consumer recomputes | the projection fingerprint in that same blob — stored pixels you reproduce from your own poses |
+| **3. A validator the consumer runs on their own code** | `python -m react_toolbox.conformance` |
+| **4. Negative controls** — it must fail when you are wrong | printed on every report, and asserted by `scripts/test_conformance.py` |
+
+Part 4 is the one usually skipped, and it is the one that matters. This
+project shipped a self-consistency check that returned `0.0` for every input,
+and an overlay test that was 153 px wrong with all its checks green. A check
+nobody has watched fail is not evidence.
+
+So `test_conformance.py` feeds the checker each classic mistake and requires
+it to object, by name: millimetres, `wxyz`, the recorded Y-up convention,
+unnormalised quaternions, and a row subset. Measured, those read 11,732 px,
+55 px, 364 px, a norm error of 0.4, and 10.4 px respectively — against 0.00 px
+for correct input.
+
+That last one is not a mistake in your data, it is a mistake in how you *call*
+the checker: the fingerprint is a median over the whole episode, so a subset
+shifts it by real motion. The checker refuses the subset instead of reporting
+a frame error that is not there. Pass `rows=` with your indices and it
+compares row-wise against the release instead.
 
 ## 7. Known problems, stated rather than hidden
 
