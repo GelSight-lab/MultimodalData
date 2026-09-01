@@ -48,75 +48,114 @@ from react_toolbox.calibration import load_calibration, project_gel_frame  # noq
 from react_toolbox.frames import require_up_axis               # noqa: E402
 
 TASK = "motherboard"
-W = 30                       # window length, frames
-STRIDE = 5
-TRANS_DOM, TRANS_MIN_MM, TRANS_MAX_DEG = 0.85, 8.0, 6.0
-ROT_DOM, ROT_MIN_DEG, ROT_MAX_MM = 0.85, 6.0, 12.0
+WINDOWS = (12, 18, 24, 30, 45)   # frames; short windows are likelier to be pure
+STRIDE = 4
+
+# PURITY IS A PROPERTY OF THE PATH, NOT THE ENDPOINTS. The first version of
+# this search compared the first and last pose only. A window can wander
+# 110 mm off-axis and reverse eight times and still finish where a clean
+# motion would have -- measured on the clip it selected for trans+z:
+# straightness 0.227, per-step dominance 0.109. Every one of the six rotation
+# clips it picked swung the gel 37-50 mm out and back, while its endpoint
+# test read "the gel held to within 9.9 mm".
+STRAIGHTNESS = 0.90      # |net| / path length          (translation)
+MONOTONICITY = 0.80      # |net angle| / summed |steps|  (rotation)
+STEP_DOM_T = 0.90        # median per-step axis share    (translation)
+STEP_DOM_R = 0.85        # median per-step axis share    (rotation)
+TRANS_MIN_MM, TRANS_MAX_DEG = 8.0, 6.0
+ROT_MIN_DEG, ROT_MAX_GEL_MM = 6.0, 15.0   # MAX gel excursion over the path
 COL = {"left": (63, 210, 255), "right": (247, 195, 79)}        # BGR
 AXES = [(a, s) for a in range(3) for s in (+1, -1)]
 
 
-def _candidates(cal):
-    """Every window, with the two quantities that decide what it is."""
+def _purity(G, Q):
+    """Path statistics for one window: (N,3) gel mm and N rotations."""
+    d = np.diff(G, axis=0)
+    L = np.linalg.norm(d, axis=1)
+    net = G[-1] - G[0]
+    nl = float(np.linalg.norm(net))
+    rs = np.array([(Q[i + 1] * Q[i].inv()).as_rotvec(degrees=True)
+                   for i in range(len(Q) - 1)])
+    rl = np.linalg.norm(rs, axis=1)
+    netr = (Q[-1] * Q[0].inv()).as_rotvec(degrees=True)
+    nr = float(np.linalg.norm(netr))
+    return {
+        "d": d, "L": L, "net": net, "trans_mm": nl,
+        "rs": rs, "rl": rl, "netr": netr, "rot_deg": nr,
+        "straightness": nl / max(L.sum(), 1e-9),
+        "monotonicity": nr / max(rl.sum(), 1e-9),
+        # the gel's WORST excursion, not where it ended up
+        "gel_excursion_mm": float(np.linalg.norm(G - G[0], axis=1).max()),
+    }
+
+
+def _scan(cal):
+    """Every window at every length, already scored for purity."""
     out = []
-    for f in sorted(glob.glob(str(force_meta(TASK) / "*" / "*.parquet"))):
-        date, ep = Path(f).parts[-2], Path(f).stem
-        for side in ("left", "right"):
-            t = pq.read_table(f, columns=[f"sensor_{side}_pose"]).to_pydict()
-            P = np.asarray([x for x in t[f"sensor_{side}_pose"]], float)
-            ok = np.isfinite(P).all(1) & (np.linalg.norm(P[:, 3:], axis=1) > .5)
-            idx = np.where(ok)[0]
-            if len(idx) < W + 1:
-                continue
-            R = Rotation.from_quat(P[idx, 3:7])
-            g = np.tile(cal[f"gel_{side}"], (len(idx), 1))
-            gel = P[idx, :3] * 1000.0 + R.apply(g)
-            for s in range(0, len(idx) - W, STRIDE):
-                e = s + W
-                if idx[e] - idx[s] != W:          # frames must be consecutive
+    for W in WINDOWS:
+        for f in sorted(glob.glob(str(force_meta(TASK) / "*" / "*.parquet"))):
+            date, ep = Path(f).parts[-2], Path(f).stem
+            for side in ("left", "right"):
+                t = pq.read_table(f, columns=[f"sensor_{side}_pose"]).to_pydict()
+                P = np.asarray([x for x in t[f"sensor_{side}_pose"]], float)
+                ok = np.isfinite(P).all(1) & (np.linalg.norm(P[:, 3:], axis=1) > .5)
+                idx = np.where(ok)[0]
+                if len(idx) < W + 1:
                     continue
-                dp = gel[e] - gel[s]
-                rv = (R[e] * R[s].inv()).as_rotvec(degrees=True)
-                nd, na = float(np.linalg.norm(dp)), float(np.linalg.norm(rv))
-                out.append({"date": date, "episode": ep, "side": side,
-                            "row0": int(idx[s]), "row1": int(idx[e]),
-                            "dp_mm": dp.tolist(), "rv_deg": rv.tolist(),
-                            "trans_mm": nd, "rot_deg": na})
+                R = Rotation.from_quat(P[idx, 3:7])
+                g = np.tile(cal[f"gel_{side}"], (len(idx), 1))
+                gel = P[idx, :3] * 1000.0 + R.apply(g)
+                for s in range(0, len(idx) - W, STRIDE):
+                    e = s + W
+                    if idx[e] - idx[s] != W:
+                        continue
+                    st = _purity(gel[s:e + 1], R[s:e + 1])
+                    st.update({"date": date, "episode": ep, "side": side,
+                               "row0": int(idx[s]), "row1": int(idx[e]),
+                               "window": W})
+                    out.append(st)
     return out
 
 
 def _pick(cands):
-    """The best real window per signed axis, for each kind."""
     best = {}
     for c in cands:
-        dp, rv = np.asarray(c["dp_mm"]), np.asarray(c["rv_deg"])
+        L, d, rl, rs = c["L"], c["d"], c["rl"], c["rs"]
+        mt, mr = L > 0.2, rl > 0.15
         for ax, sg in AXES:
-            # EXACTLY the name synth_actions.AXES produces: sign first. Mine
-            # put the sign last, so every lookup on the page missed and the
-            # real clips were simply absent -- no error, no empty box.
             nm = ("+" if sg > 0 else "-") + "xyz"[ax]
-            # translation: one axis dominates the MOVE, orientation holds
-            if c["trans_mm"] > TRANS_MIN_MM and c["rot_deg"] < TRANS_MAX_DEG:
-                dom = abs(dp[ax]) / c["trans_mm"]
-                if dom > TRANS_DOM and np.sign(dp[ax]) == sg:
+            # TRANSLATION: straight path, each step along the axis, no turn
+            if (c["trans_mm"] > TRANS_MIN_MM and c["rot_deg"] < TRANS_MAX_DEG
+                    and mt.sum() > 6 and c["straightness"] > STRAIGHTNESS
+                    and np.sign(c["net"][ax]) == sg):
+                dom = float(np.median(np.abs(d[mt][:, ax]) / L[mt]))
+                if dom > STEP_DOM_T:
                     k = f"trans{nm}"
-                    score = dom * min(c["trans_mm"] / 60.0, 1.0)
+                    score = c["straightness"] * dom * min(c["trans_mm"] / 60, 1)
                     if score > best.get(k, {}).get("_score", 0):
                         best[k] = {**c, "_score": score, "kind": "translation",
-                                   "axis": nm, "dominance": dom,
+                                   "axis": nm, "step_dominance": dom,
                                    "amount": c["trans_mm"], "unit": "mm",
+                                   "purity": c["straightness"],
+                                   "purity_kind": "straightness",
                                    "counter": c["rot_deg"], "counter_unit": "deg"}
-            # rotation: one axis dominates the TURN, the gel stays put
-            if c["rot_deg"] > ROT_MIN_DEG and c["trans_mm"] < ROT_MAX_MM:
-                dom = abs(rv[ax]) / c["rot_deg"]
-                if dom > ROT_DOM and np.sign(rv[ax]) == sg:
+            # ROTATION: monotonic turn, each step about the axis, gel held
+            if (c["rot_deg"] > ROT_MIN_DEG and mr.sum() > 6
+                    and c["monotonicity"] > MONOTONICITY
+                    and c["gel_excursion_mm"] < ROT_MAX_GEL_MM
+                    and np.sign(c["netr"][ax]) == sg):
+                dom = float(np.median(np.abs(rs[mr][:, ax]) / rl[mr]))
+                if dom > STEP_DOM_R:
                     k = f"rot{nm}"
-                    score = dom * min(c["rot_deg"] / 20.0, 1.0)
+                    score = c["monotonicity"] * dom * min(c["rot_deg"] / 20, 1)
                     if score > best.get(k, {}).get("_score", 0):
                         best[k] = {**c, "_score": score, "kind": "rotation",
-                                   "axis": nm, "dominance": dom,
+                                   "axis": nm, "step_dominance": dom,
                                    "amount": c["rot_deg"], "unit": "deg",
-                                   "counter": c["trans_mm"], "counter_unit": "mm"}
+                                   "purity": c["monotonicity"],
+                                   "purity_kind": "monotonicity",
+                                   "counter": c["gel_excursion_mm"],
+                                   "counter_unit": "mm"}
     return best
 
 
@@ -154,7 +193,7 @@ def _render(rec, cal, out_mp4: Path, fps: float = 10.0) -> int:
                        cv2.LINE_AA)
         hud = (f"real {rec['kind'][:5]} {rec['axis']}  "
                f"{rec['amount']:.0f}{rec['unit']}  "
-               f"dom {rec['dominance']:.2f}  {rec['side']}")
+               f"pure {rec['purity']:.2f}  {rec['side']}")
         cv2.rectangle(fr, (0, 0), (fr.shape[1], 22), (0, 0, 0), -1)
         cv2.putText(fr, hud, (6, 15), cv2.FONT_HERSHEY_SIMPLEX, 0.44,
                     (235, 235, 235), 1, cv2.LINE_AA)
@@ -191,20 +230,29 @@ def main() -> int:
 
     cal = load_calibration(release_root(TASK))
     require_up_axis(cal, where=f"{release_root(TASK)}/calibration")
-    cands = _candidates(cal)
+    cands = _scan(cal)
     best = _pick(cands)
-    print(f"{len(cands):,} windows scanned, {len(best)}/12 axes matched")
+    print(f"{len(cands):,} windows scanned over {len(WINDOWS)} lengths, "
+          f"{len(best)}/12 axes matched")
+    missing = sorted({f"{k}{s2}{a}" for k in ("trans", "rot")
+                      for s2 in "+-" for a in "xyz"} - set(best))
+    if missing:
+        print(f"  NO CLEAN WINDOW EXISTS for: {missing} — these are reported "
+              f"as absent rather than filled with a clip that is not what it "
+              f"claims")
 
     recs = []
     for k in sorted(best, key=lambda n: (n.startswith("rot"), n[-1], n[-2])):
-        r = {kk: vv for kk, vv in best[k].items() if not kk.startswith("_")}
+        r = {kk: vv for kk, vv in best[k].items()
+             if not kk.startswith("_") and not isinstance(vv, np.ndarray)}
         n = _render(r, cal, out / f"{k}.mp4")
         r.update({"name": k, "clip": f"real/{k}.mp4", "frames": n})
         recs.append(r)
-        print(f"  {k:9s} {r['date']}/{r['episode']} {r['side']:5s} "
-              f"rows {r['row0']}-{r['row1']}  {r['amount']:6.1f}{r['unit']}  "
-              f"dom {r['dominance']:.3f}  counter {r['counter']:.1f}"
-              f"{r['counter_unit']}  {n}f", flush=True)
+        print(f"  {k:9s} W={r['window']:2d} {r['date']}/{r['episode']} "
+              f"{r['side']:5s} {r['amount']:6.1f}{r['unit']}  "
+              f"{r['purity_kind'][:5]} {r['purity']:.3f}  "
+              f"step {r['step_dominance']:.3f}  "
+              f"holds {r['counter']:.1f}{r['counter_unit']}  {n}f", flush=True)
     (out / "real_motion.json").write_text(json.dumps(recs, indent=1))
     print(f"\n{len(recs)} clips -> {out}")
     return 0

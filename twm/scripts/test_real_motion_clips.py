@@ -31,8 +31,14 @@ from react_paths import force_meta, out_root, release_root     # noqa: E402
 
 RESULTS: list = []
 TASK = "motherboard"
-TRANS_DOM, TRANS_MIN_MM, TRANS_MAX_DEG = 0.85, 8.0, 6.0
-ROT_DOM, ROT_MIN_DEG, ROT_MAX_MM = 0.85, 6.0, 12.0
+# PURITY IS A PROPERTY OF THE PATH. The endpoint version of this check passed
+# a trans+z clip that wandered 110 mm off-axis with a per-step dominance of
+# 0.109, and passed six rotation clips whose gel swung 37-50 mm out and back
+# while their endpoint test read "held to within 9.9 mm".
+STRAIGHTNESS, MONOTONICITY = 0.90, 0.80
+STEP_DOM_T, STEP_DOM_R = 0.90, 0.85
+TRANS_MIN_MM, TRANS_MAX_DEG = 8.0, 6.0
+ROT_MIN_DEG, ROT_MAX_GEL_MM = 6.0, 15.0
 
 
 def check(ok, name, evidence):
@@ -61,48 +67,65 @@ def main() -> int:
         f = force_meta(TASK) / r["date"] / f"{r['episode']}.parquet"
         t = pq.read_table(str(f),
                           columns=[f"sensor_{r['side']}_pose"]).to_pydict()
-        P = np.asarray([x for x in t[f"sensor_{r['side']}_pose"]], float)
-        a, b = P[r["row0"]], P[r["row1"]]
-        Ra, Rb = Rotation.from_quat(a[3:7]), Rotation.from_quat(b[3:7])
-        g = np.asarray(cal[f"gel_{r['side']}"], float)
-        ga = a[:3] * 1000.0 + Ra.apply(g)
-        gb = b[:3] * 1000.0 + Rb.apply(g)
-        dp = gb - ga
-        rv = (Rb * Ra.inv()).as_rotvec(degrees=True)
-        nd, na = float(np.linalg.norm(dp)), float(np.linalg.norm(rv))
+        P = np.asarray([x for x in t[f"sensor_{r['side']}_pose"]],
+                       float)[r["row0"]:r["row1"] + 1]
+        R = Rotation.from_quat(P[:, 3:7])
+        g = np.tile(np.asarray(cal[f"gel_{r['side']}"], float), (len(P), 1))
+        G = P[:, :3] * 1000.0 + R.apply(g)
+        d = np.diff(G, axis=0); L = np.linalg.norm(d, axis=1)
+        net = G[-1] - G[0]; nl = float(np.linalg.norm(net))
+        rs = np.array([(R[i + 1] * R[i].inv()).as_rotvec(degrees=True)
+                       for i in range(len(R) - 1)])
+        rl = np.linalg.norm(rs, axis=1)
+        netr = (R[-1] * R[0].inv()).as_rotvec(degrees=True)
+        nr = float(np.linalg.norm(netr))
         ax = "xyz".index(r["axis"][1])
         sg = 1 if r["axis"][0] == "+" else -1
         rows += 1
         if r["kind"] == "translation":
-            dom = abs(dp[ax]) / max(nd, 1e-9)
-            ok = (dom > TRANS_DOM and np.sign(dp[ax]) == sg
-                  and nd > TRANS_MIN_MM and na < TRANS_MAX_DEG)
+            st = nl / max(L.sum(), 1e-9)
+            m = L > 0.2
+            dom = float(np.median(np.abs(d[m][:, ax]) / L[m])) if m.any() else 0
+            ok = (st > STRAIGHTNESS and dom > STEP_DOM_T and nl > TRANS_MIN_MM
+                  and nr < TRANS_MAX_DEG and np.sign(net[ax]) == sg)
             if not ok:
-                bad.append(f"{r['name']}: dom {dom:.2f}, {nd:.1f} mm, "
-                           f"turned {na:.1f} deg, sign {int(np.sign(dp[ax]))}")
+                bad.append(f"{r['name']}: straightness {st:.2f}, step "
+                           f"dominance {dom:.2f}, {nl:.0f} mm, turned "
+                           f"{nr:.1f} deg")
         else:
-            dom = abs(rv[ax]) / max(na, 1e-9)
-            ok = (dom > ROT_DOM and np.sign(rv[ax]) == sg
-                  and na > ROT_MIN_DEG and nd < ROT_MAX_MM)
+            mo = nr / max(rl.sum(), 1e-9)
+            m = rl > 0.15
+            dom = float(np.median(np.abs(rs[m][:, ax]) / rl[m])) if m.any() else 0
+            exc = float(np.linalg.norm(G - G[0], axis=1).max())
+            ok = (mo > MONOTONICITY and dom > STEP_DOM_R and nr > ROT_MIN_DEG
+                  and exc < ROT_MAX_GEL_MM and np.sign(netr[ax]) == sg)
             if not ok:
-                bad.append(f"{r['name']}: dom {dom:.2f}, {na:.1f} deg, "
-                           f"gel moved {nd:.1f} mm, sign {int(np.sign(rv[ax]))}")
+                bad.append(f"{r['name']}: monotonicity {mo:.2f}, step "
+                           f"dominance {dom:.2f}, {nr:.1f} deg, gel excursion "
+                           f"{exc:.1f} mm")
     check(not bad and rows == len(recs),
-          "every clip re-measures as the motion it is labelled",
-          f"{rows} windows re-measured from the parquet, all matching their "
-          f"label" if not bad else "; ".join(bad[:4]))
+          "every clip's PATH is the motion it is labelled, not just its ends",
+          f"{rows} windows re-measured from the parquet: straightness / "
+          f"monotonicity, per-step axis share, and the gel's WORST excursion"
+          if not bad else "; ".join(bad[:4]))
 
-    # the counter-quantity is what separates these from ordinary motion
+    # the numbers the page prints must be the ones the data has
+    drift = []
+    for r in recs:
+        if not (0 <= r["purity"] <= 1) or not (0 <= r["step_dominance"] <= 1):
+            drift.append(r["name"])
     tr = [r for r in recs if r["kind"] == "translation"]
     ro = [r for r in recs if r["kind"] == "rotation"]
-    check(tr and ro
-          and max(r["counter"] for r in tr) < TRANS_MAX_DEG
-          and max(r["counter"] for r in ro) < ROT_MAX_MM,
-          "translations hold orientation and rotations hold the gel",
-          f"translation clips turn at most "
-          f"{max(r['counter'] for r in tr):.1f} deg (limit {TRANS_MAX_DEG:g}); "
-          f"rotation clips move the gel at most "
-          f"{max(r['counter'] for r in ro):.1f} mm (limit {ROT_MAX_MM:g})")
+    check(not drift and tr and ro
+          and min(r["purity"] for r in tr) > STRAIGHTNESS
+          and min(r["purity"] for r in ro) > MONOTONICITY
+          and max(r["counter"] for r in ro) < ROT_MAX_GEL_MM,
+          "purity is reported, and every clip clears its floor",
+          f"translation straightness {min(r['purity'] for r in tr):.3f}-"
+          f"{max(r['purity'] for r in tr):.3f}; rotation monotonicity "
+          f"{min(r['purity'] for r in ro):.3f}-"
+          f"{max(r['purity'] for r in ro):.3f}; worst gel excursion "
+          f"{max(r['counter'] for r in ro):.1f} mm")
 
     # a clip nobody can play is not a clip
     missing = [r["name"] for r in recs

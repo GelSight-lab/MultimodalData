@@ -250,10 +250,11 @@ def _page(out: Path, recs, man) -> None:
                 f"<figcaption><b>real</b> &middot; {r['date']}/{r['episode']}"
                 f"<br>{r['amount']:.0f}"
                 f"{'mm' if r['unit'] == 'mm' else '&deg;'} &middot; "
-                f"dominance {r['dominance']:.2f} &middot; "
+                f"{r['purity_kind']} {r['purity']:.2f} &middot; "
+                f"per-step {r['step_dominance']:.2f}<br>"
                 f"holds {r['counter']:.1f}"
                 f"{'&deg;' if r['counter_unit'] == 'deg' else 'mm'} &middot; "
-                f"{r['side']}</figcaption></figure>")
+                f"{r['window']}f &middot; {r['side']}</figcaption></figure>")
 
     secs = "".join(
         f"<h2>{name}</h2><div class='grid'>" + _real_fig(name) + "".join(
