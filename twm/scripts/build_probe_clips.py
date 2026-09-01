@@ -138,9 +138,20 @@ def main() -> int:
     ap.add_argument("--out", default=str(out_root("probe_clips")))
     args = ap.parse_args()
     out = Path(args.out)
+    # real/ is built by a different script and must survive this rebuild.
+    # Without this the page would show the real clips exactly once, until the
+    # next time anyone regenerated the synthetic ones -- and it would look
+    # like they had simply never been built.
+    import tempfile
+    stash = None
+    if (out / "real").is_dir():
+        stash = Path(tempfile.mkdtemp()) / "real"
+        shutil.move(str(out / "real"), str(stash))
     if out.exists():
         shutil.rmtree(out)
     (out / "clips").mkdir(parents=True)
+    if stash is not None:
+        shutil.move(str(stash), str(out / "real"))
 
     cal = load_calibration(SRC)
     require_up_axis(cal, where=f"{SRC}/calibration")
@@ -217,8 +228,35 @@ def _page(out: Path, recs, man) -> None:
          f"speed vs the dataset (median p{st.median(pct):.0f})"),
         (f"{min(seps):.3f} m", "closest the hands come (rule 0.12)"),
     ]
+    # REAL counterparts, if they have been built. The synthetic probes show a
+    # commanded motion over a frozen frame; nobody performed them. Beside each
+    # one, the same signed axis as it actually occurs in the recordings, found
+    # by the criteria the probes are BUILT with (translation holds
+    # orientation, rotation holds the gel centre) rather than a looser
+    # "mostly along x".
+    real = {}
+    rj = out / "real" / "real_motion.json"
+    if rj.exists():
+        for r in json.loads(rj.read_text()):
+            real[r["name"]] = r
+
+    def _real_fig(name):
+        r = real.get(name)
+        if not r:
+            return ""
+        return (f"<figure class='real'><video src='{r['clip']}' controls loop "
+                f"muted playsinline preload='none' "
+                f"poster='{r['clip'].replace('.mp4', '.jpg')}'></video>"
+                f"<figcaption><b>real</b> &middot; {r['date']}/{r['episode']}"
+                f"<br>{r['amount']:.0f}"
+                f"{'mm' if r['unit'] == 'mm' else '&deg;'} &middot; "
+                f"dominance {r['dominance']:.2f} &middot; "
+                f"holds {r['counter']:.1f}"
+                f"{'&deg;' if r['counter_unit'] == 'deg' else 'mm'} &middot; "
+                f"{r['side']}</figcaption></figure>")
+
     secs = "".join(
-        f"<h2>{name}</h2><div class='grid'>" + "".join(
+        f"<h2>{name}</h2><div class='grid'>" + _real_fig(name) + "".join(
             f"<figure><video src='{r['clip']}' controls loop muted playsinline "
             f"poster='{r['clip'].replace('.mp4', '.jpg')}' preload='none'>"
             f"</video><figcaption>run{r['run']} &middot; "
@@ -245,6 +283,8 @@ p{color:var(--dim);max-width:78ch}a{color:var(--accent)}
 figure{margin:0;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:8px}
 video{width:100%;border-radius:6px;background:#000}
 figcaption{color:var(--dim);font-size:12px;margin-top:6px}
+figure.real{border-color:var(--accent)}
+figure.real figcaption b{color:var(--accent)}
 </style></head><body><div class="wrap">
 <h1>React probe clips</h1>
 <p>Every clip here is an animation <b>of the published test set</b> &mdash; the same
