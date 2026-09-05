@@ -60,14 +60,20 @@ class Cam:
         self.config, self.device = {}, f"/dev/{slot}"
 
 
+# Distinct per-device pixel values so a swapped cam0/cam1 assignment shows
+# up as a wrong value, not just a coincidentally-matching one.
+_ARDUCAM_VALUES = {"/dev/cam0": 21, "/dev/cam1": 37}
+
+
 def drivers(log, gelsight_fail=(), arducam_fail=False):
     return Drivers(
         realsense=lambda serial, fps: Stream(log, f"rs {serial}"),
         gelsight=lambda serial, resolution, name: Stream(
             log, f"gs {name}", fail_start=name in gelsight_fail, ts=42.0),
         optitrack=lambda: Optitrack(log),
-        arducam=lambda config, device: Stream(log, f"ard {device}",
-                                              fail_start=arducam_fail, ts=7.0),
+        arducam=lambda config, device: Stream(
+            log, f"ard {device}", fail_start=arducam_fail,
+            value=_ARDUCAM_VALUES.get(device, 1), ts=7.0),
         resolve_arducams=lambda path: [Cam("cam0"), Cam("cam1")],
         sleep=lambda s: None,
     )
@@ -118,6 +124,7 @@ def test_missing_gelsight_falls_back_to_dummy_and_is_stopped():
     tick = rig.grab()
     assert tick.gelsight[1].max() == 0
     assert tick.gelsight_ts == (42.0, tick.timestamp)   # dummy has no capture time
+    assert tick.arducam == () and tick.arducam_ts == ()
 
 
 def test_grab_builds_tick_and_drains_optitrack():
@@ -127,6 +134,7 @@ def test_grab_builds_tick_and_drains_optitrack():
     assert isinstance(tick, Tick)
     assert len(tick.color) == 2 and len(tick.depth) == 2
     assert tick.arducam_ts == (7.0, 7.0)
+    assert [int(f[0, 0, 0]) for f in tick.arducam] == [21, 37]   # cam0/cam1 not swapped
     assert tick.optitrack["motherboard"] == [(1.0, [0] * 7)]
     assert rig.grab().optitrack["motherboard"] == []     # drained
     assert rig.latest_poses()["motherboard"] == (3.0, [0] * 7)

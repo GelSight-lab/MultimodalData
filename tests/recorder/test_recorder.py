@@ -6,11 +6,13 @@ import h5py
 import numpy as np
 import pytest
 
+from twm.recorder import app as app_module
 from twm.recorder.app import Recorder
 from twm.recorder.capture import CaptureLoop
-from twm.recorder.config import RecorderConfig, WriterConfig
+from twm.recorder.config import DiskConfig, RecorderConfig, WriterConfig
 from twm.recorder.episode import EpisodeStore
 from twm.recorder.frames import synthetic_tick
+from twm.recorder.rig import Drivers
 from twm.recorder.schema import append_ticks
 from twm.recorder.writer import EpisodeWriter
 
@@ -137,3 +139,83 @@ def test_close_finalizes_open_episode_as_quit(parts):
     assert parts.rig.closed
     with h5py.File(s.path, "r") as f:
         assert f["metadata"].attrs["ended_by"] == "quit"
+
+
+class _Stream:
+    """Minimal hardware double: starts, stops, hands back a fixed frame."""
+
+    def __init__(self, log, name):
+        self.log, self.name = log, name
+        self.color = np.zeros((480, 640, 3), np.uint8)
+        self.depth = np.zeros((480, 640), np.uint16)
+
+    def start(self, **kw):
+        self.log.append(f"start {self.name}")
+
+    def stop(self):
+        self.log.append(f"stop {self.name}")
+
+    def get_color_frame(self, **kw):
+        return self.color
+
+    def get_depth_frame(self, **kw):
+        return self.depth
+
+    def get_frame(self, **kw):
+        return self.color
+
+    def get_frame_with_timestamp(self, **kw):
+        return self.color, None
+
+
+class _Optitrack:
+    def __init__(self, log):
+        self.log = log
+
+    def start(self):
+        self.log.append("start optitrack")
+
+    def stop(self):
+        self.log.append("stop optitrack")
+
+    def get_latest_pose(self, name):
+        return None
+
+    def flush_buffer(self, name):
+        return []
+
+
+def test_run_closes_rig_when_startup_fails_after_open(tmp_path, monkeypatch):
+    """Regression for a device leak: EpisodeWriter/CaptureLoop/EpisodeStore/
+    Recorder used to be constructed outside any try/finally around the open
+    rig, so a failure there (e.g. --queue_seconds 0, which makes
+    EpisodeWriter raise ValueError) left every sensor still open. `run()`
+    must close the rig — and stop a writer it did manage to build — before
+    propagating, and must never reach the GUI loop."""
+    log = []
+    fake_drivers = Drivers(
+        realsense=lambda serial, fps: _Stream(log, f"rs {serial}"),
+        gelsight=lambda serial, resolution, name: _Stream(log, f"gs {name}"),
+        optitrack=lambda: _Optitrack(log),
+        arducam=lambda config, device: _Stream(log, f"ard {device}"),
+        resolve_arducams=lambda path: [],
+        sleep=lambda s: None,
+    )
+    cfg = RecorderConfig(
+        task="t", data_dir=tmp_path, use_arducam=False, settle_s=0.0,
+        realsense_serials=("A",), gelsight_serials={"left": "L", "right": "R"},
+        writer=WriterConfig(queue_seconds=0.0),
+        disk=DiskConfig(bandwidth_test_s=0.0))
+
+    # The disk-space check in run_startup_preflight depends on the real
+    # filesystem under tmp_path; stub it out so this test only exercises the
+    # cleanup path under test, not an unrelated preflight failure.
+    monkeypatch.setattr(app_module, "run_startup_preflight", lambda *a, **k: [])
+
+    with pytest.raises(ValueError, match="capacity_bytes must be positive"):
+        app_module.run(cfg, drivers=fake_drivers)
+
+    assert log.count("stop rs A") == 1
+    assert log.count("stop gs left") == 1
+    assert log.count("stop gs right") == 1
+    assert log.count("stop optitrack") == 1

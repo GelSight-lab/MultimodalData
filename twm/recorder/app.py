@@ -192,19 +192,29 @@ def run(config: RecorderConfig, drivers: Optional[Drivers] = None) -> int:
     rig.wait_ready(config.startup_timeout_s, config.settle_s)
     log.info("all sensors ready")
 
-    tick_bytes = full_rig_tick_nbytes(len(rig.realsense), 2, len(rig.arducam))
-    writer = EpisodeWriter(
-        capacity_bytes=queue_capacity_bytes(config.writer.queue_seconds, config.fps, tick_bytes),
-        batch_size=config.writer.batch_size,
-        flush_interval_s=config.writer.flush_interval_s,
-        overload_fraction=config.writer.overload_fraction,
-        overload_sustained_s=config.writer.overload_sustained_s,
-        min_free_gb=config.disk.min_free_gb)
-    capture = CaptureLoop(rig, writer, fps=config.fps,
-                          warmup_drop_frames=config.warmup_drop_frames,
-                          max_tick_gap_s=config.writer.max_tick_gap_s)
-    store = EpisodeStore(config.data_dir, config.task)
-    recorder = Recorder(config, rig, writer, capture, store)
+    writer = None
+    try:
+        tick_bytes = full_rig_tick_nbytes(len(rig.realsense), 2, len(rig.arducam))
+        writer = EpisodeWriter(
+            capacity_bytes=queue_capacity_bytes(config.writer.queue_seconds, config.fps, tick_bytes),
+            batch_size=config.writer.batch_size,
+            flush_interval_s=config.writer.flush_interval_s,
+            overload_fraction=config.writer.overload_fraction,
+            overload_sustained_s=config.writer.overload_sustained_s,
+            min_free_gb=config.disk.min_free_gb)
+        capture = CaptureLoop(rig, writer, fps=config.fps,
+                              warmup_drop_frames=config.warmup_drop_frames,
+                              max_tick_gap_s=config.writer.max_tick_gap_s)
+        store = EpisodeStore(config.data_dir, config.task)
+        recorder = Recorder(config, rig, writer, capture, store)
+    except BaseException:
+        # Nothing built here has an owner yet (Recorder.close() below is
+        # what usually stops the writer and closes the rig); if we fail
+        # partway through, do that ourselves before propagating.
+        if writer is not None:
+            writer.stop()
+        rig.close()
+        raise
     try:
         capture.start()
         return _gui_loop(config, recorder, capture, rig, load_projection(config))

@@ -10,12 +10,18 @@ from twm.recorder.writer import EpisodeWriter
 
 
 class FakeRig:
-    """Ticks at wall-clock time; `jump` adds an artificial gap once."""
+    """Ticks at wall-clock time; `jump` adds an artificial gap once.
+
+    `arducam_frames` defaults to empty so existing tests' capacity math
+    (sized off the gelsight-only TICK below) is unaffected; a test that
+    wants Arducam frames in the tick sets it before starting the loop.
+    """
     def __init__(self):
         self.n = 0
         self.jump = 0.0
         self.fail = None
         self.frame = np.zeros((4, 4, 3), np.uint8)
+        self.arducam_frames = ()
 
     def grab(self):
         if self.fail:
@@ -24,7 +30,8 @@ class FakeRig:
         t = time.time() + self.jump
         self.jump = 0.0
         return Tick(t, gelsight=(self.frame + self.n, self.frame),
-                    gelsight_ts=(t, t))
+                    gelsight_ts=(t, t), arducam=self.arducam_frames,
+                    arducam_ts=(t,) * len(self.arducam_frames))
 
     def latest_poses(self):
         return {"motherboard": (time.time(), [0] * 7)}
@@ -62,6 +69,19 @@ def test_snapshot_is_published_and_reference_can_be_reset():
     loop.stop()
     writer.stop()
     assert snap.recording is False and snap.writer.queue_items == 0
+
+
+def test_latest_snapshot_carries_arducam_frames_in_order():
+    cam0 = np.full((4, 4, 3), 21, np.uint8)
+    cam1 = np.full((4, 4, 3), 37, np.uint8)
+    rig = FakeRig()
+    rig.arducam_frames = (cam0, cam1)
+    _, writer, loop = make(rig=rig)
+    loop.start()
+    tick = _wait(loop.latest).tick
+    loop.stop()
+    writer.stop()
+    assert [int(f[0, 0, 0]) for f in tick.arducam] == [21, 37]
 
 
 def test_warmup_frames_are_not_recorded():
