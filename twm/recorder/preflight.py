@@ -95,6 +95,12 @@ def check_write_bandwidth(directory, fps: int, seconds: float, margin: float,
 
     The synthetic file uses the legacy schema; the requirement is scaled by
     the extra bytes Arducams add so the number still means "the real rig".
+
+    Any failure of the measurement itself (a real disk error surfacing as
+    WriterFault, or an OSError creating the file) is reported as a failing
+    CheckResult rather than raised — this is a preflight check, and a
+    startup self-test that can crash the recorder defeats the point of
+    running it before the episode instead of during it.
     """
     if seconds <= 0:
         return CheckResult("write_bandwidth", True, "skipped")
@@ -104,14 +110,16 @@ def check_write_bandwidth(directory, fps: int, seconds: float, margin: float,
     required = fps * margin * scale
     ticks = [synthetic_tick(0.0, seed=k) for k in range(2)]
     with tempfile.TemporaryDirectory(dir=str(directory), prefix=".twm_bandwidth_") as tmp:
-        f, path = create_episode_file(tmp, 0, [], [], fps, task_name="bandwidth_test")
-        writer = EpisodeWriter(
-            capacity_bytes=queue_capacity_bytes(1.0, fps, ticks[0].nbytes()),
-            batch_size=writer_config.batch_size, flush_interval_s=float("inf"),
-            sink=append_ticks)
-        n = 0
-        t0 = clock()
+        f = None
+        writer = None
         try:
+            f, path = create_episode_file(tmp, 0, [], [], fps, task_name="bandwidth_test")
+            writer = EpisodeWriter(
+                capacity_bytes=queue_capacity_bytes(1.0, fps, ticks[0].nbytes()),
+                batch_size=writer_config.batch_size, flush_interval_s=float("inf"),
+                sink=append_ticks)
+            n = 0
+            t0 = clock()
             while clock() - t0 < seconds:
                 try:
                     writer.submit(f, ticks[n % 2])
@@ -122,9 +130,14 @@ def check_write_bandwidth(directory, fps: int, seconds: float, margin: float,
             elapsed = clock() - t0
             f.flush()
             file_mb = Path(path).stat().st_size / 1e6
+        except Exception as exc:
+            return CheckResult("write_bandwidth", False,
+                               f"self-test failed: {type(exc).__name__}: {exc}")
         finally:
-            writer.stop()
-            f.close()
+            if writer is not None:
+                writer.stop()
+            if f is not None:
+                f.close()
     rate = n / elapsed if elapsed else 0.0
     return CheckResult(
         "write_bandwidth", rate >= required,

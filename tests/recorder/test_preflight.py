@@ -53,6 +53,18 @@ def test_write_bandwidth_measures_real_writer(tmp_path):
     assert skipped.ok and "skipped" in skipped.detail
 
 
+def test_write_bandwidth_reports_failure_instead_of_raising(tmp_path, monkeypatch):
+    def boom(f, ticks):
+        raise OSError("disk full (simulated)")
+
+    monkeypatch.setattr("twm.recorder.preflight.append_ticks", boom)
+    r = check_write_bandwidth(tmp_path, fps=30, seconds=0.3, margin=0.01,
+                              writer_config=WriterConfig())
+    assert not r.ok
+    assert "disk full (simulated)" in r.detail
+    assert list(tmp_path.iterdir()) == []          # temp file removed
+
+
 def test_episode_preflight_collects_every_failure(tmp_path):
     cfg = RecorderConfig(task="t", data_dir=tmp_path)
     results = run_episode_preflight(cfg, {"sensor_left": None, "sensor_right": None},
