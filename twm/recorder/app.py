@@ -155,7 +155,7 @@ def load_projection(config: RecorderConfig) -> Optional[Dict[str, Any]]:
     if not config.show_projection:
         return None
     from twm.viz import CAM_CALIB_NAME, load_calibrations
-    calib_dir = Path(__file__).resolve().parent.parent / "calibration" / "result"
+    calib_dir = Path(__file__).resolve().parent.parent / "calibration" / "result"  # tactile-lag-exempt: the LIVE recorder always uses the current calibration; epochs only exist for replaying the past
     try:
         cam_calibs, gel_left, gel_right = load_calibrations(
             [calib_dir / CAM_CALIB_NAME[i] for i in range(3)],
@@ -163,7 +163,7 @@ def load_projection(config: RecorderConfig) -> Optional[Dict[str, Any]]:
             calib_dir / "T_gel_to_rigid_right.json")
     except Exception as exc:
         log.warning("projection overlay disabled (%s)", exc)
-        return None
+        return None  # fallback-ok: the overlay is preview-only cosmetics; no calibration means no overlay, and nothing recorded depends on it
     cams = []
     for calib in cam_calibs:
         serial = calib["camera_serial"]

@@ -146,6 +146,9 @@ only at episode end, so episodes longer than ~7 minutes keep every sample.
 `episode` (paths + CSV log) and `app` (state machine + preview).
 `twm/data_collection.py` is a thin compatibility facade.
 
+Before merging any change under `twm/`, run `python -m twm.pipeline_guard`
+(must print `14 checks, 0 violation(s)`) and `python -m pytest tests -q`.
+
 ---
 
 ## Visualizing Episodes
