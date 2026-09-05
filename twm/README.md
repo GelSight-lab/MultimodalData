@@ -11,7 +11,9 @@ Tools for collecting and reviewing multimodal data for the Tactile World Model (
 | Arducam B0578 | 2 | Sensor-mounted RGB cameras (640×480 MJPEG @ 30 Hz) |
 | OptiTrack | 3 trackers | `motherboard`, `sensor_left`, `sensor_right` via VRPN/ROS |
 
-RealSense and GelSight serials are set at the top of `data_collection.py`.
+Camera serials, the data root, and every threshold live in
+`twm/recorder/config.py` (`RecorderConfig`). Override at the command line:
+`--data_dir`, `--queue_seconds`, `--min_free_gb`, `--no_bandwidth_test`.
 The two Arducams are selected by USB serial in `config/arducam.json`
 (`TWML0001` = left, `TWMR0001` = right), so they can be plugged into any port.
 A camera without a unique serial can still be selected by its USB topology
@@ -89,9 +91,10 @@ USB path is a startup error rather than a silent black stream. Use
                                                     ...
 ```
 
-The root directory is set by `DATA_DIR` at the top of `data_collection.py`
-(currently `/media/yxma/Disk1/twm/data`). The dataset log is written to
-`<DATA_DIR>/dataset_log.csv`.
+The root directory is `RecorderConfig.data_dir`, set in
+`twm/recorder/config.py` (currently `/media/yxma/Disk1/twm/data`) and
+overridable with `--data_dir`. The dataset log is written to
+`<data_dir>/dataset_log.csv`.
 
 ### Controls
 
@@ -113,6 +116,35 @@ The root directory is set by `DATA_DIR` at the top of `data_collection.py`
 7. Press `q` to quit.
 
 A log row is appended to `<DATA_DIR>/dataset_log.csv` after each episode.
+
+### What happens when the disk cannot keep up
+
+The recorder never drops frames from the middle of an episode. The writer
+queue is bounded in bytes (3 s of ticks ≈ 750 MB by default). If it stays
+above 50 % for 3 s, fills up, hits a write error, or free disk falls below
+50 GB, the current episode is finalized immediately, marked
+`metadata.attrs["valid"] = False` with an `invalid_reason`, logged with
+`notes = "INVALID: ..."`, and recording stops. The status line at the bottom
+of the preview shows `writer <queue %> | <MB/s> | disk <GB> (~min left) | OK/WARN/FAIL`.
+
+Before every episode the recorder checks free disk, OptiTrack freshness for
+the active bodies, and that the writer is idle. At startup it also writes
+two seconds of synthetic frames through the real pipeline and refuses to
+run below 45 ticks/s (30 fps × 1.5). Run the same test by hand:
+
+    python -m twm.recorder bench --dir /media/yxma/Disk1/twm/data --seconds 5
+
+Episode metadata gained `valid`, `invalid_reason`, `ended_by`,
+`max_tick_gap_s`, `gap_count`, `queue_peak_fraction`, `writer_mean_mb_s`.
+OptiTrack poses are now written continuously with each batch rather than
+only at episode end, so episodes longer than ~7 minutes keep every sample.
+
+### Library layout
+
+`twm/recorder/`: `config` → `rig` (hardware) → `capture` (30 Hz thread) →
+`writer` (HDF5 thread) with `schema` (layout), `preflight`, `monitor`,
+`episode` (paths + CSV log) and `app` (state machine + preview).
+`twm/data_collection.py` is a thin compatibility facade.
 
 ---
 
