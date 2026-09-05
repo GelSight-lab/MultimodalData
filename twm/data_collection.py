@@ -244,6 +244,7 @@ class HDF5Writer:
         self._dropped    = 0
         self._last_flush = time.time()
         self._flushes    = 0
+        self._stopped    = False
         self._thread     = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
 
@@ -320,9 +321,12 @@ class HDF5Writer:
         self._queue.join()
 
     def stop(self):
+        if self._stopped:
+            return
         self.flush()
         self._queue.put(None)
         self._thread.join()
+        self._stopped = True
 
     @property
     def queue_size(self):
@@ -636,7 +640,7 @@ def _startup_call(fn, resources, *args, **kwargs):
     """Run one startup operation and clean all registered devices on failure."""
     try:
         return fn(*args, **kwargs)
-    except Exception:
+    except BaseException:
         _stop_resources(resources)
         raise
 
@@ -645,7 +649,7 @@ def _startup_call(fn, resources, *args, **kwargs):
 # Main
 # ──────────────────────────────────────────────────────────────────────────────
 
-def main():
+def _main(started_resources):
     import argparse
     import cv2
     from camera_stream.realsense_stream import RealsenseStream
@@ -691,7 +695,6 @@ def main():
     print(f"Task: {task_name}  |  Saving to: {date_dir}")
 
     # ── Init sensors ──────────────────────────────────────────────────────────
-    started_resources = []
     print("Initializing RealSense cameras...")
     rs_streams = [_startup_call(RealsenseStream, started_resources,
                                 serial=s, fps=FPS)
@@ -699,7 +702,7 @@ def main():
     for s in rs_streams:
         started_resources.append(s)
         _startup_call(s.start, started_resources)
-        time.sleep(0.5)  # stagger starts to avoid USB bandwidth contention
+        _startup_call(time.sleep, started_resources, 0.5)
 
     arducam_config = ()
     arducam_streams = []
@@ -779,9 +782,8 @@ def main():
         _startup_call(gs_right.get_frame, started_resources)
         for s in arducam_streams:
             _startup_call(s.get_frame, started_resources)
-        time.sleep(0.02)
+        _startup_call(time.sleep, started_resources, 0.02)
     print("All sensors ready.\n")
-    started_resources.clear()  # normal GUI finally now owns these resources
     print("Controls:  s = start episode   e = end episode   r = reset diff ref   "
           "p = toggle projection   q = quit\n")
 
@@ -816,20 +818,26 @@ def main():
                 })
             print(f"Projection overlay: ON ({len(project_cams)} cameras calibrated). "
                   "Press 'p' to toggle.\n")
-        except Exception as e:
+        except BaseException as e:
+            if not isinstance(e, Exception):
+                _stop_resources(started_resources)
+                raise
             print(f"Projection overlay: DISABLED (failed to load calibration: {e})\n")
             show_projection = False
             project_cams = []
 
     # ── State ─────────────────────────────────────────────────────────────────
-    writer      = HDF5Writer()
+    writer = _startup_call(HDF5Writer, started_resources)
+    started_resources.append(writer)
     episode_num = 0
     path        = None
-    capture     = CaptureLoop(
+    capture = _startup_call(
+        CaptureLoop, started_resources,
         rs_streams, gs_left, gs_right, optitrack, writer, fps=FPS,
         arducam_streams=(arducam_streams if arducam_streams else None),
     )
-    capture.start()
+    started_resources.append(capture)
+    _startup_call(capture.start, started_resources)
     arducam_labels = [
         f"{camera.slot} {camera.id_path} {camera.position}"
         for camera in arducam_config
@@ -979,16 +987,18 @@ def main():
             _end_episode()
         except Exception as save_err:
             print(f"Warning: could not save episode cleanly: {save_err}")
-        capture.stop()
-        for s in rs_streams:
-            s.stop()
-        gs_left.stop()
-        gs_right.stop()
-        for s in arducam_streams:
-            s.stop()
-        optitrack.stop()
+        _stop_resources(started_resources)
         cv2.destroyAllWindows()
         print("All sensors stopped. Goodbye.")
+
+
+def main():
+    """Run the recorder with cleanup covering initialization through shutdown."""
+    started_resources = []
+    try:
+        return _main(started_resources)
+    finally:
+        _stop_resources(started_resources)
 
 
 if __name__ == "__main__":

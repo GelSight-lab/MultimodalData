@@ -6,6 +6,7 @@ import h5py
 
 # We'll import the helpers directly from the script
 from twm.data_collection import (
+    HDF5Writer,
     append_camera_frame,
     append_camera_frames_batch,
     create_episode_file,
@@ -135,6 +136,14 @@ class TestHDF5Writer(unittest.TestCase):
         np.testing.assert_allclose(f["arducam/cam1/timestamps"][:], [9.95, 11.0])
         np.testing.assert_allclose(f["timestamps"][:], [10.0, 11.0])
         f.close()
+
+    def test_background_writer_stop_is_idempotent(self):
+        writer = HDF5Writer()
+
+        writer.stop()
+        writer.stop()
+
+        self.assertEqual(writer.queue_size, 0)
 
 
 if __name__ == '__main__':

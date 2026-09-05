@@ -1,7 +1,9 @@
 import time
 
 import numpy as np
+import pytest
 
+import twm.data_collection as data_collection
 from twm.data_collection import CaptureLoop, _startup_call
 
 
@@ -207,3 +209,41 @@ def test_startup_failure_stops_every_registered_resource_in_reverse_order():
     assert events == [
         "start first", "start second", "stop second", "stop first"
     ]
+
+
+def test_keyboard_interrupt_during_startup_also_cleans_registered_resources():
+    events = []
+
+    class Resource:
+        def stop(self):
+            events.append("stopped")
+
+    resources = [Resource()]
+
+    try:
+        _startup_call(lambda: (_ for _ in ()).throw(KeyboardInterrupt()), resources)
+    except KeyboardInterrupt:
+        pass
+    else:
+        raise AssertionError("KeyboardInterrupt did not propagate")
+
+    assert events == ["stopped"]
+
+
+def test_main_cleanup_guard_covers_failures_before_gui_loop(monkeypatch):
+    events = []
+
+    class Resource:
+        def stop(self):
+            events.append("stopped")
+
+    def fail_before_gui(resources):
+        resources.append(Resource())
+        raise KeyboardInterrupt()
+
+    monkeypatch.setattr(data_collection, "_main", fail_before_gui)
+
+    with pytest.raises(KeyboardInterrupt):
+        data_collection.main()
+
+    assert events == ["stopped"]
