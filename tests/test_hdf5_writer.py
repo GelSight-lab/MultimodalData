@@ -5,13 +5,31 @@ import numpy as np
 import h5py
 
 # We'll import the helpers directly from the script
-from twm.data_collection import create_episode_file, append_camera_frame, flush_optitrack_to_hdf5
+from twm.data_collection import (
+    append_camera_frame,
+    append_camera_frames_batch,
+    create_episode_file,
+    flush_optitrack_to_hdf5,
+)
+from twm.sensor_camera import CameraSlot, ResolvedCamera
 
 
 class TestHDF5Writer(unittest.TestCase):
 
     def setUp(self):
         self.tmpdir = tempfile.mkdtemp()
+
+    def _arducams(self):
+        return (
+            ResolvedCamera(
+                CameraSlot("cam0", "usb-A", "unknown", 640, 480, 30, "MJPG"),
+                "/dev/video6", "SN001",
+            ),
+            ResolvedCamera(
+                CameraSlot("cam1", "usb-B", "unknown", 640, 480, 30, "MJPG"),
+                "/dev/video10", "SN001",
+            ),
+        )
 
     def test_create_episode_file_structure(self):
         """create_episode_file creates correct HDF5 group/dataset structure."""
@@ -31,6 +49,7 @@ class TestHDF5Writer(unittest.TestCase):
                 self.assertIn(f"realsense/cam{i}/depth", f)
             self.assertIn("gelsight/left/frames", f)
             self.assertIn("gelsight/right/frames", f)
+            self.assertNotIn("arducam", f)
             for name in ["motherboard", "sensor_left", "sensor_right"]:
                 self.assertIn(f"optitrack/{name}/timestamps", f)
                 self.assertIn(f"optitrack/{name}/pose", f)
@@ -73,6 +92,49 @@ class TestHDF5Writer(unittest.TestCase):
         """create_episode_file produces correctly named file."""
         _, path = create_episode_file(self.tmpdir, 5, [], [], 30)
         self.assertTrue(path.endswith("episode_005.h5"))
+
+    def test_create_episode_file_adds_configured_arducams_and_identity(self):
+        f, path = create_episode_file(
+            self.tmpdir, 6, ["A", "B", "C"], ["L", "R"], 30,
+            arducam_config=self._arducams(),
+        )
+        f.close()
+
+        with h5py.File(path, "r") as f:
+            for i, path_id, device in ((0, "usb-A", "/dev/video6"),
+                                       (1, "usb-B", "/dev/video10")):
+                group = f[f"arducam/cam{i}"]
+                self.assertEqual(group["frames"].shape, (0, 480, 640, 3))
+                self.assertEqual(group["frames"].dtype, np.uint8)
+                self.assertEqual(group["timestamps"].shape, (0,))
+                self.assertEqual(group.attrs["usb_path"], path_id)
+                self.assertEqual(group.attrs["device_at_recording"], device)
+                self.assertEqual(group.attrs["reported_serial"], "SN001")
+                self.assertEqual(group.attrs["position"], "unknown")
+                self.assertEqual(group.attrs["pixel_format"], "MJPG")
+            self.assertIn("arducam_config", f["metadata"].attrs)
+
+    def test_append_arducam_only_batch_preserves_pixels_and_timestamps(self):
+        f, _ = create_episode_file(
+            self.tmpdir, 7, [], [], 30,
+            arducam_config=self._arducams(), include_legacy=False,
+        )
+        cam0 = np.full((480, 640, 3), 11, np.uint8)
+        cam1 = np.full((480, 640, 3), 29, np.uint8)
+
+        append_camera_frames_batch(f, [
+            (None, None, None, 10.0, None, [cam0, cam1], [9.90, 9.95]),
+            (None, None, None, 11.0, None, [cam0 + 1, cam1 + 1], [None, None]),
+        ])
+
+        self.assertNotIn("realsense", f)
+        self.assertNotIn("gelsight", f)
+        np.testing.assert_array_equal(f["arducam/cam0/frames"][0], cam0)
+        np.testing.assert_array_equal(f["arducam/cam1/frames"][1], cam1 + 1)
+        np.testing.assert_allclose(f["arducam/cam0/timestamps"][:], [9.90, 11.0])
+        np.testing.assert_allclose(f["arducam/cam1/timestamps"][:], [9.95, 11.0])
+        np.testing.assert_allclose(f["timestamps"][:], [10.0, 11.0])
+        f.close()
 
 
 if __name__ == '__main__':

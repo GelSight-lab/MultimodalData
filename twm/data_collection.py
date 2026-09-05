@@ -12,6 +12,7 @@ Controls:
 """
 
 import collections
+import json
 import os
 import queue
 import threading
@@ -34,7 +35,9 @@ def _gs_frame_ts(gs_stream):
 # HDF5 helpers
 # ──────────────────────────────────────────────────────────────────────────────
 
-def create_episode_file(date_dir, episode_num, realsense_serials, gelsight_serials, fps, task_name=""):
+def create_episode_file(date_dir, episode_num, realsense_serials, gelsight_serials,
+                        fps, task_name="", arducam_config=None,
+                        include_legacy=True):
     """
     Create a new HDF5 episode file with resizable datasets.
 
@@ -52,35 +55,73 @@ def create_episode_file(date_dir, episode_num, realsense_serials, gelsight_seria
     meta.attrs["created_at"] = time.strftime("%Y-%m-%dT%H:%M:%S")
     meta.attrs["task"] = task_name
 
+    if arducam_config:
+        camera_meta = [{
+            "slot": camera.slot,
+            "id_path": camera.id_path,
+            "position": camera.position,
+            "device_at_recording": getattr(camera, "device", ""),
+            "reported_serial": getattr(camera, "reported_serial", ""),
+            "width": camera.width,
+            "height": camera.height,
+            "fps": camera.fps,
+            "pixel_format": camera.pixel_format,
+        } for camera in arducam_config]
+        meta.attrs["arducam_config"] = json.dumps(camera_meta, sort_keys=True)
+
     # camera timestamps (one per main-loop tick)
     f.create_dataset("timestamps", shape=(0,), maxshape=(None,), dtype=np.float64)
 
     # BLOSC LZ4 compression — benchmarked at ~100fps overhead vs 30fps capture rate.
     _blosc = hdf5plugin.Blosc(cname="lz4", clevel=5, shuffle=hdf5plugin.Blosc.SHUFFLE)
 
-    for i in range(3):
-        g = f.create_group(f"realsense/cam{i}")
-        g.create_dataset("color", shape=(0, 480, 640, 3), maxshape=(None, 480, 640, 3),
-                         dtype=np.uint8,  chunks=(1, 480, 640, 3), **_blosc)
-        g.create_dataset("depth", shape=(0, 480, 640),    maxshape=(None, 480, 640),
-                         dtype=np.uint16, chunks=(1, 480, 640),    **_blosc)
+    if include_legacy:
+        for i in range(3):
+            g = f.create_group(f"realsense/cam{i}")
+            g.create_dataset("color", shape=(0, 480, 640, 3), maxshape=(None, 480, 640, 3),
+                             dtype=np.uint8,  chunks=(1, 480, 640, 3), **_blosc)
+            g.create_dataset("depth", shape=(0, 480, 640),    maxshape=(None, 480, 640),
+                             dtype=np.uint16, chunks=(1, 480, 640),    **_blosc)
 
     # GelSight — frames + per-sensor CAPTURE timestamps. The GelSight Mini
     # streams ~18.75 fps (hardware ceiling, < the 30 fps camera tick), so its
     # frames don't line up 1:1 with the main-loop `timestamps`. Each frame
     # carries the time it was actually captured (post-grab), letting downstream
     # code align tactile to cameras by nearest timestamp instead of by index.
-    for name in ["left", "right"]:
-        g = f.create_group(f"gelsight/{name}")
-        g.create_dataset("frames", shape=(0, 480, 640, 3), maxshape=(None, 480, 640, 3),
-                         dtype=np.uint8, chunks=(1, 480, 640, 3), **_blosc)
-        g.create_dataset("timestamps", shape=(0,), maxshape=(None,), dtype=np.float64)
+    if include_legacy:
+        for name in ["left", "right"]:
+            g = f.create_group(f"gelsight/{name}")
+            g.create_dataset("frames", shape=(0, 480, 640, 3), maxshape=(None, 480, 640, 3),
+                             dtype=np.uint8, chunks=(1, 480, 640, 3), **_blosc)
+            g.create_dataset("timestamps", shape=(0,), maxshape=(None,), dtype=np.float64)
 
     # OptiTrack — per-tracker timestamps + poses
-    for name in ["motherboard", "sensor_left", "sensor_right"]:
-        g = f.create_group(f"optitrack/{name}")
-        g.create_dataset("timestamps", shape=(0,),    maxshape=(None,),    dtype=np.float64)
-        g.create_dataset("pose",       shape=(0, 7),  maxshape=(None, 7),  dtype=np.float64)
+    if include_legacy:
+        for name in ["motherboard", "sensor_left", "sensor_right"]:
+            g = f.create_group(f"optitrack/{name}")
+            g.create_dataset("timestamps", shape=(0,),    maxshape=(None,),    dtype=np.float64)
+            g.create_dataset("pose",       shape=(0, 7),  maxshape=(None, 7),  dtype=np.float64)
+
+    if arducam_config:
+        for camera in arducam_config:
+            g = f.create_group(f"arducam/{camera.slot}")
+            g.create_dataset(
+                "frames",
+                shape=(0, camera.height, camera.width, 3),
+                maxshape=(None, camera.height, camera.width, 3),
+                dtype=np.uint8,
+                chunks=(1, camera.height, camera.width, 3),
+                **_blosc,
+            )
+            g.create_dataset("timestamps", shape=(0,), maxshape=(None,), dtype=np.float64)
+            g.attrs["usb_path"] = camera.id_path
+            g.attrs["device_at_recording"] = getattr(camera, "device", "")
+            g.attrs["reported_serial"] = getattr(camera, "reported_serial", "")
+            g.attrs["position"] = camera.position
+            g.attrs["width"] = camera.width
+            g.attrs["height"] = camera.height
+            g.attrs["fps"] = camera.fps
+            g.attrs["pixel_format"] = camera.pixel_format
 
     return f, path
 
@@ -115,23 +156,37 @@ def append_camera_frames_batch(f, batch):
     f["timestamps"].resize(n + nb, axis=0)
     f["timestamps"][n:] = ts
 
-    for i in range(3):
-        color_batch = np.stack([b[0][i] for b in batch])   # (nb, 480, 640, 3)
-        depth_batch = np.stack([b[1][i] for b in batch])   # (nb, 480, 640)
-        ds_c = f[f"realsense/cam{i}/color"]
-        ds_d = f[f"realsense/cam{i}/depth"]
-        ds_c.resize(n + nb, axis=0);  ds_c[n:] = color_batch
-        ds_d.resize(n + nb, axis=0);  ds_d[n:] = depth_batch
+    if "realsense" in f:
+        for i in range(3):
+            color_batch = np.stack([b[0][i] for b in batch])   # (nb, 480, 640, 3)
+            depth_batch = np.stack([b[1][i] for b in batch])   # (nb, 480, 640)
+            ds_c = f[f"realsense/cam{i}/color"]
+            ds_d = f[f"realsense/cam{i}/depth"]
+            ds_c.resize(n + nb, axis=0);  ds_c[n:] = color_batch
+            ds_d.resize(n + nb, axis=0);  ds_d[n:] = depth_batch
 
-    for j, name in enumerate(["left", "right"]):
-        gs_batch = np.stack([b[2][j] for b in batch])      # (nb, 480, 640, 3)
-        ds = f[f"gelsight/{name}/frames"]
-        ds.resize(n + nb, axis=0);  ds[n:] = gs_batch
-        # per-sensor capture timestamps (fall back to tick time if absent)
-        gts = np.array([(b[4][j] if len(b) > 4 and b[4] and b[4][j] is not None
-                         else b[3]) for b in batch], dtype=np.float64)
-        dst = f[f"gelsight/{name}/timestamps"]
-        dst.resize(n + nb, axis=0);  dst[n:] = gts
+    if "gelsight" in f:
+        for j, name in enumerate(["left", "right"]):
+            gs_batch = np.stack([b[2][j] for b in batch])      # (nb, 480, 640, 3)
+            ds = f[f"gelsight/{name}/frames"]
+            ds.resize(n + nb, axis=0);  ds[n:] = gs_batch
+            # per-sensor capture timestamps (fall back to tick time if absent)
+            gts = np.array([(b[4][j] if len(b) > 4 and b[4] and b[4][j] is not None
+                             else b[3]) for b in batch], dtype=np.float64)
+            dst = f[f"gelsight/{name}/timestamps"]
+            dst.resize(n + nb, axis=0);  dst[n:] = gts
+
+    if "arducam" in f:
+        for j, name in enumerate(["cam0", "cam1"]):
+            frames = np.stack([b[5][j] for b in batch])
+            ds = f[f"arducam/{name}/frames"]
+            ds.resize(n + nb, axis=0);  ds[n:] = frames
+            timestamps = np.array([
+                (b[6][j] if len(b) > 6 and b[6] and b[6][j] is not None else b[3])
+                for b in batch
+            ], dtype=np.float64)
+            dst = f[f"arducam/{name}/timestamps"]
+            dst.resize(n + nb, axis=0);  dst[n:] = timestamps
 
 
 def flush_optitrack_to_hdf5(f, optitrack_data):
@@ -245,14 +300,16 @@ class HDF5Writer:
                   f"a crash now would leave the file unopenable")
 
     def enqueue(self, f, color_frames, depth_frames, gs_frames, timestamp,
-                gs_timestamps=None):
+                gs_timestamps=None, arducam_frames=None,
+                arducam_timestamps=None):
         """Non-blocking. Drops frame (with warning) if queue is full.
 
         gs_timestamps: optional list of 2 per-sensor capture times.
         """
         try:
             self._queue.put_nowait((f, color_frames, depth_frames, gs_frames,
-                                    timestamp, gs_timestamps))
+                                    timestamp, gs_timestamps, arducam_frames,
+                                    arducam_timestamps))
         except queue.Full:
             self._dropped += 1
             if self._dropped % 30 == 1:
