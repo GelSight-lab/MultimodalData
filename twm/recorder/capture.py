@@ -72,6 +72,7 @@ class CaptureLoop:
         self._reset_ref = False
         self._recording = False
         self._h5_file = None
+        self._episode_id = 0
         self._frame_count = 0
         self._start_t = 0.0
         self._warmup_remaining = 0
@@ -107,6 +108,7 @@ class CaptureLoop:
     def start_recording(self, h5_file) -> None:
         self.writer.reset_episode_stats()
         with self._lock:
+            self._episode_id += 1
             self._h5_file = h5_file
             self._recording = True
             self._frame_count = 0
@@ -119,7 +121,11 @@ class CaptureLoop:
 
     def stop_recording(self) -> Optional[RecordingResult]:
         """Stop feeding the writer and hand the open file back. Returns None
-        if no episode is open. Does not wait for the writer."""
+        if no episode is open. Does not wait for the writer. Safe to call at
+        any moment (an operator keypress), not only after seeing a published
+        stop request — the capture thread applies stop requests to shared
+        state inside the same lock acquisition that reads/writes them, so
+        there is no window where this can see a torn or stale episode."""
         with self._lock:
             if self._h5_file is None:
                 return None
@@ -136,54 +142,85 @@ class CaptureLoop:
             t_start = self._clock()
             try:
                 tick = self.rig.grab()
-            except Exception as exc:
+                self._grab_s += self._clock() - t_start
+
+                # Reading `recording`/`h5`, recording the tick (gap check,
+                # writer.submit, frame_count, writer.check), and applying any
+                # resulting StopRequest all happen under one lock acquisition.
+                # That closes the window a separate later lock reacquisition
+                # used to leave open: a stop_recording()+start_recording()
+                # landing between "compute the StopRequest" and "apply it"
+                # could return episode N with stop_request=None and then
+                # kill episode N+1 at frame 0 with episode N's request. The
+                # episode id is still checked and kept as a second, explicit
+                # guard against that class of bug.
+                with self._lock:
+                    episode_id = self._episode_id
+                    recording, h5 = self._recording, self._h5_file
+                    if recording and self._warmup_remaining > 0:
+                        self._warmup_remaining -= 1
+                        recording = False
+                    stop_request = self._record(h5, tick) if recording else None
+                    if stop_request is not None:
+                        if episode_id == self._episode_id:
+                            self._recording = False
+                            self._stop_request = stop_request
+                        else:
+                            log.warning(
+                                "discarding stale %s stop request from episode %d "
+                                "(now on episode %d): %s", stop_request.kind,
+                                episode_id, self._episode_id, stop_request.detail)
+                            stop_request = None
+
+                if stop_request is not None:
+                    log.error("ending episode: %s — %s", stop_request.kind, stop_request.detail)
+
+                self._tick_times.append(tick.timestamp)
+                fps_meas = ((len(self._tick_times) - 1)
+                            / (self._tick_times[-1] - self._tick_times[0])
+                            if len(self._tick_times) >= 2
+                            and self._tick_times[-1] > self._tick_times[0] else 0.0)
+                ot_poses = self.rig.latest_poses()
+                stats = self.writer.stats()
+
+                with self._lock:
+                    if self._gs_ref is None or self._reset_ref:
+                        self._gs_ref = tuple(g.copy() for g in tick.gelsight)
+                        self._reset_ref = False
+                    self._latest = CaptureSnapshot(
+                        tick=tick, gs_ref=self._gs_ref, ot_poses=ot_poses,
+                        recording=self._recording, frame_count=self._frame_count,
+                        elapsed=(tick.timestamp - self._start_t) if self._recording else 0.0,
+                        fps_meas=fps_meas, writer=stats, stop_request=self._stop_request)
+
+                self._ticks += 1
+                if self._ticks % self.report_every == 0:
+                    log.info("[%s] fps=%.1f grab=%.1fms queue=%.0f%% write=%.0f MB/s",
+                             "REC" if recording else "IDLE", fps_meas,
+                             self._grab_s / self.report_every * 1e3,
+                             stats.fraction * 100, stats.mean_mb_s)
+                    self._grab_s = 0.0
+
+                remaining = self.tick_dt - (self._clock() - t_start)
+                if remaining > 0:
+                    self._sleep(remaining)
+            except BaseException as exc:
+                # Nothing above this point may kill the thread silently: a
+                # dead thread with `fatal_error` never set means the GUI
+                # keeps showing `recording=True` with a frame_count that will
+                # never advance again, with no signal anyone could act on.
+                # This covers rig.grab() as well as rig.latest_poses(),
+                # writer.stats(), and anything in between.
                 self._publish_fatal(f"{type(exc).__name__}: {exc}")
                 return
-            self._grab_s += self._clock() - t_start
-
-            with self._lock:
-                recording, h5 = self._recording, self._h5_file
-                if recording and self._warmup_remaining > 0:
-                    self._warmup_remaining -= 1
-                    recording = False
-            stop_request = self._record(h5, tick) if recording else None
-            if stop_request is not None:
-                log.error("ending episode: %s — %s", stop_request.kind, stop_request.detail)
-
-            self._tick_times.append(tick.timestamp)
-            fps_meas = ((len(self._tick_times) - 1)
-                        / (self._tick_times[-1] - self._tick_times[0])
-                        if len(self._tick_times) >= 2
-                        and self._tick_times[-1] > self._tick_times[0] else 0.0)
-            ot_poses = self.rig.latest_poses()
-            stats = self.writer.stats()
-
-            with self._lock:
-                if stop_request is not None:
-                    self._recording = False
-                    self._stop_request = stop_request
-                if self._gs_ref is None or self._reset_ref:
-                    self._gs_ref = tuple(g.copy() for g in tick.gelsight)
-                    self._reset_ref = False
-                self._latest = CaptureSnapshot(
-                    tick=tick, gs_ref=self._gs_ref, ot_poses=ot_poses,
-                    recording=self._recording, frame_count=self._frame_count,
-                    elapsed=(tick.timestamp - self._start_t) if self._recording else 0.0,
-                    fps_meas=fps_meas, writer=stats, stop_request=self._stop_request)
-
-            self._ticks += 1
-            if self._ticks % self.report_every == 0:
-                log.info("[%s] fps=%.1f grab=%.1fms queue=%.0f%% write=%.0f MB/s",
-                         "REC" if recording else "IDLE", fps_meas,
-                         self._grab_s / self.report_every * 1e3,
-                         stats.fraction * 100, stats.mean_mb_s)
-                self._grab_s = 0.0
-
-            remaining = self.tick_dt - (self._clock() - t_start)
-            if remaining > 0:
-                self._sleep(remaining)
 
     def _record(self, h5, tick: Tick) -> Optional[StopRequest]:
+        """Must be called with self._lock held: submit(), the frame counter,
+        and the gap bookkeeping all have to be atomic with the recording
+        state a concurrent stop_recording() reads, or a stop_recording() that
+        lands mid-tick can return a frame_count that does not match what
+        reached the writer for that file, or race a fresh episode's
+        `_last_recorded_ts = None` into a spurious capture_stall."""
         if self._last_recorded_ts is not None:
             gap = tick.timestamp - self._last_recorded_ts
             self._max_gap = max(self._max_gap, gap)
@@ -198,8 +235,7 @@ class CaptureLoop:
         except WriterFault as exc:
             return StopRequest("writer_fault", str(exc))
         self._last_recorded_ts = tick.timestamp
-        with self._lock:
-            self._frame_count += 1
+        self._frame_count += 1
         health = self.writer.check()
         return StopRequest(*health) if health else None
 
