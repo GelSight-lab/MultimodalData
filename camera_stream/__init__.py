@@ -1,8 +1,8 @@
-for _name in ("usb_video_stream", "raspi_video_stream",
+for _name in ("usb_video_stream", "arducam_video_stream", "raspi_video_stream",
               "digit_video_stream", "realsense_stream"):
     try:
         _mod = __import__(f"{__name__}.{_name}", fromlist=["*"])
-        for _cls in ("USBVideoStream", "RaspiVideoStream",
+        for _cls in ("USBVideoStream", "ArducamVideoStream", "RaspiVideoStream",
                      "DigitVideoStream", "RealsenseStream"):
             if hasattr(_mod, _cls):
                 globals()[_cls] = getattr(_mod, _cls)
