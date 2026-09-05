@@ -771,6 +771,10 @@ def main():
         arducam_streams=(arducam_streams if arducam_streams else None),
     )
     capture.start()
+    arducam_labels = [
+        f"{camera.slot} {camera.id_path} {camera.position}"
+        for camera in arducam_config
+    ]
 
     # GUI runs at a softer cadence than capture; PREVIEW_FPS controls how
     # often we rebuild the preview panel + push it to X11. Set conservatively
@@ -820,6 +824,8 @@ def main():
                     latest["ot_poses"], latest["recording"], latest["frame_count"],
                     latest["elapsed"], writer.queue_size, latest["fps_meas"],
                     task_name=task_name,
+                    arducam_frames=latest["arducam_frames"],
+                    arducam_labels=(arducam_labels if arducam_labels else None),
                 )
                 if show_projection and project_cams:
                     draw_projection_overlay(

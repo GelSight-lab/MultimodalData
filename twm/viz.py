@@ -343,12 +343,15 @@ def make_optitrack_panel(optitrack_poses, w: int = RS_THUMB_W, h: int = RS_THUMB
 def build_preview_panel(color_frames, gs_frames, gs_ref, optitrack_poses,
                          recording: bool, frame_count: int, elapsed: float,
                          buf: int = 0, fps: float = 0.0, task_name: str = "",
-                         status_override: Optional[str] = None) -> np.ndarray:
-    """The canonical 1280×480 BGR panel used everywhere.
+                         status_override: Optional[str] = None,
+                         arducam_frames=None,
+                         arducam_labels=None) -> np.ndarray:
+    """The canonical BGR panel used everywhere.
 
     Layout:
       Row 1 (y=0..240):    [cam slot 0 | slot 1 | slot 2 | OptiTrack text]
       Row 2 (y=240..480):  [gs_L_raw | gs_L_diff | gs_R_raw | gs_R_diff | blank]
+      Optional row 3:      [Arducam cam0 | Arducam cam1 | blank | blank]
 
     `color_frames` is indexed by H5 cam_idx (0=right, 1=left, 2=middle as per
     `REALSENSE_SERIALS`). This function reorders to the spatial **left,
@@ -383,6 +386,23 @@ def build_preview_panel(color_frames, gs_frames, gs_ref, optitrack_poses,
     row2 = np.hstack(gs_panels + [blank])
 
     panel = np.vstack([row1, row2])
+
+    if arducam_frames is not None:
+        if len(arducam_frames) != 2:
+            raise ValueError("arducam_frames must contain exactly two frames")
+        sensor_thumbs = [_rs_thumb(frame) for frame in arducam_frames]
+        sensor_row = np.hstack(sensor_thumbs + [blank.copy(), blank.copy()])
+        panel = np.vstack([panel, sensor_row])
+
+        labels = arducam_labels or ["cam0", "cam1"]
+        if len(labels) != 2:
+            raise ValueError("arducam_labels must contain exactly two labels")
+        for slot, label in enumerate(labels):
+            cv2.putText(
+                panel, str(label), (slot * RS_THUMB_W + 8, 2 * RS_THUMB_H + 16),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.42, (200, 200, 200), 1,
+                cv2.LINE_AA,
+            )
 
     # Bottom status bar
     if status_override is not None:

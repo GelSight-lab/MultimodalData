@@ -2,6 +2,7 @@ import unittest
 import numpy as np
 import sys
 import os
+import hdf5plugin  # register against real h5py before the temporary import mocks
 from unittest.mock import MagicMock
 
 # Temporarily mock h5py and cv2 just for the import of twm.visualize,
@@ -18,6 +19,11 @@ for k, v in _saved.items():
         sys.modules[k] = v
     elif k in sys.modules:
         del sys.modules[k]
+
+# twm.visualize imported twm.viz while cv2 was mocked. Reload the canonical
+# panel module with the real cv2 before exercising its pixel output below.
+sys.modules.pop('twm.viz', None)
+from twm.viz import build_preview_panel
 
 
 class TestOptitrackAt(unittest.TestCase):
@@ -54,6 +60,45 @@ class TestOptitrackAt(unittest.TestCase):
         lookup = {"tracker": None}
         result = optitrack_at(lookup, 1.0)
         self.assertIsNone(result["tracker"])
+
+
+class TestSensorCameraPreview(unittest.TestCase):
+
+    def _args(self):
+        colors = [np.full((480, 640, 3), value, np.uint8)
+                  for value in (10, 20, 30)]
+        gels = [np.full((480, 640, 3), value, np.uint8)
+                for value in (40, 50)]
+        refs = [frame.copy() for frame in gels]
+        return colors, gels, refs, {}
+
+    def test_legacy_panel_shape_is_unchanged(self):
+        panel = build_preview_panel(
+            *self._args(), recording=False, frame_count=0, elapsed=0,
+        )
+
+        self.assertEqual(panel.shape, (480, 1280, 3))
+
+    def test_two_sensor_cameras_add_third_row_in_slot_order(self):
+        cam0 = np.full((480, 640, 3), (11, 22, 33), np.uint8)
+        cam1 = np.full((480, 640, 3), (44, 55, 66), np.uint8)
+        panel = build_preview_panel(
+            *self._args(), recording=False, frame_count=0, elapsed=0,
+            arducam_frames=[cam0, cam1],
+            arducam_labels=["cam0 usb-A unknown", "cam1 usb-B unknown"],
+        )
+
+        self.assertEqual(panel.shape, (720, 1280, 3))
+        np.testing.assert_array_equal(panel[600, 100], [11, 22, 33])
+        np.testing.assert_array_equal(panel[600, 420], [44, 55, 66])
+        np.testing.assert_array_equal(panel[600, 900], [0, 0, 0])
+
+    def test_sensor_camera_preview_requires_exactly_two_frames(self):
+        with self.assertRaisesRegex(ValueError, "exactly two"):
+            build_preview_panel(
+                *self._args(), recording=False, frame_count=0, elapsed=0,
+                arducam_frames=[np.zeros((480, 640, 3), np.uint8)],
+            )
 
 
 if __name__ == '__main__':
