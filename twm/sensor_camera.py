@@ -25,12 +25,13 @@ class ArducamConfigError(ValueError):
 @dataclass(frozen=True)
 class CameraSlot:
     slot: str
-    id_path: str
+    id_path: str = ""
     position: str = "unknown"
     width: int = 640
     height: int = 480
     fps: int = 30
     pixel_format: str = "MJPG"
+    serial: str = ""          # preferred identity; id_path is the fallback
 
 
 @dataclass(frozen=True)
@@ -46,14 +47,19 @@ class ResolvedCamera:
     config: CameraSlot
     device: str
     reported_serial: str
+    device_id_path: str = ""
 
     @property
     def slot(self) -> str:
         return self.config.slot
 
     @property
+    def serial(self) -> str:
+        return self.config.serial or self.reported_serial
+
+    @property
     def id_path(self) -> str:
-        return self.config.id_path
+        return self.device_id_path or self.config.id_path
 
     @property
     def position(self) -> str:
@@ -97,10 +103,11 @@ def validate_config(raw: Mapping) -> tuple[CameraSlot, CameraSlot]:
         if not isinstance(entry, Mapping):
             raise ArducamConfigError("each camera must be an object")
         slot = str(entry.get("slot", ""))
-        id_path = str(entry.get("id_path", ""))
+        serial = str(entry.get("serial", "")).strip()
+        id_path = str(entry.get("id_path", "")).strip()
         position = str(entry.get("position", "unknown")).lower()
-        if not id_path:
-            raise ArducamConfigError("each camera needs a nonempty id_path")
+        if not serial and not id_path:
+            raise ArducamConfigError("each camera needs a nonempty serial or id_path")
         if position not in VALID_POSITIONS:
             raise ArducamConfigError(
                 f"position must be one of {sorted(VALID_POSITIONS)}, got {position!r}"
@@ -116,12 +123,17 @@ def validate_config(raw: Mapping) -> tuple[CameraSlot, CameraSlot]:
             height=_positive_int(entry, "height", 480),
             fps=_positive_int(entry, "fps", 30),
             pixel_format=pixel_format,
+            serial=serial,
         ))
 
     if {slot.slot for slot in slots} != {"cam0", "cam1"}:
         raise ArducamConfigError("camera slots must be exactly cam0 and cam1")
     slots.sort(key=lambda item: item.slot)
-    if len({slot.id_path for slot in slots}) != 2:
+    serials = [s.serial for s in slots if s.serial]
+    if len(serials) != len(set(serials)):
+        raise ArducamConfigError("camera serial values must be unique")
+    paths = [s.id_path for s in slots if s.id_path]
+    if len(paths) != len(set(paths)):
         raise ArducamConfigError("camera id_path values must be unique")
     positions = [slot.position for slot in slots]
     if positions != ["unknown", "unknown"] and set(positions) != {"left", "right"}:
@@ -173,19 +185,22 @@ def resolve_slots(
     devices = tuple(enumerate_capture_devices() if devices is None else devices)
     resolved = []
     for slot in slots:
-        matches = [d for d in devices if d.is_capture and d.id_path == slot.id_path]
+        if slot.serial:
+            key, wanted = "serial", slot.serial
+            matches = [d for d in devices if d.is_capture and d.reported_serial == wanted]
+        else:
+            key, wanted = "path", slot.id_path
+            matches = [d for d in devices if d.is_capture and d.id_path == wanted]
         if not matches:
             raise ArducamConfigError(
-                f"{slot.slot} path {slot.id_path!r} was not found; inventory: "
-                f"{_inventory(devices)}"
-            )
+                f"{slot.slot} {key} {wanted!r} was not found; inventory: {_inventory(devices)}")
         if len(matches) > 1:
             raise ArducamConfigError(
-                f"{slot.slot} path {slot.id_path!r} matched multiple capture nodes; "
-                f"inventory: {_inventory(devices)}"
-            )
+                f"{slot.slot} {key} {wanted!r} matched multiple capture nodes; "
+                f"inventory: {_inventory(devices)}")
         device = matches[0]
-        resolved.append(ResolvedCamera(slot, device.device, device.reported_serial))
+        resolved.append(ResolvedCamera(slot, device.device, device.reported_serial,
+                                       device.id_path))
     if len({camera.device for camera in resolved}) != len(resolved):
         raise ArducamConfigError("configured slots resolved to the same capture device")
     return tuple(resolved)  # type: ignore[return-value]
@@ -432,7 +447,7 @@ def identify(config_path: str | Path = DEFAULT_CONFIG_PATH) -> None:
                     cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2,
                 )
                 cv2.putText(
-                    tile, camera.id_path, (12, 55),
+                    tile, f"{camera.serial}  {camera.id_path}", (12, 55),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.45, (220, 220, 220), 1,
                 )
                 tiles.append(tile)

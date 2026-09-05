@@ -72,3 +72,21 @@ def test_write_episode_attrs_round_trips(episode):
         assert m["invalid_reason"] == "overload"
         assert int(m["frame_count"]) == 3
         assert abs(float(m["max_tick_gap_s"]) - 0.7) < 1e-9
+
+
+def test_arducam_groups_record_configured_serial(tmp_path):
+    from twm.sensor_camera import CameraSlot, ResolvedCamera
+    cams = (ResolvedCamera(CameraSlot("cam0", serial="TWML0001", position="left"),
+                           "/dev/video10", "TWML0001", "usb-0:12.2"),
+            ResolvedCamera(CameraSlot("cam1", serial="TWMR0001", position="right"),
+                           "/dev/video6", "TWMR0001", "usb-0:12.1"))
+    f, path = create_episode_file(str(tmp_path), 0, [], [], 30, arducam_config=cams,
+                                  include_legacy=False)
+    f.close()
+    with h5py.File(path, "r") as g:
+        assert g["arducam/cam0"].attrs["serial"] == "TWML0001"
+        assert g["arducam/cam0"].attrs["usb_path"] == "usb-0:12.2"
+        assert g["arducam/cam1"].attrs["position"] == "right"
+        import json
+        meta = json.loads(g["metadata"].attrs["arducam_config"])
+        assert [m["serial"] for m in meta] == ["TWML0001", "TWMR0001"]

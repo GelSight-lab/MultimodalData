@@ -12,10 +12,12 @@ Tools for collecting and reviewing multimodal data for the Tactile World Model (
 | OptiTrack | 3 trackers | `motherboard`, `sensor_left`, `sensor_right` via VRPN/ROS |
 
 RealSense and GelSight serials are set at the top of `data_collection.py`.
-The two Arducams both report the factory serial `SN001`, so they are selected
-by stable USB topology in `config/arducam.json`, never by `/dev/videoN` or
-serial number. Their `cam0`/`cam1` identities are valid before physical
-left/right mapping is known.
+The two Arducams are selected by USB serial in `config/arducam.json`
+(`TWML0001` = left, `TWMR0001` = right), so they can be plugged into any port.
+A camera without a unique serial can still be selected by its USB topology
+path (`id_path`). Their HDF5 groups stay `arducam/cam0` (left) and
+`arducam/cam1` (right); each group's `position` and `serial` attributes say
+which is which.
 
 ---
 
@@ -44,9 +46,9 @@ isn't running, OptiTrack pose datasets in the saved HDF5 will be empty
 
 ### Sensor-camera setup and verification
 
-After moving USB connections, inspect the current topology paths and update
-`config/arducam.json` if necessary. To view both feeds and optionally assign
-their physical positions:
+After moving USB connections, run the identification preview to confirm the
+serial → side mapping. To view both feeds and optionally assign their
+physical positions:
 
 ```bash
 python -m twm.sensor_camera identify
@@ -307,7 +309,7 @@ episode_NNN.h5
 - Camera image data is BLOSC-LZ4-compressed and chunked per frame for fast
   random access. Import `hdf5plugin` before reading with h5py so the filter is
   registered.
-- Each `arducam/cam*` group stores `usb_path`, `device_at_recording`,
+- Each `arducam/cam*` group stores `usb_path`, `serial`, `device_at_recording`,
   `reported_serial`, `position`, `width`, `height`, `fps`, and `pixel_format`
   attributes. `position=unknown` is valid until physical mapping is completed.
 - Depth values are in **millimetres** (uint16, range 0–65535).

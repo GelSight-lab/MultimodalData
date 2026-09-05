@@ -212,4 +212,5 @@ class SensorRig:
         return {name: self.optitrack.get_latest_pose(name) for name in self.trackers}
 
     def arducam_labels(self) -> List[str]:
-        return [f"{c.slot} {c.id_path} {c.position}" for c in self.arducam_config]
+        return [f"{c.slot} {getattr(c, 'serial', '') or c.id_path} {c.position}"
+                for c in self.arducam_config]

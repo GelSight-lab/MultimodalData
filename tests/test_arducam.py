@@ -262,3 +262,58 @@ def test_verifier_rejects_under_rate_temporally_frozen_video(tmp_path):
     assert report["ok"] is False
     assert report["checks"]["cam0_cadence"] is False
     assert report["checks"]["cam0_temporal_change"] is False
+
+
+def _raw_serial_config():
+    return {
+        "cameras": [
+            {"slot": "cam0", "serial": "TWML0001", "position": "left"},
+            {"slot": "cam1", "serial": "TWMR0001", "position": "right"},
+        ]
+    }
+
+
+def test_validate_config_accepts_serial_keyed_cameras_without_paths():
+    cam0, cam1 = validate_config(_raw_serial_config())
+    assert (cam0.serial, cam0.position, cam0.id_path) == ("TWML0001", "left", "")
+    assert (cam1.serial, cam1.position) == ("TWMR0001", "right")
+
+
+@pytest.mark.parametrize("cameras, message", [
+    ([{"slot": "cam0", "position": "left"}, {"slot": "cam1", "serial": "B", "position": "right"}],
+     "serial or id_path"),
+    ([{"slot": "cam0", "serial": "A"}, {"slot": "cam1", "serial": "A"}], "serial"),
+])
+def test_validate_config_rejects_missing_or_duplicate_serials(cameras, message):
+    with pytest.raises(ArducamConfigError, match=message):
+        validate_config({"cameras": cameras})
+
+
+def test_resolve_slots_by_serial_ignores_port_and_metadata_nodes():
+    slots = validate_config(_raw_serial_config())
+    devices = [
+        VideoDevice("/dev/video6", "usb-0:12.1", "TWMR0001", True),
+        VideoDevice("/dev/video7", "usb-0:12.1", "TWMR0001", False),
+        VideoDevice("/dev/video10", "usb-0:12.2", "TWML0001", True),
+        VideoDevice("/dev/video11", "usb-0:12.2", "TWML0001", False),
+        VideoDevice("/dev/video12", "usb-0:12.3", "2DUPB53G", True),
+    ]
+    cam0, cam1 = resolve_slots(slots, devices)
+    assert (cam0.device, cam0.serial, cam0.position) == ("/dev/video10", "TWML0001", "left")
+    assert (cam1.device, cam1.serial, cam1.position) == ("/dev/video6", "TWMR0001", "right")
+    assert cam0.id_path == "usb-0:12.2"          # resolved from the device, not the config
+
+
+def test_resolve_slots_reports_missing_serial_with_inventory():
+    slots = validate_config(_raw_serial_config())
+    devices = [VideoDevice("/dev/video6", "usb-0:12.1", "TWMR0001", True)]
+    with pytest.raises(ArducamConfigError, match="TWML0001.*inventory"):
+        resolve_slots(slots, devices)
+
+
+def test_shipped_config_maps_left_and_right_serials():
+    from twm.sensor_camera import DEFAULT_CONFIG_PATH, load_config
+    cam0, cam1 = load_config(DEFAULT_CONFIG_PATH)
+    assert (cam0.serial, cam0.position) == ("TWML0001", "left")
+    assert (cam1.serial, cam1.position) == ("TWMR0001", "right")
+    assert (cam0.width, cam0.height, cam0.fps, cam0.pixel_format) == (640, 480, 30, "MJPG")

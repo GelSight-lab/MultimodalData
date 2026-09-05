@@ -66,6 +66,7 @@ def create_episode_file(date_dir, episode_num, realsense_serials,
     if arducam_config:
         meta.attrs["arducam_config"] = json.dumps([{
             "slot": c.slot, "id_path": c.id_path, "position": c.position,
+            "serial": getattr(c, "serial", ""),
             "device_at_recording": getattr(c, "device", ""),
             "reported_serial": getattr(c, "reported_serial", ""),
             "width": c.width, "height": c.height, "fps": c.fps,
@@ -94,6 +95,7 @@ def create_episode_file(date_dir, episode_num, realsense_serials,
             _frame_dataset(g, "frames", (c.height, c.width, 3), np.uint8)
             _scalar_dataset(g, "timestamps")
             g.attrs["usb_path"] = c.id_path
+            g.attrs["serial"] = getattr(c, "serial", "")
             g.attrs["device_at_recording"] = getattr(c, "device", "")
             g.attrs["reported_serial"] = getattr(c, "reported_serial", "")
             g.attrs["position"] = c.position
