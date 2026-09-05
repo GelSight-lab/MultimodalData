@@ -448,12 +448,15 @@ class CaptureLoop:
     # few frames right after we begin writing, so frame 0 is often unreliable.
     WARMUP_DROP_FRAMES = 10
 
-    def __init__(self, rs_streams, gs_left, gs_right, optitrack, writer, fps=30):
+    def __init__(self, rs_streams, gs_left, gs_right, optitrack, writer, fps=30,
+                 arducam_streams=None):
         self.rs_streams = rs_streams
         self.gs_left    = gs_left
         self.gs_right   = gs_right
         self.optitrack  = optitrack
         self.writer     = writer
+        self.arducam_streams = (list(arducam_streams)
+                                 if arducam_streams is not None else None)
         self.fps        = fps
         self.tick_dt    = 1.0 / fps
 
@@ -496,6 +499,14 @@ class CaptureLoop:
             gs_r, ts_r = _gs_frame_ts(self.gs_right)
             gs_frames     = [gs_l, gs_r]
             gs_timestamps = [ts_l, ts_r]
+            if self.arducam_streams is not None:
+                arducam_samples = [_gs_frame_ts(stream)
+                                    for stream in self.arducam_streams]
+                arducam_frames = [sample[0] for sample in arducam_samples]
+                arducam_timestamps = [sample[1] for sample in arducam_samples]
+            else:
+                arducam_frames = None
+                arducam_timestamps = None
             t            = time.time()
             self._timing_accum["grab"] += t - t0
 
@@ -510,8 +521,12 @@ class CaptureLoop:
                     self._warmup_remaining -= 1
                     rec = False
             if rec and h5_file is not None:
-                self.writer.enqueue(h5_file, color_frames, depth_frames, gs_frames, t,
-                                    gs_timestamps=gs_timestamps)
+                self.writer.enqueue(
+                    h5_file, color_frames, depth_frames, gs_frames, t,
+                    gs_timestamps=gs_timestamps,
+                    arducam_frames=arducam_frames,
+                    arducam_timestamps=arducam_timestamps,
+                )
                 with self._lock:
                     self._frame_count += 1
             self._timing_accum["enqueue"] += time.time() - t0
@@ -531,6 +546,8 @@ class CaptureLoop:
                     "color_frames": color_frames,
                     "gs_frames":    gs_frames,
                     "gs_ref":       self._gs_ref,
+                    "arducam_frames": arducam_frames,
+                    "arducam_timestamps": arducam_timestamps,
                     "ot_poses":     ot_poses,
                     "timestamp":    t,
                     "frame_count":  self._frame_count,
@@ -596,7 +613,9 @@ def main():
     import cv2
     from camera_stream.realsense_stream import RealsenseStream
     from camera_stream.usb_video_stream import USBVideoStream
+    from camera_stream.arducam_video_stream import ArducamVideoStream
     from optitrack.optitrack_stream import OptitrackStream
+    from twm.sensor_camera import load_config, resolve_slots
 
     parser = argparse.ArgumentParser(description="TWM multimodal data collection")
     parser.add_argument("--task", required=True, help="Task name (used as top-level folder, e.g. 'pouring', 'pick_place')")
@@ -609,6 +628,12 @@ def main():
                         help="Disable the live GelSight→camera projection overlay "
                              "(dot + axes drawn on the RealSense thumbnails). Toggle "
                              "at runtime with the 'p' key.")
+    parser.add_argument("--no_arducam", action="store_true",
+                        help="Explicitly run the legacy recorder without the two "
+                             "sensor-mounted Arducams.")
+    parser.add_argument("--arducam_config", default=None,
+                        help="Arducam JSON configuration (default: "
+                             "twm/config/arducam.json).")
     args = parser.parse_args()
     task_name = args.task
 
@@ -622,6 +647,7 @@ def main():
     }[args.active_sensors]
     OT_PREFLIGHT_MAX_AGE_S = 2.0
     OT_WATCHDOG_TIMEOUT_S = 10.0
+    STARTUP_TIMEOUT = 15.0  # cameras can be slow on first initialization
 
     date_str = time.strftime("%Y-%m-%d")
     date_dir = os.path.join(DATA_DIR, task_name, date_str)
@@ -633,6 +659,18 @@ def main():
     for s in rs_streams:
         s.start()
         time.sleep(0.5)  # stagger starts to avoid USB bandwidth contention
+
+    arducam_config = ()
+    arducam_streams = []
+    if not args.no_arducam:
+        print("Initializing sensor-mounted Arducam cameras...")
+        slots = (load_config(args.arducam_config)
+                 if args.arducam_config else load_config())
+        arducam_config = resolve_slots(slots)
+        for camera in arducam_config:
+            stream = ArducamVideoStream(camera.config, camera.device)
+            stream.start(timeout=STARTUP_TIMEOUT)
+            arducam_streams.append(stream)
 
     print("Initializing GelSight sensors...")
 
@@ -660,10 +698,11 @@ def main():
     optitrack = OptitrackStream()
     optitrack.start()
 
-    STARTUP_TIMEOUT = 15.0  # seconds — cameras can be slow on first init
     print("Waiting for first frames from all sensors...")
     for s in rs_streams:
         s.get_color_frame(timeout=STARTUP_TIMEOUT)
+    for s in arducam_streams:
+        s.get_frame_with_timestamp(timeout=STARTUP_TIMEOUT)
     gs_left.get_frame()
     gs_right.get_frame()
 
@@ -680,6 +719,8 @@ def main():
             s.get_color_frame()
         gs_left.get_frame()
         gs_right.get_frame()
+        for s in arducam_streams:
+            s.get_frame()
         time.sleep(0.02)
     print("All sensors ready.\n")
     print("Controls:  s = start episode   e = end episode   r = reset diff ref   "
@@ -725,7 +766,10 @@ def main():
     writer      = HDF5Writer()
     episode_num = 0
     path        = None
-    capture     = CaptureLoop(rs_streams, gs_left, gs_right, optitrack, writer, fps=FPS)
+    capture     = CaptureLoop(
+        rs_streams, gs_left, gs_right, optitrack, writer, fps=FPS,
+        arducam_streams=(arducam_streams if arducam_streams else None),
+    )
     capture.start()
 
     # GUI runs at a softer cadence than capture; PREVIEW_FPS controls how
@@ -825,6 +869,7 @@ def main():
                         date_dir, episode_num, REALSENSE_SERIALS,
                         list(GELSIGHT_SERIALS.values()), FPS,
                         task_name=task_name,
+                        arducam_config=arducam_config,
                     )
                     for name in ["motherboard", "sensor_left", "sensor_right"]:
                         optitrack.flush_buffer(name)
@@ -869,6 +914,8 @@ def main():
             s.stop()
         gs_left.stop()
         gs_right.stop()
+        for s in arducam_streams:
+            s.stop()
         optitrack.stop()
         cv2.destroyAllWindows()
         print("All sensors stopped. Goodbye.")
