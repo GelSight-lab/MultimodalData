@@ -6,6 +6,7 @@ import json
 import os
 import tempfile
 import time
+import zlib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, Mapping, Sequence
@@ -217,7 +218,8 @@ def _sample_stats(dataset) -> tuple[float, float]:
     return float(np.mean(samples)), float(np.var(samples))
 
 
-def verify_recording(path: str | Path, requested_fps: float = 30.0) -> dict:
+def verify_recording(path: str | Path, requested_fps: float = 30.0,
+                     expected_duration: float | None = None) -> dict:
     """Reopen a sensor-camera recording and evaluate its data invariants."""
     import h5py
 
@@ -251,14 +253,27 @@ def verify_recording(path: str | Path, requested_fps: float = 30.0) -> dict:
                 checks[f"{slot}_timestamps_monotonic"] = monotonic
                 checks[f"{slot}_timestamp_span"] = span > 0
                 checks[f"{slot}_cadence"] = (
-                    requested_fps * 0.5 <= cadence <= requested_fps * 1.5
+                    requested_fps * 0.85 <= cadence <= requested_fps * 1.15
                 )
+                if expected_duration is not None:
+                    allowed_edge_loss = 2.0 / requested_fps
+                    checks[f"{slot}_duration_coverage"] = (
+                        span >= max(0.0, expected_duration - allowed_edge_loss)
+                    )
                 if count:
                     mean, variance = _sample_stats(frames)
                     first_frames.append(np.asarray(frames[0]))
+                    hashes = [
+                        zlib.crc32(np.asarray(frames[i]).tobytes())
+                        for i in range(count)
+                    ]
+                    changed = sum(a != b for a, b in zip(hashes, hashes[1:]))
+                    temporal_change_ratio = changed / max(1, count - 1)
                 else:
                     mean, variance = 0.0, 0.0
+                    temporal_change_ratio = 0.0
                 checks[f"{slot}_nonblack"] = mean > 0.0 and variance > 0.0
+                checks[f"{slot}_temporal_change"] = temporal_change_ratio >= 0.8
                 cameras[slot] = {
                     "count": count,
                     "shape": list(frames.shape),
@@ -270,6 +285,7 @@ def verify_recording(path: str | Path, requested_fps: float = 30.0) -> dict:
                     "capture_fps": cadence,
                     "sample_mean": mean,
                     "sample_variance": variance,
+                    "temporal_change_ratio": temporal_change_ratio,
                     "attributes": {
                         key: (value.item() if hasattr(value, "item") else value)
                         for key, value in frames.parent.attrs.items()
@@ -325,6 +341,7 @@ def record_verification(
     streams = [factory(camera.config, camera.device) for camera in resolved]
     writer = None
     h5_file = None
+    dropped_frames = 0
     working_dir = tempfile.TemporaryDirectory(
         dir=output_path.parent, prefix=".twm_arducam_"
     )
@@ -359,6 +376,7 @@ def record_verification(
             if delay > 0:
                 time.sleep(delay)
         writer.stop()
+        dropped_frames = writer.dropped_frames
         writer = None
         h5_file.flush()
         h5_file.close()
@@ -372,7 +390,15 @@ def record_verification(
         for stream in streams:
             stream.stop()
         working_dir.cleanup()
-    return verify_recording(output_path, requested_fps=slots[0].fps)
+    report = verify_recording(
+        output_path,
+        requested_fps=slots[0].fps,
+        expected_duration=duration,
+    )
+    report["dropped_frames"] = dropped_frames
+    report["checks"]["no_writer_drops"] = dropped_frames == 0
+    report["ok"] = all(report["checks"].values())
+    return report
 
 
 def identify(config_path: str | Path = DEFAULT_CONFIG_PATH) -> None:

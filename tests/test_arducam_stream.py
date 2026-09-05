@@ -9,11 +9,18 @@ from twm.sensor_camera import CameraSlot
 
 
 class FakeCapture:
-    def __init__(self, frames=(), opened=True):
+    def __init__(self, frames=(), opened=True, properties=None):
         self.frames = list(frames)
         self.opened = opened
         self.settings = []
         self.released = False
+        self.properties = {
+            cv2.CAP_PROP_FRAME_WIDTH: 640,
+            cv2.CAP_PROP_FRAME_HEIGHT: 480,
+            cv2.CAP_PROP_FPS: 30,
+            cv2.CAP_PROP_FOURCC: cv2.VideoWriter_fourcc(*"MJPG"),
+        }
+        self.properties.update(properties or {})
 
     def isOpened(self):
         return self.opened
@@ -23,11 +30,7 @@ class FakeCapture:
         return True
 
     def get(self, key):
-        values = {
-            cv2.CAP_PROP_FRAME_WIDTH: 640,
-            cv2.CAP_PROP_FRAME_HEIGHT: 480,
-        }
-        return values.get(key, 0)
+        return self.properties.get(key, 0)
 
     def read(self):
         if self.frames:
@@ -87,6 +90,19 @@ def test_stream_times_out_when_no_first_frame_arrives():
 
     with pytest.raises(TimeoutError, match=r"cam0.*first frame"):
         stream.start(timeout=0.03)
+
+    assert capture.released
+
+
+def test_stream_rejects_negotiated_fps_fallback():
+    capture = FakeCapture(
+        [np.zeros((480, 640, 3), np.uint8)],
+        properties={cv2.CAP_PROP_FPS: 15},
+    )
+    stream = ArducamVideoStream(_slot(), "/dev/video6", capture_factory=lambda *_: capture)
+
+    with pytest.raises(RuntimeError, match=r"cam0.*negotiated.*fps.*15"):
+        stream.start(timeout=0.2)
 
     assert capture.released
 

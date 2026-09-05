@@ -45,11 +45,36 @@ class ArducamVideoStream:
             self._capture = None
             raise RuntimeError(f"{self._tag()} could not open capture device")
 
-        capture.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*self.config.pixel_format))
-        capture.set(cv2.CAP_PROP_FRAME_WIDTH, self.config.width)
-        capture.set(cv2.CAP_PROP_FRAME_HEIGHT, self.config.height)
-        capture.set(cv2.CAP_PROP_FPS, self.config.fps)
-        capture.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+        requested_fourcc = cv2.VideoWriter_fourcc(*self.config.pixel_format)
+        requested = (
+            ("pixel_format", cv2.CAP_PROP_FOURCC, requested_fourcc),
+            ("width", cv2.CAP_PROP_FRAME_WIDTH, self.config.width),
+            ("height", cv2.CAP_PROP_FRAME_HEIGHT, self.config.height),
+            ("fps", cv2.CAP_PROP_FPS, self.config.fps),
+            ("buffer_size", cv2.CAP_PROP_BUFFERSIZE, 1),
+        )
+        rejected = [name for name, prop, value in requested
+                    if not capture.set(prop, value)]
+        if rejected:
+            capture.release()
+            self._capture = None
+            raise RuntimeError(
+                f"{self._tag()} rejected capture settings: {', '.join(rejected)}"
+            )
+        observed = {name: float(capture.get(prop))
+                    for name, prop, _ in requested}
+        mismatches = []
+        for name, _, expected in requested:
+            actual = observed[name]
+            if actual > 0 and abs(actual - expected) > (0.5 if name == "fps" else 0.1):
+                shown = int(actual) if actual.is_integer() else actual
+                mismatches.append(f"{name}={shown} (wanted {expected})")
+        if mismatches:
+            capture.release()
+            self._capture = None
+            raise RuntimeError(
+                f"{self._tag()} negotiated unexpected mode: {', '.join(mismatches)}"
+            )
 
         self._error = None
         self._running.set()

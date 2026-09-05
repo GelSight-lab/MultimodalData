@@ -2,7 +2,7 @@ import time
 
 import numpy as np
 
-from twm.data_collection import CaptureLoop
+from twm.data_collection import CaptureLoop, _startup_call
 
 
 class FakeRealSense:
@@ -35,6 +35,17 @@ class FakeArducam:
 
     def get_frame_with_timestamp(self):
         return self.frame.copy(), self.timestamp
+
+
+class FailingArducam(FakeArducam):
+    def __init__(self, value, timestamp):
+        super().__init__(value, timestamp)
+        self.fail = False
+
+    def get_frame_with_timestamp(self):
+        if self.fail:
+            raise TimeoutError("Arducam cam0 frame is stale")
+        return super().get_frame_with_timestamp()
 
 
 class FakeOptitrack:
@@ -134,3 +145,65 @@ def test_capture_loop_without_arducams_preserves_legacy_snapshot_and_enqueue():
     _, kwargs = writer.calls[0]
     assert kwargs["arducam_frames"] is None
     assert kwargs["arducam_timestamps"] is None
+
+
+def test_runtime_camera_failure_is_published_and_recording_can_finalize():
+    rs, left, right = _legacy_inputs()
+    writer = FakeWriter()
+    failing = FailingArducam(21, 123.25)
+    capture = CaptureLoop(
+        rs, left, right, FakeOptitrack(), writer, fps=100,
+        arducam_streams=[failing, FakeArducam(37, 123.50)],
+    )
+    capture.WARMUP_DROP_FRAMES = 0
+
+    capture.start()
+    _wait_for(capture.latest)
+    capture.start_recording(object())
+    _wait_for(lambda: writer.calls)
+    failing.fail = True
+    fatal = _wait_for(
+        lambda: capture.latest() if capture.latest().get("fatal_error") else None
+    )
+    finalized = capture.stop_recording()
+    capture.stop()
+
+    assert "cam0" in fatal["fatal_error"]
+    assert "stale" in fatal["fatal_error"]
+    assert fatal["recording"] is True
+    assert finalized is not None
+    assert writer.flushes == 1
+
+
+def test_startup_failure_stops_every_registered_resource_in_reverse_order():
+    events = []
+
+    class Resource:
+        def __init__(self, name, fails=False):
+            self.name = name
+            self.fails = fails
+
+        def start(self):
+            events.append(f"start {self.name}")
+            if self.fails:
+                raise RuntimeError(f"{self.name} failed")
+
+        def stop(self):
+            events.append(f"stop {self.name}")
+
+    first = Resource("first")
+    second = Resource("second", fails=True)
+    registered = [first]
+    _startup_call(first.start, registered)
+    registered.append(second)
+
+    try:
+        _startup_call(second.start, registered)
+    except RuntimeError:
+        pass
+    else:
+        raise AssertionError("startup failure did not propagate")
+
+    assert events == [
+        "start first", "start second", "stop second", "stop first"
+    ]

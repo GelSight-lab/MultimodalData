@@ -163,6 +163,14 @@ class FakeSensorCameraStream:
         self.stopped = True
 
 
+class FrozenSlowSensorCameraStream(FakeSensorCameraStream):
+    def get_frame_with_timestamp(self, timeout=0.5):
+        self.index += 1
+        x = np.arange(640, dtype=np.uint8)[None, :, None] % 31
+        image = np.broadcast_to(x, (480, 640, 3)).copy() + self.value
+        return image, 1000.0 + self.index / 16.0
+
+
 def test_record_verification_uses_real_writer_and_reopens_valid_file(tmp_path):
     config_path = tmp_path / "config.json"
     config_path.write_text(json.dumps(_raw_config()))
@@ -233,3 +241,24 @@ def test_verify_recording_reports_black_and_identical_streams(tmp_path):
     assert report["ok"] is False
     assert report["checks"]["cam0_nonblack"] is False
     assert report["checks"]["streams_distinct"] is False
+
+
+def test_verifier_rejects_under_rate_temporally_frozen_video(tmp_path):
+    config_path = tmp_path / "config.json"
+    config_path.write_text(json.dumps(_raw_config()))
+    devices = [
+        VideoDevice("/dev/video6", "usb-A", "SN001", True),
+        VideoDevice("/dev/video10", "usb-B", "SN001", True),
+    ]
+
+    report = record_verification(
+        config_path=config_path,
+        output_path=tmp_path / "slow.h5",
+        duration=0.12,
+        devices=devices,
+        stream_factory=FrozenSlowSensorCameraStream,
+    )
+
+    assert report["ok"] is False
+    assert report["checks"]["cam0_cadence"] is False
+    assert report["checks"]["cam0_temporal_change"] is False

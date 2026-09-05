@@ -485,29 +485,46 @@ class CaptureLoop:
         self._stop.set()
         self._thread.join(timeout=2.0)
 
+    def _publish_fatal_error(self, exc):
+        message = f"{type(exc).__name__}: {exc}"
+        with self._lock:
+            latest = dict(self._latest or {})
+            latest.update({
+                "fatal_error": message,
+                "recording": self._recording,
+                "frame_count": self._frame_count,
+                "elapsed": ((time.time() - self._start_t)
+                            if self._recording else 0.0),
+            })
+            self._latest = latest
+        self._stop.set()
+
     def _run(self):
         while not self._stop.is_set():
             tick_start = time.time()
 
             t0 = time.time()
-            color_frames = [s.get_color_frame() for s in self.rs_streams]
-            depth_frames = [s.get_depth_frame() for s in self.rs_streams]
-            # GelSight: grab frame + its true capture timestamp (the sensor runs
-            # ~18.75 fps < tick rate, so its frames are older than `t`; the
-            # per-sensor timestamp records when each was actually captured).
-            gs_l, ts_l = _gs_frame_ts(self.gs_left)
-            gs_r, ts_r = _gs_frame_ts(self.gs_right)
-            gs_frames     = [gs_l, gs_r]
-            gs_timestamps = [ts_l, ts_r]
-            if self.arducam_streams is not None:
-                arducam_samples = [_gs_frame_ts(stream)
-                                    for stream in self.arducam_streams]
-                arducam_frames = [sample[0] for sample in arducam_samples]
-                arducam_timestamps = [sample[1] for sample in arducam_samples]
-            else:
-                arducam_frames = None
-                arducam_timestamps = None
-            t            = time.time()
+            try:
+                color_frames = [s.get_color_frame() for s in self.rs_streams]
+                depth_frames = [s.get_depth_frame() for s in self.rs_streams]
+                # GelSight: grab frame + its true capture timestamp (the sensor
+                # runs below the camera tick on some hardware).
+                gs_l, ts_l = _gs_frame_ts(self.gs_left)
+                gs_r, ts_r = _gs_frame_ts(self.gs_right)
+                gs_frames = [gs_l, gs_r]
+                gs_timestamps = [ts_l, ts_r]
+                if self.arducam_streams is not None:
+                    arducam_samples = [_gs_frame_ts(stream)
+                                        for stream in self.arducam_streams]
+                    arducam_frames = [sample[0] for sample in arducam_samples]
+                    arducam_timestamps = [sample[1] for sample in arducam_samples]
+                else:
+                    arducam_frames = None
+                    arducam_timestamps = None
+                t = time.time()
+            except Exception as exc:
+                self._publish_fatal_error(exc)
+                return
             self._timing_accum["grab"] += t - t0
 
             t0 = time.time()
@@ -554,6 +571,7 @@ class CaptureLoop:
                     "elapsed":      (t - self._start_t) if self._recording else 0.0,
                     "fps_meas":     fps_meas,
                     "recording":    self._recording,
+                    "fatal_error":  None,
                 }
 
             self._timing_ticks += 1
@@ -602,6 +620,25 @@ class CaptureLoop:
         # Flush outside the lock; the writer is thread-safe.
         self.writer.flush()
         return h5_file, frame_count, dropped
+
+
+def _stop_resources(resources):
+    """Best-effort reverse-order cleanup for a partially initialized rig."""
+    for resource in reversed(resources):
+        try:
+            resource.stop()
+        except Exception as exc:  # cleanup must continue for the other devices
+            print(f"Warning: startup cleanup could not stop {resource!r}: {exc}")
+    resources.clear()
+
+
+def _startup_call(fn, resources, *args, **kwargs):
+    """Run one startup operation and clean all registered devices on failure."""
+    try:
+        return fn(*args, **kwargs)
+    except Exception:
+        _stop_resources(resources)
+        raise
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -654,23 +691,34 @@ def main():
     print(f"Task: {task_name}  |  Saving to: {date_dir}")
 
     # ── Init sensors ──────────────────────────────────────────────────────────
+    started_resources = []
     print("Initializing RealSense cameras...")
-    rs_streams = [RealsenseStream(serial=s, fps=FPS) for s in REALSENSE_SERIALS]
+    rs_streams = [_startup_call(RealsenseStream, started_resources,
+                                serial=s, fps=FPS)
+                  for s in REALSENSE_SERIALS]
     for s in rs_streams:
-        s.start()
+        started_resources.append(s)
+        _startup_call(s.start, started_resources)
         time.sleep(0.5)  # stagger starts to avoid USB bandwidth contention
 
     arducam_config = ()
     arducam_streams = []
     if not args.no_arducam:
         print("Initializing sensor-mounted Arducam cameras...")
-        slots = (load_config(args.arducam_config)
-                 if args.arducam_config else load_config())
-        arducam_config = resolve_slots(slots)
+        slots = (_startup_call(load_config, started_resources,
+                               args.arducam_config)
+                 if args.arducam_config
+                 else _startup_call(load_config, started_resources))
+        arducam_config = _startup_call(resolve_slots, started_resources, slots)
         for camera in arducam_config:
-            stream = ArducamVideoStream(camera.config, camera.device)
-            stream.start(timeout=STARTUP_TIMEOUT)
+            stream = _startup_call(
+                ArducamVideoStream, started_resources,
+                camera.config, camera.device,
+            )
             arducam_streams.append(stream)
+            started_resources.append(stream)
+            _startup_call(stream.start, started_resources,
+                          timeout=STARTUP_TIMEOUT)
 
     print("Initializing GelSight sensors...")
 
@@ -687,24 +735,34 @@ def main():
             gs.start()
             return gs
         except Exception as e:
+            gs.stop()
             print(f"  WARNING: GelSight '{side}' (serial {serial}) not available: {e}")
             print(f"           Continuing without it — frames will be black.")
             return _DummyGelSight()
 
-    gs_left  = _try_start_gelsight("left",  GELSIGHT_SERIALS["left"])
-    gs_right = _try_start_gelsight("right", GELSIGHT_SERIALS["right"])
+    gs_left = _startup_call(
+        _try_start_gelsight, started_resources, "left", GELSIGHT_SERIALS["left"]
+    )
+    started_resources.append(gs_left)
+    gs_right = _startup_call(
+        _try_start_gelsight, started_resources, "right", GELSIGHT_SERIALS["right"]
+    )
+    started_resources.append(gs_right)
 
     print("Initializing OptiTrack...")
-    optitrack = OptitrackStream()
-    optitrack.start()
+    optitrack = _startup_call(OptitrackStream, started_resources)
+    started_resources.append(optitrack)
+    _startup_call(optitrack.start, started_resources)
 
     print("Waiting for first frames from all sensors...")
     for s in rs_streams:
-        s.get_color_frame(timeout=STARTUP_TIMEOUT)
+        _startup_call(s.get_color_frame, started_resources,
+                      timeout=STARTUP_TIMEOUT)
     for s in arducam_streams:
-        s.get_frame_with_timestamp(timeout=STARTUP_TIMEOUT)
-    gs_left.get_frame()
-    gs_right.get_frame()
+        _startup_call(s.get_frame_with_timestamp, started_resources,
+                      timeout=STARTUP_TIMEOUT)
+    _startup_call(gs_left.get_frame, started_resources)
+    _startup_call(gs_right.get_frame, started_resources)
 
     # Settle phase: getting the *first* frame is not enough — the USB GelSight
     # cameras need ~1-2 s of streaming for auto-exposure/white-balance to
@@ -716,13 +774,14 @@ def main():
     settle_end = time.time() + SETTLE_S
     while time.time() < settle_end:
         for s in rs_streams:
-            s.get_color_frame()
-        gs_left.get_frame()
-        gs_right.get_frame()
+            _startup_call(s.get_color_frame, started_resources)
+        _startup_call(gs_left.get_frame, started_resources)
+        _startup_call(gs_right.get_frame, started_resources)
         for s in arducam_streams:
-            s.get_frame()
+            _startup_call(s.get_frame, started_resources)
         time.sleep(0.02)
     print("All sensors ready.\n")
+    started_resources.clear()  # normal GUI finally now owns these resources
     print("Controls:  s = start episode   e = end episode   r = reset diff ref   "
           "p = toggle projection   q = quit\n")
 
@@ -815,6 +874,11 @@ def main():
             latest = capture.latest()
             if latest is None:
                 time.sleep(0.005); continue
+            if latest.get("fatal_error"):
+                print(f"\n!!! Capture stopped: {latest['fatal_error']}")
+                if latest.get("recording"):
+                    _end_episode(auto=True)
+                break
 
             # Preview gate: only rebuild + imshow at PREVIEW_FPS; otherwise
             # re-display the cached panel so cv2.waitKey still pumps events.
