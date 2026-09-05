@@ -87,20 +87,34 @@ class ArducamVideoStream:
                 self._frame_ts = timestamp
                 self._condition.notify_all()
 
-    def get_frame_with_timestamp(self, timeout: float = 0.5):
+    def get_frame_with_timestamp(self, timeout: float = 0.5,
+                                 max_age: float = 0.5):
         deadline = time.monotonic() + timeout
         with self._condition:
-            while self._frame is None and self._error is None:
+            while self._error is None:
+                fresh = (
+                    self._frame is not None
+                    and self._frame_ts is not None
+                    and time.time() - self._frame_ts <= max_age
+                )
+                if fresh:
+                    return self._frame.copy(), float(self._frame_ts)
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
-                    raise TimeoutError(f"{self._tag()} timed out waiting for first frame")
+                    if self._frame is None:
+                        raise TimeoutError(
+                            f"{self._tag()} timed out waiting for first frame"
+                        )
+                    age = time.time() - self._frame_ts
+                    raise TimeoutError(
+                        f"{self._tag()} frame is stale ({age:.3f}s old)"
+                    )
                 self._condition.wait(remaining)
             if self._error is not None:
                 raise self._error
-            return self._frame.copy(), float(self._frame_ts)
 
-    def get_frame(self, timeout: float = 0.5):
-        return self.get_frame_with_timestamp(timeout=timeout)[0]
+    def get_frame(self, timeout: float = 0.5, max_age: float = 0.5):
+        return self.get_frame_with_timestamp(timeout=timeout, max_age=max_age)[0]
 
     def stop(self):
         self._running.clear()
@@ -112,4 +126,3 @@ class ArducamVideoStream:
         if capture is not None:
             capture.release()
         self._capture = None
-

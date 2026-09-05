@@ -110,3 +110,15 @@ def test_stop_is_idempotent():
     stream.stop()
 
     assert capture.released
+
+
+def test_stream_reports_a_stale_frame_after_runtime_capture_stops():
+    capture = FakeCapture([np.zeros((480, 640, 3), np.uint8)])
+    stream = ArducamVideoStream(_slot(), "/dev/video6", capture_factory=lambda *_: capture)
+    stream.start(timeout=0.2)
+    time.sleep(0.03)
+
+    with pytest.raises(TimeoutError, match=r"cam0.*stale"):
+        stream.get_frame_with_timestamp(timeout=0.1, max_age=0.01)
+
+    stream.stop()
