@@ -1,0 +1,22 @@
+{
+  "cameras": [
+    {
+      "slot": "cam0",
+      "id_path": "pci-0000:00:14.0-usb-0:12.1:1.0",
+      "position": "unknown",
+      "width": 640,
+      "height": 480,
+      "fps": 30,
+      "pixel_format": "MJPG"
+    },
+    {
+      "slot": "cam1",
+      "id_path": "pci-0000:00:14.0-usb-0:12.3:1.0",
+      "position": "unknown",
+      "width": 640,
+      "height": 480,
+      "fps": 30,
+      "pixel_format": "MJPG"
+    }
+  ]
+}
