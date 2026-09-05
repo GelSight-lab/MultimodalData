@@ -3415,3 +3415,255 @@ Expected: facade < 120 lines; no module in `twm/recorder/` over ~400 lines.
 - Spec coverage: fail-fast (Task 3, 5, 8), byte-bounded queue (3), preflight (6, 8), runtime monitoring (3, 7, 8), OptiTrack per tick (4, 2), metadata (7, 8), backward compat (9), docs (10). Covered.
 - Placeholder scan: none.
 - Type consistency: `writer.check()` returns `Optional[Tuple[str, str]]` (Task 3) and is unpacked into `StopRequest(*health)` (Task 5); `RecordingResult.stop_request` consumed in Task 8; `WriterStats` positional order in `test_preflight.stats()` matches the dataclass field order in Task 3; `EpisodeStore.create(..., arducam_config=)` matches Task 8's call; `rig.arducam_config` is a tuple (Task 4) and `or None` in Task 8 keeps `create_episode_file`'s "falsy → no group" behavior.
+
+---
+
+### Task 12: Serial-keyed Arducam identification with a known left/right mapping
+
+**Why:** The two Arducams now report distinct serials (`TWML0001` on the left
+sensor, `TWMR0001` on the right; confirmed with `udevadm info` on
+2026-09-05: `/dev/video10` `ID_SERIAL_SHORT=TWML0001`, `/dev/video6`
+`ID_SERIAL_SHORT=TWMR0001`, both `ID_MODEL=Arducam-B0578-2.3MP-GS`, both
+offering MJPG 640x480 at 30 fps). Selecting by serial survives re-plugging
+into any USB port; the topology-path selector stays as a fallback for cameras
+without a unique serial.
+
+**Files:**
+- Modify: `twm/sensor_camera.py` (`CameraSlot`, `ResolvedCamera`, `validate_config`, `resolve_slots`, `identify` label)
+- Modify: `twm/config/arducam.json`
+- Modify: `twm/recorder/schema.py` (`serial` attribute on `arducam/cam*` and in the metadata JSON)
+- Modify: `twm/recorder/rig.py` (`arducam_labels` shows serial)
+- Modify: `twm/README.md` (Hardware note, "Sensor-camera setup", HDF5 attrs)
+- Test: `tests/test_arducam.py` (add tests), `tests/recorder/test_schema.py` (add one test)
+
+**Interfaces:**
+- Consumes: `create_episode_file` (Task 2), `SensorRig.arducam_labels` (Task 4).
+- Produces: `CameraSlot(slot, id_path="", position="unknown", width, height, fps, pixel_format, serial="")` — at least one of `serial`/`id_path` non-empty; `ResolvedCamera(config, device, reported_serial, device_id_path="")` with properties `serial` (configured serial, else reported) and `id_path` (device path at resolve time, else configured); `resolve_slots` matches on `serial` when set, else on `id_path`.
+
+- [ ] **Step 1: Write the failing tests**
+
+Append to `tests/test_arducam.py`:
+
+```python
+def _raw_serial_config():
+    return {
+        "cameras": [
+            {"slot": "cam0", "serial": "TWML0001", "position": "left"},
+            {"slot": "cam1", "serial": "TWMR0001", "position": "right"},
+        ]
+    }
+
+
+def test_validate_config_accepts_serial_keyed_cameras_without_paths():
+    cam0, cam1 = validate_config(_raw_serial_config())
+    assert (cam0.serial, cam0.position, cam0.id_path) == ("TWML0001", "left", "")
+    assert (cam1.serial, cam1.position) == ("TWMR0001", "right")
+
+
+@pytest.mark.parametrize("cameras, message", [
+    ([{"slot": "cam0", "position": "left"}, {"slot": "cam1", "serial": "B", "position": "right"}],
+     "serial or id_path"),
+    ([{"slot": "cam0", "serial": "A"}, {"slot": "cam1", "serial": "A"}], "serial"),
+])
+def test_validate_config_rejects_missing_or_duplicate_serials(cameras, message):
+    with pytest.raises(ArducamConfigError, match=message):
+        validate_config({"cameras": cameras})
+
+
+def test_resolve_slots_by_serial_ignores_port_and_metadata_nodes():
+    slots = validate_config(_raw_serial_config())
+    devices = [
+        VideoDevice("/dev/video6", "usb-0:12.1", "TWMR0001", True),
+        VideoDevice("/dev/video7", "usb-0:12.1", "TWMR0001", False),
+        VideoDevice("/dev/video10", "usb-0:12.2", "TWML0001", True),
+        VideoDevice("/dev/video11", "usb-0:12.2", "TWML0001", False),
+        VideoDevice("/dev/video12", "usb-0:12.3", "2DUPB53G", True),
+    ]
+    cam0, cam1 = resolve_slots(slots, devices)
+    assert (cam0.device, cam0.serial, cam0.position) == ("/dev/video10", "TWML0001", "left")
+    assert (cam1.device, cam1.serial, cam1.position) == ("/dev/video6", "TWMR0001", "right")
+    assert cam0.id_path == "usb-0:12.2"          # resolved from the device, not the config
+
+
+def test_resolve_slots_reports_missing_serial_with_inventory():
+    slots = validate_config(_raw_serial_config())
+    devices = [VideoDevice("/dev/video6", "usb-0:12.1", "TWMR0001", True)]
+    with pytest.raises(ArducamConfigError, match="TWML0001.*inventory"):
+        resolve_slots(slots, devices)
+
+
+def test_shipped_config_maps_left_and_right_serials():
+    from twm.sensor_camera import DEFAULT_CONFIG_PATH, load_config
+    cam0, cam1 = load_config(DEFAULT_CONFIG_PATH)
+    assert (cam0.serial, cam0.position) == ("TWML0001", "left")
+    assert (cam1.serial, cam1.position) == ("TWMR0001", "right")
+    assert (cam0.width, cam0.height, cam0.fps, cam0.pixel_format) == (640, 480, 30, "MJPG")
+```
+
+Append to `tests/recorder/test_schema.py`:
+
+```python
+def test_arducam_groups_record_configured_serial(tmp_path):
+    from twm.sensor_camera import CameraSlot, ResolvedCamera
+    cams = (ResolvedCamera(CameraSlot("cam0", serial="TWML0001", position="left"),
+                           "/dev/video10", "TWML0001", "usb-0:12.2"),
+            ResolvedCamera(CameraSlot("cam1", serial="TWMR0001", position="right"),
+                           "/dev/video6", "TWMR0001", "usb-0:12.1"))
+    f, path = create_episode_file(str(tmp_path), 0, [], [], 30, arducam_config=cams,
+                                  include_legacy=False)
+    f.close()
+    with h5py.File(path, "r") as g:
+        assert g["arducam/cam0"].attrs["serial"] == "TWML0001"
+        assert g["arducam/cam0"].attrs["usb_path"] == "usb-0:12.2"
+        assert g["arducam/cam1"].attrs["position"] == "right"
+        import json
+        meta = json.loads(g["metadata"].attrs["arducam_config"])
+        assert [m["serial"] for m in meta] == ["TWML0001", "TWMR0001"]
+```
+
+- [ ] **Step 2: Run tests to verify they fail**
+
+Run: `python -m pytest tests/test_arducam.py tests/recorder/test_schema.py -q`
+Expected: the new tests FAIL (`TypeError: __init__() got an unexpected keyword argument 'serial'`, `ArducamConfigError: each camera needs a nonempty id_path`); existing tests still pass.
+
+- [ ] **Step 3: Implement**
+
+In `twm/sensor_camera.py`:
+
+```python
+@dataclass(frozen=True)
+class CameraSlot:
+    slot: str
+    id_path: str = ""
+    position: str = "unknown"
+    width: int = 640
+    height: int = 480
+    fps: int = 30
+    pixel_format: str = "MJPG"
+    serial: str = ""          # preferred identity; id_path is the fallback
+
+
+@dataclass(frozen=True)
+class ResolvedCamera:
+    config: CameraSlot
+    device: str
+    reported_serial: str
+    device_id_path: str = ""
+
+    @property
+    def slot(self) -> str:
+        return self.config.slot
+
+    @property
+    def serial(self) -> str:
+        return self.config.serial or self.reported_serial
+
+    @property
+    def id_path(self) -> str:
+        return self.device_id_path or self.config.id_path
+    # position/width/height/fps/pixel_format properties unchanged
+```
+
+In `validate_config`, replace the `id_path` requirement and uniqueness check:
+
+```python
+        serial = str(entry.get("serial", "")).strip()
+        id_path = str(entry.get("id_path", "")).strip()
+        if not serial and not id_path:
+            raise ArducamConfigError("each camera needs a nonempty serial or id_path")
+        ...
+        slots.append(CameraSlot(slot=slot, id_path=id_path, position=position,
+                                width=..., height=..., fps=..., pixel_format=pixel_format,
+                                serial=serial))
+    ...
+    serials = [s.serial for s in slots if s.serial]
+    if len(serials) != len(set(serials)):
+        raise ArducamConfigError("camera serial values must be unique")
+    paths = [s.id_path for s in slots if s.id_path]
+    if len(paths) != len(set(paths)):
+        raise ArducamConfigError("camera id_path values must be unique")
+```
+
+In `resolve_slots`, match on the configured key:
+
+```python
+    for slot in slots:
+        if slot.serial:
+            key, wanted = "serial", slot.serial
+            matches = [d for d in devices if d.is_capture and d.reported_serial == wanted]
+        else:
+            key, wanted = "path", slot.id_path
+            matches = [d for d in devices if d.is_capture and d.id_path == wanted]
+        if not matches:
+            raise ArducamConfigError(
+                f"{slot.slot} {key} {wanted!r} was not found; inventory: {_inventory(devices)}")
+        if len(matches) > 1:
+            raise ArducamConfigError(
+                f"{slot.slot} {key} {wanted!r} matched multiple capture nodes; "
+                f"inventory: {_inventory(devices)}")
+        device = matches[0]
+        resolved.append(ResolvedCamera(slot, device.device, device.reported_serial,
+                                       device.id_path))
+```
+
+In `identify`, draw `f"{camera.serial}  {camera.id_path}"` on the second text line instead of only `camera.id_path`.
+
+Replace `twm/config/arducam.json` with:
+
+```json
+{
+  "cameras": [
+    {
+      "slot": "cam0",
+      "serial": "TWML0001",
+      "position": "left",
+      "width": 640,
+      "height": 480,
+      "fps": 30,
+      "pixel_format": "MJPG"
+    },
+    {
+      "slot": "cam1",
+      "serial": "TWMR0001",
+      "position": "right",
+      "width": 640,
+      "height": 480,
+      "fps": 30,
+      "pixel_format": "MJPG"
+    }
+  ]
+}
+```
+
+In `twm/recorder/schema.py`, inside `create_episode_file`: add `"serial": getattr(c, "serial", "")` to each metadata JSON entry, and `g.attrs["serial"] = getattr(c, "serial", "")` beside the other `arducam/<slot>` attributes.
+
+In `twm/recorder/rig.py`: `arducam_labels` returns `f"{c.slot} {getattr(c, 'serial', '') or c.id_path} {c.position}"`.
+
+In `twm/README.md`: replace the Hardware paragraph beginning "The two Arducams both report the factory serial `SN001`" with:
+
+```markdown
+The two Arducams are selected by USB serial in `config/arducam.json`
+(`TWML0001` = left, `TWMR0001` = right), so they can be plugged into any port.
+A camera without a unique serial can still be selected by its USB topology
+path (`id_path`). Their HDF5 groups stay `arducam/cam0` (left) and
+`arducam/cam1` (right); each group's `position` and `serial` attributes say
+which is which.
+```
+and in the "Sensor-camera setup" section replace "inspect the current topology paths and update `config/arducam.json` if necessary" with "run the identification preview to confirm the serial → side mapping". Add `serial` to the attribute list in the HDF5 description.
+
+- [ ] **Step 4: Run tests to verify they pass**
+
+Run: `python -m pytest tests/test_arducam.py tests/recorder/test_schema.py tests/test_hdf5_writer.py tests/recorder/test_rig.py tests/test_visualize.py -q`
+Expected: all pass.
+
+- [ ] **Step 5: Verify on the attached hardware**
+
+Run: `python -m twm.sensor_camera verify --duration 3 --output /tmp/twm_arducam_verification.h5 --force`
+Expected: JSON report with `"ok": true`; both `arducam/cam0` (TWML0001) and `arducam/cam1` (TWMR0001) present. If the cameras are not attached when this runs, report that instead of failing the task.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add twm/sensor_camera.py twm/config/arducam.json twm/recorder/schema.py twm/recorder/rig.py twm/README.md tests/test_arducam.py tests/recorder/test_schema.py
+git commit -m "feat(twm): select Arducams by serial with a known left/right mapping"
+```
