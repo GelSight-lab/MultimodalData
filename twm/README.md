@@ -115,7 +115,7 @@ overridable with `--data_dir`. The dataset log is written to
 6. Repeat from step 2 for the next episode.
 7. Press `q` to quit.
 
-A log row is appended to `<DATA_DIR>/dataset_log.csv` after each episode.
+A log row is appended to `<data_dir>/dataset_log.csv` after each episode.
 
 ### What happens when the disk cannot keep up
 
