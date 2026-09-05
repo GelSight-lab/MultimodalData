@@ -8,9 +8,14 @@ Tools for collecting and reviewing multimodal data for the Tactile World Model (
 |--------|-------|---------|
 | Intel RealSense D415 | 3 | Color (640×480 @ 30 Hz) + depth (640×480 @ 30 Hz) |
 | GelSight Mini | 2 | Left + right tactile sensors, USB video (640×480 @ 30 Hz) |
+| Arducam B0578 | 2 | Sensor-mounted RGB cameras (640×480 MJPEG @ 30 Hz) |
 | OptiTrack | 3 trackers | `motherboard`, `sensor_left`, `sensor_right` via VRPN/ROS |
 
-Camera serials are set at the top of `data_collection.py` (`REALSENSE_SERIALS`, `GELSIGHT_SERIALS`).
+RealSense and GelSight serials are set at the top of `data_collection.py`.
+The two Arducams both report the factory serial `SN001`, so they are selected
+by stable USB topology in `config/arducam.json`, never by `/dev/videoN` or
+serial number. Their `cam0`/`cam1` identities are valid before physical
+left/right mapping is known.
 
 ---
 
@@ -37,9 +42,42 @@ isn't running, OptiTrack pose datasets in the saved HDF5 will be empty
 
 ## Collecting Data
 
+### Sensor-camera setup and verification
+
+After moving USB connections, inspect the current topology paths and update
+`config/arducam.json` if necessary. To view both feeds and optionally assign
+their physical positions:
+
+```bash
+python -m twm.sensor_camera identify
+```
+
+Press `0` or `1` to declare that slot the left camera (the other becomes
+right), `u` to leave both positions unknown, `s` to save, or `q` to exit
+without changing the mapping. Unknown positions do not prevent recording;
+the HDF5 file retains each slot's USB path so it can always be identified.
+
+Before collecting, run a five-second real-camera recording and validation:
+
+```bash
+python -m twm.sensor_camera verify --duration 5 \
+  --output /tmp/twm_arducam_verification.h5 --force
+```
+
+The command exits nonzero unless both datasets reopen correctly, have equal
+nonzero frame counts, valid 640×480 BGR images, finite monotonic timestamps,
+approximately 30 Hz capture cadence, non-black content, and distinct feeds.
+
+### Full recorder
+
 ```bash
 python -m twm.data_collection --task <task_name>
 ```
+
+Both configured Arducams are required by default. Use `--no_arducam` only for
+intentional legacy collection without sensor-camera data. A missing configured
+USB path is a startup error rather than a silent black stream. Use
+`--arducam_config <path>` to select a different mapping file.
 
 `--task` is required and controls where data is saved. Episodes are written to:
 
@@ -250,6 +288,11 @@ episode_NNN.h5
 │   ├── left/
 │   │   └── frames          uint8  [T, 480, 640, 3]   — raw RGB
 │   └── right/  (same)
+├── arducam/
+│   ├── cam0/
+│   │   ├── frames          uint8   [T, 480, 640, 3]  — BGR
+│   │   └── timestamps      float64 [T]               — capture time
+│   └── cam1/  (same)
 └── optitrack/
     ├── motherboard/
     │   ├── timestamps      float64 [N]           — Unix time per pose sample
@@ -261,7 +304,12 @@ episode_NNN.h5
 **Notes:**
 - `T` = number of camera frames (same across all camera streams within an episode).
 - `N` = number of OptiTrack samples, recorded at the motion capture system rate (typically higher than camera FPS). Use `timestamps` to align with camera frames.
-- All camera data is LZF-compressed, chunked per frame for fast random access.
+- Camera image data is BLOSC-LZ4-compressed and chunked per frame for fast
+  random access. Import `hdf5plugin` before reading with h5py so the filter is
+  registered.
+- Each `arducam/cam*` group stores `usb_path`, `device_at_recording`,
+  `reported_serial`, `position`, `width`, `height`, `fps`, and `pixel_format`
+  attributes. `position=unknown` is valid until physical mapping is completed.
 - Depth values are in **millimetres** (uint16, range 0–65535).
 - GelSight frames are raw; compute contact difference offline: `diff = frame - ref + 128` (clipped to uint8), where `ref` is a no-contact reference frame.
 
@@ -269,6 +317,7 @@ episode_NNN.h5
 
 ```python
 import h5py
+import hdf5plugin  # registers the BLOSC filter used by recorded image datasets
 import numpy as np
 
 with h5py.File("episode_000.h5", "r") as f:
@@ -276,6 +325,8 @@ with h5py.File("episode_000.h5", "r") as f:
     color_cam0   = f["realsense/cam0/color"][:]     # (T, 480, 640, 3)
     depth_cam0   = f["realsense/cam0/depth"][:]     # (T, 480, 640)
     gs_left      = f["gelsight/left/frames"][:]     # (T, 480, 640, 3)
+    wrist_cam0   = f["arducam/cam0/frames"][:]      # (T, 480, 640, 3)
+    wrist_cam0_t = f["arducam/cam0/timestamps"][:]  # (T,)
     ot_poses     = f["optitrack/sensor_left/pose"][:] # (N, 7)
     ot_ts        = f["optitrack/sensor_left/timestamps"][:] # (N,)
 

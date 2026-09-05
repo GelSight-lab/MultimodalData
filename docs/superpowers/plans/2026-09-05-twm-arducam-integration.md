@@ -17,7 +17,7 @@
 - Create: `twm/config/arducam.json`
 - Test: `tests/test_arducam.py`
 
-- [ ] **Step 1: Write failing configuration and resolution tests**
+- [x] **Step 1: Write failing configuration and resolution tests**
 
 Test `load_config`, `validate_config`, `enumerate_capture_devices`, and
 `resolve_slots` with injected inventories. Cover two unknown positions,
@@ -38,13 +38,13 @@ resolved = resolve_slots(cfg, [
 assert [x.device for x in resolved] == ["/dev/video6", "/dev/video10"]
 ```
 
-- [ ] **Step 2: Run tests and confirm the missing-module failure**
+- [x] **Step 2: Run tests and confirm the missing-module failure**
 
 Run: `python -m pytest tests/test_arducam.py -q`
 
 Expected: collection fails because `twm.sensor_camera` does not exist.
 
-- [ ] **Step 3: Implement the configuration model and resolver**
+- [x] **Step 3: Implement the configuration model and resolver**
 
 Define immutable `CameraSlot` and `VideoDevice` dataclasses. Validate exactly
 `cam0` and `cam1`, unique nonempty `id_path` values, common 640x480/30/MJPG
@@ -65,13 +65,13 @@ Create the current configuration:
 }
 ```
 
-- [ ] **Step 4: Run the focused tests**
+- [x] **Step 4: Run the focused tests**
 
 Run: `python -m pytest tests/test_arducam.py -q`
 
 Expected: all configuration/resolution tests pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add twm/sensor_camera.py twm/config/arducam.json tests/test_arducam.py
@@ -85,7 +85,7 @@ git commit -m "feat(twm): resolve Arducams by stable USB topology"
 - Modify: `camera_stream/__init__.py`
 - Test: `tests/test_arducam_stream.py`
 
-- [ ] **Step 1: Write failing stream tests with a fake VideoCapture**
+- [x] **Step 1: Write failing stream tests with a fake VideoCapture**
 
 Test V4L2 opening, requested FOURCC/size/FPS/buffer settings, first-frame
 timeout, negotiated-shape rejection, timestamp publication, copied frame
@@ -101,13 +101,13 @@ assert np.isfinite(ts)
 stream.stop()
 ```
 
-- [ ] **Step 2: Run tests and confirm failure**
+- [x] **Step 2: Run tests and confirm failure**
 
 Run: `python -m pytest tests/test_arducam_stream.py -q`
 
 Expected: import fails because `ArducamVideoStream` is absent.
 
-- [ ] **Step 3: Implement `ArducamVideoStream`**
+- [x] **Step 3: Implement `ArducamVideoStream`**
 
 Open the resolved device with `cv2.CAP_V4L2`; request MJPG, width, height,
 FPS, and one buffer. Use a daemon thread that calls `read`, stamps successful
@@ -116,13 +116,13 @@ under a lock. `get_frame_with_timestamp(timeout)` waits on a condition and
 raises `TimeoutError` instead of hanging. `stop()` clears the run event, joins
 the thread, and releases capture.
 
-- [ ] **Step 4: Run focused tests**
+- [x] **Step 4: Run focused tests**
 
 Run: `python -m pytest tests/test_arducam_stream.py -q`
 
 Expected: all stream tests pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add camera_stream/arducam_video_stream.py camera_stream/__init__.py tests/test_arducam_stream.py
@@ -135,7 +135,7 @@ git commit -m "feat(twm): add timestamped Arducam V4L2 stream"
 - Modify: `twm/data_collection.py`
 - Modify: `tests/test_hdf5_writer.py`
 
-- [ ] **Step 1: Write failing schema and write tests**
+- [x] **Step 1: Write failing schema and write tests**
 
 Add tests proving old calls create no `arducam` group, configured calls create
 both camera groups with exact arrays and attributes, batch appends preserve
@@ -151,13 +151,13 @@ append_camera_frames_batch(f, [(None, None, None, 10.0, None,
 assert f["arducam/cam1/timestamps"][0] == 9.95
 ```
 
-- [ ] **Step 2: Run the new tests and observe signature/schema failures**
+- [x] **Step 2: Run the new tests and observe signature/schema failures**
 
 Run: `python -m pytest tests/test_hdf5_writer.py -q`
 
 Expected: failures for unsupported arguments and missing datasets.
 
-- [ ] **Step 3: Extend file creation, batch append, and writer enqueue**
+- [x] **Step 3: Extend file creation, batch append, and writer enqueue**
 
 Add optional `arducam_config=None` and `include_legacy=True` parameters to
 `create_episode_file`. Add optional tuple elements 5/6 for Arducam frames and
@@ -166,13 +166,13 @@ timestamps to `append_camera_frames_batch`. Add optional
 Create/write both streams only when configured, use existing BLOSC settings,
 and preserve every existing positional call.
 
-- [ ] **Step 4: Run HDF5 and legacy regression tests**
+- [x] **Step 4: Run HDF5 and legacy regression tests**
 
 Run: `python -m pytest tests/test_hdf5_writer.py -q`
 
 Expected: all tests pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add twm/data_collection.py tests/test_hdf5_writer.py
@@ -185,20 +185,20 @@ git commit -m "feat(twm): store sensor-camera frames and timestamps"
 - Modify: `twm/data_collection.py`
 - Create: `tests/test_twm_capture_loop.py`
 
-- [ ] **Step 1: Write failing capture-loop tests**
+- [x] **Step 1: Write failing capture-loop tests**
 
 Use deterministic RealSense, GelSight, Arducam, OptiTrack, and writer doubles.
 Verify the latest snapshot includes both sensor-camera frames, recording
 enqueues both timestamps, start/stop preserves equal ticks, and construction
 without Arducams retains legacy behavior.
 
-- [ ] **Step 2: Run tests and confirm failure**
+- [x] **Step 2: Run tests and confirm failure**
 
 Run: `python -m pytest tests/test_twm_capture_loop.py -q`
 
 Expected: constructor and enqueue expectations fail for absent Arducam inputs.
 
-- [ ] **Step 3: Integrate optional streams into `CaptureLoop` and `main`**
+- [x] **Step 3: Integrate optional streams into `CaptureLoop` and `main`**
 
 Load and resolve `twm/config/arducam.json`, start both streams before the
 readiness gate, pass them to `CaptureLoop`, capture both timestamped frames on
@@ -207,13 +207,13 @@ to episode creation, and stop both streams in `finally`. Add
 `--no_arducam` as the explicit legacy escape hatch; configured missing cameras
 otherwise fail before recording rather than producing black frames.
 
-- [ ] **Step 4: Run capture-loop and HDF5 regression tests**
+- [x] **Step 4: Run capture-loop and HDF5 regression tests**
 
 Run: `python -m pytest tests/test_twm_capture_loop.py tests/test_hdf5_writer.py -q`
 
 Expected: all tests pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add twm/data_collection.py tests/test_twm_capture_loop.py
@@ -226,32 +226,32 @@ git commit -m "feat(twm): wire Arducams into recorder lifecycle"
 - Modify: `twm/viz.py`
 - Modify: `tests/test_visualize.py`
 
-- [ ] **Step 1: Write failing preview tests**
+- [x] **Step 1: Write failing preview tests**
 
 Retain the exact 1280x480 shape without Arducams. With two frames and labels,
 require 1280x720 output and verify that distinct test colors occupy the first
 two 320x240 slots of row three.
 
-- [ ] **Step 2: Run tests and confirm failure**
+- [x] **Step 2: Run tests and confirm failure**
 
 Run: `python -m pytest tests/test_visualize.py -q`
 
 Expected: `build_preview_panel` rejects the new keyword arguments.
 
-- [ ] **Step 3: Add the optional sensor-camera row**
+- [x] **Step 3: Add the optional sensor-camera row**
 
 Add `arducam_frames=None` and `arducam_labels=None` keyword parameters. When
 present, require two frames, resize each to 320x240, append two black tiles,
 draw labels containing slot/path/position, and stack beneath the old panel.
 Pass the current frames and labels from the recorder UI.
 
-- [ ] **Step 4: Run visualization and capture tests**
+- [x] **Step 4: Run visualization and capture tests**
 
 Run: `python -m pytest tests/test_visualize.py tests/test_twm_capture_loop.py -q`
 
 Expected: all tests pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add twm/viz.py twm/data_collection.py tests/test_visualize.py
@@ -264,26 +264,26 @@ git commit -m "feat(twm): preview both sensor-mounted cameras"
 - Modify: `twm/sensor_camera.py`
 - Modify: `tests/test_arducam.py`
 
-- [ ] **Step 1: Write failing mapping and verifier tests**
+- [x] **Step 1: Write failing mapping and verifier tests**
 
 Test atomic mapping persistence, rejection of duplicate side assignments,
 headless recording with deterministic streams, and validation failures for
 empty, malformed, black, timestamp-invalid, or byte-identical streams.
 
-- [ ] **Step 2: Run tests and confirm missing command failures**
+- [x] **Step 2: Run tests and confirm missing command failures**
 
 Run: `python -m pytest tests/test_arducam.py -q`
 
 Expected: failures for absent identify/verify helpers.
 
-- [ ] **Step 3: Implement `python -m twm.sensor_camera identify`**
+- [x] **Step 3: Implement `python -m twm.sensor_camera identify`**
 
 Show a side-by-side live preview labeled with slot and `ID_PATH`. Keys `0`
 and `1` mark the focused/selected feed as left, automatically assigning the
 other right; `u` restores unknown; `s` atomically saves the validated JSON;
 `q` exits without writing.
 
-- [ ] **Step 4: Implement `python -m twm.sensor_camera verify`**
+- [x] **Step 4: Implement `python -m twm.sensor_camera verify`**
 
 Resolve and start both real streams, create an Arducam-only HDF5 through
 `create_episode_file`, enqueue timed samples through `HDF5Writer`, close and
@@ -291,13 +291,13 @@ reopen it, then validate identity, counts, shapes, finite monotonic timestamps,
 timestamp span, variance, distinct streams, and distinct-frame cadence. Print
 a JSON summary and exit nonzero if any invariant fails.
 
-- [ ] **Step 5: Run CLI unit tests**
+- [x] **Step 5: Run CLI unit tests**
 
 Run: `python -m pytest tests/test_arducam.py -q`
 
 Expected: all tests pass.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add twm/sensor_camera.py tests/test_arducam.py
@@ -310,13 +310,13 @@ git commit -m "feat(twm): add Arducam identification and recording verifier"
 - Modify: `twm/README.md`
 - Modify: `docs/superpowers/plans/2026-09-05-twm-arducam-integration.md`
 
-- [ ] **Step 1: Document configuration and operator commands**
+- [x] **Step 1: Document configuration and operator commands**
 
 Document duplicate serial behavior, stable path lookup, unknown-side
 recording, `identify`, `verify`, normal recording, `--no_arducam`, HDF5 paths,
 and the physical-mapping follow-up.
 
-- [ ] **Step 2: Run the focused automated suite**
+- [x] **Step 2: Run the focused automated suite**
 
 Run:
 
@@ -328,7 +328,7 @@ python -m pytest tests/test_arducam.py tests/test_arducam_stream.py \
 
 Expected: all tests pass.
 
-- [ ] **Step 3: Run the real two-camera verifier**
+- [x] **Step 3: Run the real two-camera verifier**
 
 Run:
 
@@ -341,13 +341,13 @@ Expected: exit 0 and JSON with `ok: true`, two distinct devices, positive
 equal frame counts, valid shapes/variance/timestamps, distinct images, and
 measured cadence near 30 FPS.
 
-- [ ] **Step 4: Independently inspect the saved HDF5**
+- [x] **Step 4: Independently inspect the saved HDF5**
 
 Run a separate Python process that opens the file and prints every Arducam
 dataset's shape, dtype, timestamp endpoints, intensity mean/variance, and
 attributes. Confirm the evidence matches verifier output.
 
-- [ ] **Step 5: Run repository regression tests and syntax checks**
+- [x] **Step 5: Run repository regression tests and syntax checks**
 
 Run:
 
@@ -361,7 +361,7 @@ Expected: compilation succeeds, tests pass, and `git diff --check` is silent.
 If an unrelated baseline test requires unavailable hardware, record its exact
 failure separately; no new focused test may fail.
 
-- [ ] **Step 6: Mark this plan complete and commit documentation**
+- [x] **Step 6: Mark this plan complete and commit documentation**
 
 Change every completed checkbox to `[x]`, then run:
 
