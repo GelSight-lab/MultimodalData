@@ -23,10 +23,10 @@ import os, sys, time
 import numpy as np
 sys.path.insert(0, {repo!r})
 import h5py, hdf5plugin
-from twm.data_collection import HDF5Writer, append_camera_frames_batch
+from twm.recorder.frames import Tick
+from twm.recorder.writer import EpisodeWriter
 
 path, interval = sys.argv[1], float(sys.argv[2])
-HDF5Writer.FLUSH_INTERVAL_S = interval
 
 f = h5py.File(path, "w")
 opts = hdf5plugin.Blosc(cname="lz4", clevel=5, shuffle=hdf5plugin.Blosc.SHUFFLE)
@@ -43,7 +43,7 @@ for name in ("left", "right"):
                      chunks=(1, 480, 640, 3), dtype=np.uint8, **opts)
     g.create_dataset("timestamps", shape=(0,), maxshape=(None,), dtype=np.float64)
 
-w = HDF5Writer(batch_size=4)
+w = EpisodeWriter(capacity_bytes=int(2e9), batch_size=4, flush_interval_s=interval)
 rng = np.random.default_rng(0)
 colors = [rng.integers(0, 255, (480, 640, 3), dtype=np.uint8) for _ in range(3)]
 depths = [rng.integers(0, 4000, (480, 640), dtype=np.uint16) for _ in range(3)]
@@ -52,11 +52,13 @@ gels   = [rng.integers(0, 255, (480, 640, 3), dtype=np.uint8) for _ in range(2)]
 t0 = time.time()
 n = 0
 while time.time() - t0 < 4.0:
-    w.enqueue(f, colors, depths, gels, time.time(), [time.time()] * 2)
+    t = time.time()
+    w.submit(f, Tick(t, color=tuple(colors), depth=tuple(depths),
+                     gelsight=tuple(gels), gelsight_ts=(t, t)))
     n += 1
     time.sleep(0.05)
-w.flush()
-print(f"child: enqueued {{n}} frames, flushes={{w._flushes}}", flush=True)
+w.drain()
+print(f"child: enqueued {{n}} frames, flushes={{w.stats().flushes}}", flush=True)
 os._exit(9)          # the point of the test: no close(), no atexit, no cleanup
 '''
 

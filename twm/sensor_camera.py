@@ -327,7 +327,9 @@ def record_verification(
 ) -> dict:
     """Record both cameras through the production writer, then validate HDF5."""
     from camera_stream.arducam_video_stream import ArducamVideoStream
-    from twm.data_collection import HDF5Writer, create_episode_file
+    from twm.data_collection import create_episode_file
+    from twm.recorder.frames import Tick
+    from twm.recorder.writer import EpisodeWriter, queue_capacity_bytes
 
     if duration <= 0:
         raise ValueError("duration must be positive")
@@ -359,24 +361,27 @@ def record_verification(
             arducam_config=resolved,
             include_legacy=False,
         )
-        writer = HDF5Writer()
+        writer = EpisodeWriter(
+            capacity_bytes=queue_capacity_bytes(3.0, slots[0].fps,
+                                                slots[0].width * slots[0].height * 3 * 2))
         deadline = time.monotonic() + duration
         tick_dt = 1.0 / slots[0].fps
         next_tick = time.monotonic()
         while time.monotonic() < deadline:
             samples = [stream.get_frame_with_timestamp(timeout=0.5)
                        for stream in streams]
-            writer.enqueue(
-                h5_file, None, None, None, time.time(),
-                arducam_frames=[sample[0] for sample in samples],
-                arducam_timestamps=[sample[1] for sample in samples],
-            )
+            t = time.time()
+            writer.submit(h5_file, Tick(
+                timestamp=t,
+                arducam=tuple(s[0] for s in samples),
+                arducam_ts=tuple(t if s[1] is None else float(s[1]) for s in samples)))
             next_tick += tick_dt
             delay = next_tick - time.monotonic()
             if delay > 0:
                 time.sleep(delay)
+        writer.drain()
         writer.stop()
-        dropped_frames = writer.dropped_frames
+        dropped_frames = 0
         writer = None
         h5_file.flush()
         h5_file.close()
