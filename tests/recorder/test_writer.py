@@ -151,12 +151,42 @@ def test_periodic_flush_and_disk_sampling(tmp_path):
     clock.t += 10.5
     w.submit(f, small_tick(1))
     w.drain()
-    assert _wait(lambda: f.flushes == 1)
+    # Poll the internal counter, not the external side effect: flush() now
+    # runs outside the writer lock, so f.flushes can flip a hair before
+    # stats().flushes does. Once the internal counter is visible, the flush
+    # it counts has already happened (program order on the writer thread).
+    assert _wait(lambda: w.stats().flushes == 1)
+    assert f.flushes == 1
     s = w.stats()
     assert s.flushes == 1
     assert s.disk_free_gb == pytest.approx(123.0)
     assert w.check() is None
     w.stop()
+
+
+def test_writer_thread_never_dies_silently_on_internal_error():
+    """A raise anywhere in the loop -- not just from the sink -- must fault
+    out, not kill the thread silently and leave drain()/check() hanging or
+    reporting healthy forever."""
+    calls = {"n": 0}
+
+    def flaky_clock():
+        calls["n"] += 1
+        if calls["n"] > 1:          # call 1 is the constructor's _last_flush_t
+            raise RuntimeError("clock exploded")
+        return 1000.0
+
+    w = EpisodeWriter(capacity_bytes=TICK_BYTES * 10, sink=lambda f, t: None,
+                      clock=flaky_clock)
+    f = object()
+    w.submit(f, small_tick(0))         # writer thread's t0 = self._clock() explodes
+    assert _wait(lambda: w.stats().fault is not None)
+    with pytest.raises(WriterFault):
+        w.drain(timeout=2)
+    assert w.check()[0] == "writer_fault"
+    assert "clock exploded" in w.check()[1]
+    w.stop()
+    assert w.stats().queue_items == 0
 
 
 def test_low_disk_reported_by_check(tmp_path):

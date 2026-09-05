@@ -217,25 +217,35 @@ class EpisodeWriter:
 
     def _run(self):
         while True:
-            f, batch = self._next_batch()
-            if not batch:
-                return
-            nbytes = sum(t.nbytes() for t in batch)
-            t0 = self._clock()
             try:
-                self._sink(f, batch)
-            except Exception as exc:
-                self._record_fault(f"{type(exc).__name__}: {exc}")
-                continue
-            dt = self._clock() - t0
-            with self._cv:
-                self._queue_bytes -= nbytes
-                self._in_flight = 0
-                self._bytes_written += nbytes
-                self._write_seconds += dt
-                self._last_batch_ms = dt * 1e3
-                self._cv.notify_all()
-            self._maybe_flush(f)
+                f, batch = self._next_batch()
+                if not batch:
+                    return
+                nbytes = sum(t.nbytes() for t in batch)
+                t0 = self._clock()
+                try:
+                    self._sink(f, batch)
+                except Exception as exc:
+                    self._record_fault(f"{type(exc).__name__}: {exc}")
+                    continue
+                dt = self._clock() - t0
+                with self._cv:
+                    self._queue_bytes -= nbytes
+                    self._in_flight = 0
+                    self._bytes_written += nbytes
+                    self._write_seconds += dt
+                    self._last_batch_ms = dt * 1e3
+                    self._cv.notify_all()
+                self._maybe_flush(f)
+            except BaseException as exc:
+                # Nothing above this point may kill the thread silently: a
+                # dead thread with `_fault is None` means drain() blocks
+                # forever and check() keeps reporting healthy. Anything
+                # that escapes _next_batch(), nbytes()/clock() bookkeeping,
+                # or _maybe_flush's own setup lines ends the episode here,
+                # same as a sink failure.
+                self._record_fault(f"writer thread died: {type(exc).__name__}: {exc}")
+                return
 
     def _record_fault(self, message: str):
         log.error("writer fault: %s — episode must end", message)
@@ -253,21 +263,20 @@ class EpisodeWriter:
         elapsed = now - self._last_flush_t
         self._last_flush_t = now
         try:
+            # H5Fflush on a multi-GB file and the disk_usage() syscall can
+            # take tens of ms. They must run OUTSIDE the writer lock: this
+            # is the writer thread's only lock, and submit() on the 30 Hz
+            # capture thread takes the same lock — holding it across real
+            # I/O would stall capture, once per flush interval, with no
+            # signal anyone could act on.
             flush = getattr(f, "flush", None)
+            if flush is not None:
+                flush()
             filename = getattr(f, "filename", None)
-            # flush() and the stats update below must be one atomic section:
-            # a reader (stats()/check()) takes the same lock, so it can never
-            # observe the file's flush() side effect without also seeing
-            # `_flushes` already incremented. Splitting them across two lock
-            # acquisitions (with the syscalls below in between) left a real
-            # window — a drained-but-not-yet-flushed read raced this and
-            # failed deterministically once other threads added contention.
+            file_bytes = os.path.getsize(filename) if filename else 0
+            free_gb = self._disk_usage(os.path.dirname(filename) or ".").free / 1e9 \
+                if filename else None
             with self._cv:
-                if flush is not None:
-                    flush()
-                file_bytes = os.path.getsize(filename) if filename else 0
-                free_gb = self._disk_usage(os.path.dirname(filename) or ".").free / 1e9 \
-                    if filename else None
                 self._flushes += 1
                 if self._last_file_bytes and elapsed > 0:
                     self._file_mb_s = (file_bytes - self._last_file_bytes) / elapsed / 1e6
