@@ -8,8 +8,12 @@ from twm.recorder.schema import append_ticks, create_episode_file, write_episode
 from twm.recorder.validate import validate_episode
 
 
-def make_episode(tmp_path, n=90, fps=30, gap_at=None, sensor_lag=0.02, frozen_stream=None,
-                 valid=True, drop_last_gelsight=False):
+def make_episode(tmp_path, n=90, fps=30, gap_at=None, sensor_lag=0.02, lag_overrides=None,
+                 frozen_stream=None, valid=True, drop_last_gelsight=False):
+    """`lag_overrides` maps tick index -> gelsight lag (seconds) for that
+    tick only, so a test can inject a lag spike on a handful of ticks while
+    the rest stay at `sensor_lag` (e.g. "2% of ticks are 0.4s late")."""
+    lag_overrides = lag_overrides or {}
     f, path = create_episode_file(str(tmp_path), 0, ["A"], ["L", "R"], fps, n_realsense=1)
     rng = np.random.default_rng(0)
     ticks = []
@@ -19,8 +23,9 @@ def make_episode(tmp_path, n=90, fps=30, gap_at=None, sensor_lag=0.02, frozen_st
             t += 1.0
         tk = synthetic_tick(t, seed=k, n_realsense=1)
         gs = tk.gelsight if frozen_stream != "gelsight" else synthetic_tick(0, seed=0, n_realsense=1).gelsight
+        lag = lag_overrides.get(k, sensor_lag)
         ticks.append(Tick(t, color=tk.color, depth=tk.depth, gelsight=gs,
-                          gelsight_ts=(t - sensor_lag, t - sensor_lag),
+                          gelsight_ts=(t - lag, t - lag),
                           optitrack={"motherboard": [(t, [0, 0, 0, 0, 0, 0, 1])]}))
         t += 1.0 / fps
     append_ticks(f, ticks)
@@ -53,6 +58,37 @@ def test_defects_are_named(tmp_path, kw, failing):
     r = validate_episode(make_episode(tmp_path, **kw), fps=30, expected_duration=3.0)
     assert not r.ok
     assert failing in [c.name for c in r.checks if not c.ok]
+
+
+# ── controller ruling: sensor_sync tolerates <1% late samples, but never a
+#    sample past the drivers' own max_age/max_no_update_time contract ──────
+
+def test_sensor_sync_fails_when_2pct_of_ticks_are_late(tmp_path):
+    n = 100
+    overrides = {k: 0.4 for k in range(2)}          # 2 % of ticks, 0.4s lag
+    r = validate_episode(make_episode(tmp_path, n=n, lag_overrides=overrides), fps=30)
+    names = {c.name: c for c in r.checks}
+    assert not names["sensor_sync"].ok
+    assert "2" in names["sensor_sync"].detail
+    assert r.stats["sensor_late_count.gelsight/left"] == 2
+
+
+def test_sensor_sync_passes_when_only_half_a_percent_of_ticks_are_late(tmp_path):
+    n = 200
+    overrides = {0: 0.4}                            # 0.5 % of ticks, 0.4s lag
+    r = validate_episode(make_episode(tmp_path, n=n, lag_overrides=overrides), fps=30)
+    names = {c.name: c for c in r.checks}
+    assert names["sensor_sync"].ok, names["sensor_sync"].detail
+    assert r.stats["sensor_late_count.gelsight/left"] == 1
+
+
+def test_sensor_sync_hard_fails_a_single_tick_beyond_the_driver_contract(tmp_path):
+    n = 200
+    overrides = {0: 0.6}                            # 0.5 % of ticks, but past 0.5s hard bound
+    r = validate_episode(make_episode(tmp_path, n=n, lag_overrides=overrides), fps=30)
+    names = {c.name: c for c in r.checks}
+    assert not names["sensor_sync"].ok
+    assert "gelsight/left" in names["sensor_sync"].detail
 
 
 # ── Critical 1: unreadable files never crash the validator ──────────────────

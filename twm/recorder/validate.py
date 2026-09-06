@@ -30,7 +30,20 @@ CHECK_NAMES = ("metadata", "shapes", "tick_rate", "duration", "sensor_sync",
 
 # Sensor-clock fallback bounds (see check_sensor_sync).
 _LAG_MIN_S = -0.005
+# "Late sample" threshold: a tick's sensor timestamp lagging the tick clock
+# by more than this is unusual but not, on its own, a defect — isolated
+# scheduling jitter produces the occasional late sample even on a healthy
+# rig. Tolerate up to _MAX_LATE_FRACTION of a stream's ticks past this bound
+# before failing (see check_sensor_sync); every one is still counted and
+# reported.
 _LAG_MAX_S = 0.25
+# Hard bound: the drivers' own contract (`max_age` / `max_no_update_time`
+# in rig.py — the age at which a driver itself gives up on a stale sample).
+# A tick lagging past this could not have come from a driver honoring that
+# contract, so even a single occurrence fails outright, regardless of the
+# late-sample tolerance above.
+_LAG_HARD_MAX_S = 0.5
+_MAX_LATE_FRACTION = 0.01
 _MIN_DISTINCT_HZ = 10.0
 
 
@@ -316,12 +329,24 @@ def check_sensor_sync(f: h5py.File, stats: Dict[str, Any]) -> Check:
             problems.append(f"{label}: timestamps identical to tick clock (fallback?)")
             continue
 
-        out_of_bounds = np.sum((lag < _LAG_MIN_S) | (lag > _LAG_MAX_S))
-        if out_of_bounds > 0:
-            problems.append(f"{label}: lag out of [-5ms, 250ms] for {int(out_of_bounds)} "
-                            f"tick(s) (min={lag_min_val * 1000:.1f}ms, "
+        hard_bad = int(np.sum((lag < _LAG_MIN_S) | (lag > _LAG_HARD_MAX_S)))
+        if hard_bad > 0:
+            problems.append(f"{label}: lag outside the driver contract "
+                            f"[{_LAG_MIN_S * 1000:.0f}ms, {_LAG_HARD_MAX_S * 1000:.0f}ms] "
+                            f"for {hard_bad} tick(s) (min={lag_min_val * 1000:.1f}ms, "
                             f"max={lag_max_val * 1000:.1f}ms)")
 
+        late_mask = lag > _LAG_MAX_S
+        late_count = int(np.sum(late_mask))
+        late_fraction = late_count / T if T else 0.0
+        stats[f"sensor_late_count.{label}"] = late_count
+        if late_fraction >= _MAX_LATE_FRACTION:
+            problems.append(f"{label}: {late_count} tick(s) ({late_fraction * 100:.2f}%) "
+                            f"lag > {_LAG_MAX_S * 1000:.0f}ms, exceeds "
+                            f"{_MAX_LATE_FRACTION * 100:.0f}% tolerance")
+
+        late_note = (f", {late_count} late ({late_fraction * 100:.2f}%)"
+                    if late_count else "")
         distinct = int(np.unique(sensor_ts).shape[0])
         if span > 1.0:
             distinct_hz = distinct / span
@@ -331,11 +356,13 @@ def check_sensor_sync(f: h5py.File, stats: Dict[str, Any]) -> Check:
                                 f"{_MIN_DISTINCT_HZ:.0f} Hz")
             else:
                 details.append(f"{label}: lag [{lag_min_val * 1000:.1f}, "
-                               f"{lag_max_val * 1000:.1f}] ms, {distinct_hz:.1f} Hz distinct")
+                               f"{lag_max_val * 1000:.1f}] ms, {distinct_hz:.1f} Hz "
+                               f"distinct{late_note}")
         else:
             stats[f"distinct_sensor_hz.{label}"] = None
             details.append(f"{label}: lag [{lag_min_val * 1000:.1f}, "
-                           f"{lag_max_val * 1000:.1f}] ms, too short to judge rate")
+                           f"{lag_max_val * 1000:.1f}] ms, too short to judge "
+                           f"rate{late_note}")
 
     if problems:
         return Check("sensor_sync", False, "; ".join(problems))
