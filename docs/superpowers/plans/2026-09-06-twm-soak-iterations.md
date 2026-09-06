@@ -13,7 +13,7 @@
 - [x] Iteration 2 — validator available: 60 s on `/tmp`, every check green.
 - [x] Iteration 3 — 120 s on Disk1 with `--bandwidth_margin 1.0`: watch queue peak and file MB/s.
 - [x] Iteration 4 — 600 s on Disk1 (expected to overload at ~4 min at `vm.dirty_ratio=20`); measure the break point.
-- [ ] Iteration 5 — 600 s on Disk1 after the chosen mitigation (dirty-page budget or storage change); all checks green.
+- [x] Iteration 5a — 600 s on Disk1 with BITSHUFFLE, no Arducams: PASS. [ ] 5b — full rig incl. Arducams: blocked on the hub rewiring (+ sysctl for the extra ~40 MB/s) (dirty-page budget or storage change); all checks green.
 
 ## Ledger
 
@@ -36,6 +36,8 @@
 | `validate --expected-duration 10` fails on the 10 s smoke (T=289 < 291) | warm-up drops 10 frames + ~0.1 s start latency; 0.97 tolerance cannot cover that at 10 s | pending review decision (subtract warm-up from the requirement) | Task 3 fix round |
 
 | Iteration 4 (3 RS + 2 GS, Disk1, 600 s): auto-ended INVALID at 521.4 s — `overload: writer queue full (90 ticks, 581 MB)`; fail-fast behaved exactly as designed | 15641 frames intact, late 0.20 %, max gap 178 ms, GelSight lag ≤ 160 ms @ 18.4 Hz; intake 140 MB/s vs disk drain ~91 MB/s; Dirty 9.5 GB at exit (limit ≈ 12 GB = vm.dirty_ratio 20 % × 60 GB); report `2026-09-06-soak-iter4-validate.json` | disk-bound, not code: (a) BITSHUFFLE (Task 4) cuts ~15 % bytes; (b) raise the dirty budget (`sudo sysctl -w vm.dirty_ratio=60 vm.dirty_background_ratio=5`, ~36 GB of 54 GB available) — operator action | iteration 5 |
+
+| Iteration 5a (3 RS + 2 GS, Disk1, 600 s, BITSHUFFLE, default vm.dirty_ratio=20): **PASS** — 10 minutes, no drops | T=17839 (594.6 s), late 0.16 % (29 ticks), max gap 85 ms, queue peak 13 %, 69.6 GB = 3.90 MB/tick (−17 % vs SHUFFLE), GelSight lag 18–157 ms @ 16.7–17.1 Hz; validator 8/8 ok with `--expected-duration 600`; report `2026-09-06-soak-iter5a-validate.json` | BITSHUFFLE (Task 4) closed the gap for this rig without OS tuning | this run |
 
 ## Rejected ideas
 - zstd-3 (shuffle or bitshuffle): GelSight 1.45–1.71×, color 1.47–1.59× but 6–14 ms/frame → ~10–20 ticks/s single-threaded; too slow for 30 Hz. Rejected.
