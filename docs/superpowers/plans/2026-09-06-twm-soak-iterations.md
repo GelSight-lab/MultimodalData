@@ -43,6 +43,9 @@
 
 | Arducam retest 07:2x (idle for hours, GelSights idle): TWML0001 no frames in 640x480 MJPG AND 320x240 YUYV (12 s each); TWMR0001 5 frames OK at 640x480 MJPG, then EPROTO on the next open | not bandwidth (smallest mode fails; uvcvideo quirks already 0xffffffff); device/hub fault on hub 1-12 | hardware only: move both Arducams off hub 1-12 — 5b remains blocked | — |
 
+| `ArducamVideoStream.stop()` released the V4L2 capture while the reader thread was still blocked in `read()` (join timeout 1 s < OpenCV select timeout) | rig: our stream class worked once then failed on the second open, while plain OpenCV open/read/release worked repeatedly; unit test `test_stop_never_releases_the_capture_while_a_read_is_in_progress` reproduces the race | reader thread owns and releases the handle; `stop()` waits up to 15 s (commit 07a5ec2) | unit test + suite 158 green; hardware still alternates → second cause |
+| Right Arducam degrades with repeated open/close on hub 1-12 regardless of `CAP_PROP_BUFFERSIZE` (default/1/4): 30-frame cycles go OK,OK,OK,FAIL / OK,OK,FAIL,FAIL / … / FAIL×4; left Arducam gives no frames in ANY mode (MJPG 1920x1200…320x240, YUYV) via v4l2-ctl, GStreamer v4l2src, OpenCV; no uvcvideo/usb errors in dmesg; controls identical and sane | rig experiments 14:44–15:10 after the hub re-authorization (`authorized` had been left at 0 by the half-executed power-cycle) | none in code; user reports both work in Cheese — watch armed to capture Cheese's negotiation; otherwise move the Arducams to the PC's root ports / re-cable | pending |
+
 ## Rejected ideas
 - zstd-3 (shuffle or bitshuffle): GelSight 1.45–1.71×, color 1.47–1.59× but 6–14 ms/frame → ~10–20 ticks/s single-threaded; too slow for 30 Hz. Rejected.
 - JPEG q95 for color/GelSight: 8.5× / 18.7×, 5 ms/frame — would solve the disk gap but is lossy; needs the user's decision, not taken.
