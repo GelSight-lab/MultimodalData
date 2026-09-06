@@ -1,5 +1,6 @@
 import numpy as np
 import h5py
+import hdf5plugin
 import pytest
 
 from twm.recorder.frames import Tick, synthetic_tick
@@ -103,3 +104,15 @@ def test_arducam_groups_record_configured_serial(tmp_path):
         import json
         meta = json.loads(g["metadata"].attrs["arducam_config"])
         assert [m["serial"] for m in meta] == ["TWML0001", "TWMR0001"]
+
+
+def test_frame_datasets_use_lz4_bitshuffle(tmp_path):
+    f, _ = create_episode_file(str(tmp_path), 9, ["A"], ["L", "R"], 30, n_realsense=1)
+    plist = f["gelsight/left/frames"].id.get_create_plist()
+    filters = [plist.get_filter(i) for i in range(plist.get_nfilters())]
+    blosc = [fl for fl in filters if fl[0] == hdf5plugin.BLOSC_ID]
+    assert blosc, filters
+    cd_values = blosc[0][2]
+    assert cd_values[4] == 5                                   # clevel
+    assert cd_values[5] == hdf5plugin.Blosc.BITSHUFFLE          # shuffle mode
+    f.close()

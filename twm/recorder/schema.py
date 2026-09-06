@@ -28,9 +28,10 @@ GELSIGHT_SIDES = ("left", "right")
 ARDUCAM_SLOTS = ("cam0", "cam1")
 N_REALSENSE = 3
 
-# BLOSC LZ4 — benchmarked at ~100 fps of full-rig ticks vs 30 fps capture.
+# BLOSC LZ4 clevel 5 bitshuffle — measured on real frames: GelSight 1.48×,
+# color 1.29×, depth 3.09×; encodes color 3× faster (2.2 ms vs 7.3 ms/frame).
 _BLOSC = dict(hdf5plugin.Blosc(cname="lz4", clevel=5,
-                               shuffle=hdf5plugin.Blosc.SHUFFLE))
+                               shuffle=hdf5plugin.Blosc.BITSHUFFLE))
 
 
 def _frame_dataset(group, name, frame_shape, dtype):
