@@ -138,3 +138,49 @@ def test_stream_reports_a_stale_frame_after_runtime_capture_stops():
         stream.get_frame_with_timestamp(timeout=0.1, max_age=0.01)
 
     stream.stop()
+
+
+class BlockingReadCapture(FakeCapture):
+    """read() blocks like OpenCV's select() until `unblock` is set; records
+    whether release() was called while a read was still in progress."""
+
+    def __init__(self, frame):
+        super().__init__(frames=[frame])
+        self.unblock = __import__("threading").Event()
+        self.in_read = __import__("threading").Event()
+        self.released_during_read = False
+
+    def read(self):
+        if self.frames:
+            return True, self.frames.pop(0)
+        self.in_read.set()
+        self.unblock.wait(timeout=5.0)
+        self.in_read.clear()
+        return False, None
+
+    def release(self):
+        if self.in_read.is_set():
+            self.released_during_read = True
+        self.released = True
+
+
+def test_stop_never_releases_the_capture_while_a_read_is_in_progress():
+    """Releasing a V4L2 capture from another thread while read() is blocked
+    leaves the device streaming with pending URBs; the next open then fails
+    with EPROTO (seen on the rig: works once, fails on the second open)."""
+    frame = np.zeros((480, 640, 3), np.uint8)
+    capture = BlockingReadCapture(frame)
+    stream = ArducamVideoStream(CameraSlot("cam1", "usb-B", serial="TWMR0001"),
+                                "/dev/video6", capture_factory=lambda *a: capture)
+    stream.start(timeout=1.0)
+    assert capture.in_read.wait(1.0), "reader never entered the blocking read"
+    t0 = time.monotonic()
+    stopper = __import__("threading").Thread(target=stream.stop)
+    stopper.start()
+    time.sleep(1.5)                       # longer than the old 1 s join timeout
+    assert capture.released is False, "stop() released the capture while read() was blocked"
+    capture.unblock.set()
+    stopper.join(5.0)
+    assert capture.released is True
+    assert capture.released_during_read is False
+    assert time.monotonic() - t0 < 6.0

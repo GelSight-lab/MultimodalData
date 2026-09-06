@@ -91,26 +91,44 @@ class ArducamVideoStream:
             raise
         return self
 
+    # A V4L2 read() can block for OpenCV's select() timeout (~10 s) when the
+    # camera stalls. Releasing the capture from another thread while that read
+    # is in flight leaves the UVC interface streaming with pending URBs, and
+    # the NEXT open of the device fails with VIDIOC_STREAMON EPROTO (seen on
+    # the rig: the camera worked once, then failed on every second open). So
+    # the reader thread owns the handle and releases it only after its last
+    # read has returned; stop() waits for that instead of racing it.
+    STOP_JOIN_TIMEOUT_S = 15.0
+
+    def _release_capture(self):
+        with self._condition:
+            capture, self._capture = self._capture, None
+        if capture is not None:
+            capture.release()
+
     def _update(self):
         expected = (self.config.height, self.config.width, 3)
-        while self._running.is_set():
-            ok, frame = self._capture.read()
-            if not ok or frame is None:
-                time.sleep(0.002)
-                continue
-            timestamp = time.time()
-            if frame.shape != expected:
+        try:
+            while self._running.is_set():
+                ok, frame = self._capture.read()
+                if not ok or frame is None:
+                    time.sleep(0.002)
+                    continue
+                timestamp = time.time()
+                if frame.shape != expected:
+                    with self._condition:
+                        self._error = RuntimeError(
+                            f"{self._tag()} returned shape {frame.shape}; expected {expected}"
+                        )
+                        self._running.clear()
+                        self._condition.notify_all()
+                    return
                 with self._condition:
-                    self._error = RuntimeError(
-                        f"{self._tag()} returned shape {frame.shape}; expected {expected}"
-                    )
-                    self._running.clear()
+                    self._frame = frame.copy()
+                    self._frame_ts = timestamp
                     self._condition.notify_all()
-                return
-            with self._condition:
-                self._frame = frame.copy()
-                self._frame_ts = timestamp
-                self._condition.notify_all()
+        finally:
+            self._release_capture()
 
     def get_frame_with_timestamp(self, timeout: float = 0.5,
                                  max_age: float = 0.5):
@@ -145,9 +163,14 @@ class ArducamVideoStream:
         self._running.clear()
         thread = self._thread
         if thread is not None and thread is not threading.current_thread():
-            thread.join(timeout=1.0)
+            thread.join(timeout=self.STOP_JOIN_TIMEOUT_S)
+            if thread.is_alive():
+                # Still inside read(); the thread releases the handle itself
+                # when that read returns. Releasing here would corrupt the
+                # device state for the next open.
+                print(f"[{self._tag()}] WARNING: reader still blocked in read() "
+                      f"after {self.STOP_JOIN_TIMEOUT_S:.0f}s; deferring release")
+                self._thread = None
+                return
         self._thread = None
-        capture = self._capture
-        if capture is not None:
-            capture.release()
-        self._capture = None
+        self._release_capture()
