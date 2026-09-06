@@ -2,6 +2,8 @@
 
 **Goal:** prove on the rig that every stream is recorded in the right format, per-stream timestamps are synchronized, and a 10-minute episode has no dropped or late ticks. Up to five debug→verify iterations; each iteration = a headless `soak` run + `validate` + root-cause any failure + fix.
 
+**Status (2026-09-06): spec acceptance item 2 — a 600 s soak with both RealSense, both GelSights, both Arducams, `--no_optitrack`, exiting 0 — is NOT met.** Iteration 5a's 600 s PASS was 3 RS + 2 GS only, with BITSHUFFLE; every run that included both Arducams (iteration 1, 1b onward) hit the hub fault below and never got a validated soak of the full rig. The Arducam capture path is therefore unproven on the rig for a sustained run; it has only been shown to work briefly before the hub resets a device. Follow-up 5b (full rig incl. Arducams, once the hub is rewired) is the remaining work to close this out.
+
 **Key facts**
 - Branch `feature/twm-soak-test` in `.worktrees/twm-arducam`. Commands: `python -m twm.recorder soak --task <t> --duration <s> [--data_dir D] [--no_optitrack] [--realsense_serials ...] [--bandwidth_margin M] [--min_free_gb G]`, `python -m twm.recorder validate <h5> --expected-duration <s> --report out.json`, `python -m twm.recorder bench --dir D --seconds 5 --arducams 2`.
 - Rig (2026-09-06): 3× D415 (`143322063538`, `104122062574`, `217222066989`), GelSight `2DUPB53G` left / `2BKRDTAD` right, Arducam `TWML0001` left (cam0) / `TWMR0001` right (cam1). No ROS master → `--no_optitrack`.
