@@ -140,6 +140,9 @@ def append_ticks(f: h5py.File, ticks: Sequence[Tick]) -> None:
             _grow(f[f"gelsight/{side}/timestamps"], end)[n:] = [
                 t.gelsight_ts[j] for t in ticks]
     if "arducam" in f:
+        # t.arducam[j] is trusted to be cam0-then-cam1 (matching ARDUCAM_SLOTS)
+        # because sensor_camera.validate_config sorts the two slots by name
+        # before resolve_slots ever builds a Tick; nothing here re-checks it.
         for j, slot in enumerate(ARDUCAM_SLOTS):
             _write_frames(_grow(f[f"arducam/{slot}/frames"], end), n,
                           (t.arducam[j] for t in ticks))

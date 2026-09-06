@@ -130,7 +130,10 @@ of the preview shows `writer <queue %> | <MB/s> | disk <GB> (~min left) | OK/WAR
 Before every episode the recorder checks free disk, OptiTrack freshness for
 the active bodies, and that the writer is idle. At startup it also writes
 two seconds of synthetic frames through the real pipeline and refuses to
-run below 45 ticks/s (30 fps × 1.5). Run the same test by hand:
+run below 45 ticks/s (30 fps × 1.5) for the legacy rig, scaled up to
+~58 ticks/s when two Arducams are configured (the requirement tracks the
+extra bytes per tick, not a different tick rate). Run the same test by
+hand:
 
     python -m twm.recorder bench --dir /media/yxma/Disk1/twm/data --seconds 5
 

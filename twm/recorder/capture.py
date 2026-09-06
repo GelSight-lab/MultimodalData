@@ -95,6 +95,9 @@ class CaptureLoop:
         self._stop.set()
         if self._thread.is_alive():
             self._thread.join(timeout=2.0)
+            if self._thread.is_alive():
+                log.warning("capture thread did not stop within 2s; "
+                           "it may be blocked in a sensor read")
 
     # ── GUI-thread API (all non-blocking) ────────────────────────────────────
     def latest(self) -> Optional[CaptureSnapshot]:

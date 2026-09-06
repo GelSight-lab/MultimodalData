@@ -248,13 +248,16 @@ class EpisodeWriter:
                 return
 
     def _record_fault(self, message: str):
-        log.error("writer fault: %s — episode must end", message)
         with self._cv:
+            discarded_ticks = len(self._items) + self._in_flight
+            discarded_mb = self._queue_bytes / 1e6
             self._fault = message
             self._items.clear()
             self._queue_bytes = 0
             self._in_flight = 0
             self._cv.notify_all()
+        log.error("writer fault: %s — episode must end, discarding %d queued "
+                 "ticks (%.1f MB)", message, discarded_ticks, discarded_mb)
 
     def _maybe_flush(self, f):
         now = self._clock()

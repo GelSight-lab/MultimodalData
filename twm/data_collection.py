@@ -43,7 +43,9 @@ def append_camera_frame(f, color_frames, depth_frames, gs_frames, timestamp):
 
 class HDF5Writer:
     """Legacy adapter over EpisodeWriter. Never drops: `enqueue` raises
-    WriterOverloaded when `maxsize` ticks are already buffered."""
+    WriterOverloaded once `maxsize * full_rig_tick_nbytes()` BYTES are
+    already buffered — `maxsize` is a byte budget expressed as a number of
+    full-rig ticks, not a hard cap on how many ticks may be queued."""
 
     FLUSH_INTERVAL_S = 10.0
 

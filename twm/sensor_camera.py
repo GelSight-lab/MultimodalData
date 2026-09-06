@@ -180,7 +180,8 @@ def _inventory(devices: Sequence[VideoDevice]) -> str:
 def resolve_slots(
     slots: Iterable[CameraSlot], devices: Sequence[VideoDevice] | None = None
 ) -> tuple[ResolvedCamera, ResolvedCamera]:
-    """Resolve each logical slot to exactly one capture node by udev ID_PATH."""
+    """Resolve each logical slot to exactly one capture node by udev serial
+    (ID_SERIAL_SHORT), falling back to ID_PATH when the slot has no serial."""
     slots = tuple(slots)
     devices = tuple(enumerate_capture_devices() if devices is None else devices)
     resolved = []
@@ -342,8 +343,8 @@ def record_verification(
 ) -> dict:
     """Record both cameras through the production writer, then validate HDF5."""
     from camera_stream.arducam_video_stream import ArducamVideoStream
-    from twm.data_collection import create_episode_file
     from twm.recorder.frames import Tick
+    from twm.recorder.schema import create_episode_file
     from twm.recorder.writer import EpisodeWriter, WriterOverloaded, queue_capacity_bytes
 
     if duration <= 0:
