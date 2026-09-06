@@ -330,3 +330,33 @@ def test_defects_are_named(tmp_path, kw, failing):
 
 - [ ] **Step 4: Run** the new tests, then `python -m pytest tests -q`, then a smoke: record a 2-second headless episode into `/tmp/twm_soak_smoke` with `python -m twm.recorder soak --task smoke --duration 2 --data_dir /tmp/twm_soak_smoke --no_optitrack --realsense_serials 143322063538 --no_bandwidth_test` ONLY if the hardware is free (it is a real recording on the attached cameras; skip with a note if any device is busy), then `python -m twm.recorder validate` on the produced file and paste the JSON into the report.
 - [ ] **Step 5: Commit** — `feat(recorder): episode validator for format, sync, and drop checks`.
+
+---
+
+### Task 4: BITSHUFFLE for the BLOSC filter
+
+**Why:** measured on real frames from `test/2026-06-29/episode_002.h5`: lz4 clevel 5 with byte SHUFFLE stores GelSight at 1.00×, color at 1.05×, depth at 3.57×; the same codec with BITSHUFFLE stores GelSight 1.48×, color 1.29×, depth 3.09× and encodes color 3× faster (2.2 ms vs 7.3 ms per frame). Net effect on the rig: about 15 % fewer bytes per tick and less CPU on the writer thread, losslessly.
+
+**Files:**
+- Modify: `twm/recorder/schema.py` (`_BLOSC`), its module docstring line about compression, and the comment in `twm/recorder/writer.py` or README that quotes "LZ4 clevel 5 shuffle" if any.
+- Test: `tests/recorder/test_schema.py`
+
+- [ ] **Step 1: Failing test**
+```python
+def test_frame_datasets_use_lz4_bitshuffle(tmp_path):
+    f, _ = create_episode_file(str(tmp_path), 9, ["A"], ["L", "R"], 30, n_realsense=1)
+    plist = f["gelsight/left/frames"].id.get_create_plist()
+    filters = [plist.get_filter(i) for i in range(plist.get_nfilters())]
+    blosc = [fl for fl in filters if fl[0] == hdf5plugin.BLOSC_ID]
+    assert blosc, filters
+    cd_values = blosc[0][2]
+    assert cd_values[4] == 5                                   # clevel
+    assert cd_values[5] == hdf5plugin.Blosc.BITSHUFFLE          # shuffle mode
+    f.close()
+```
+(`hdf5plugin.Blosc.BITSHUFFLE == 2`, `SHUFFLE == 1`; the BLOSC cd_values layout is `[version, blosc_version, typesize, blocksize, clevel, shuffle, compressor]`.)
+
+- [ ] **Step 2: Run, expect** `assert 1 == 2` on the shuffle mode.
+- [ ] **Step 3: Implement** `_BLOSC = dict(hdf5plugin.Blosc(cname="lz4", clevel=5, shuffle=hdf5plugin.Blosc.BITSHUFFLE))` and update the comment with the measured numbers above.
+- [ ] **Step 4: Run** `python -m pytest tests -q` (the crash script and the bench also still work: `python twm/scripts/test_crash_leaves_readable_h5.py`; `python -m twm.recorder bench --dir /tmp --seconds 2 --arducams 2`).
+- [ ] **Step 5: Commit** — `perf(recorder): BLOSC bitshuffle — lossless, smaller, faster on real frames`.
