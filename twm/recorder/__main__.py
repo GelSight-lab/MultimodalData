@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import sys
 from pathlib import Path
@@ -43,6 +44,25 @@ def main(argv=None) -> int:
                                   n_arducam=a.arducams)
         print(("ok   " if r.ok else "FAIL ") + r.detail)
         return 0 if r.ok else 1
+    if argv and argv[0] == "validate":
+        from twm.recorder.validate import validate_episode
+        p = argparse.ArgumentParser(prog="python -m twm.recorder validate",
+                                    description="Validate a recorded episode's format, "
+                                                "timing, and content.")
+        p.add_argument("path")
+        p.add_argument("--fps", type=int, default=30)
+        p.add_argument("--expected-duration", type=float, default=None)
+        p.add_argument("--max-tick-gap", type=float, default=0.5)
+        p.add_argument("--report", default=None,
+                       help="Also write the JSON report to this path.")
+        a = p.parse_args(argv[1:])
+        report = validate_episode(a.path, fps=a.fps, expected_duration=a.expected_duration,
+                                  max_tick_gap_s=a.max_tick_gap)
+        text = json.dumps(report.to_dict(), indent=2)
+        print(text)
+        if a.report:
+            Path(a.report).write_text(text)
+        return 0 if report.ok else 1
     if argv and argv[0] == "run":
         argv = argv[1:]
     from twm.recorder.app import main as run_main
