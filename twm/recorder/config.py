@@ -12,9 +12,10 @@ REALSENSE_SERIALS: Tuple[str, ...] = (
     "217222066989",
 )
 GELSIGHT_SERIALS: Dict[str, str] = {
-    # Left unit replaced 2026-08-07 (old 2DUPB53G failed USB enumeration).
-    "left": "28YGZL6K",
-    "right": "2BGLKZNT",
+    # The units on the rig as of 2026-09-06 (confirmed by the operator).
+    # 28YGZL6K / 2BGLKZNT were the 2026-08-07 replacements; not attached now.
+    "left": "2DUPB53G",
+    "right": "2BKRDTAD",
 }
 DATA_DIR = Path("/media/yxma/Disk1/twm/data")
 FPS = 30
