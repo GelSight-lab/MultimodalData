@@ -50,18 +50,23 @@ def main(argv=None) -> int:
                                     description="Validate a recorded episode's format, "
                                                 "timing, and content.")
         p.add_argument("path")
-        p.add_argument("--fps", type=int, default=30)
+        p.add_argument("--fps", type=int, default=None,
+                       help="Expected recording fps; defaults to metadata.attrs['fps'].")
         p.add_argument("--expected-duration", type=float, default=None)
         p.add_argument("--max-tick-gap", type=float, default=0.5)
+        p.add_argument("--warmup-frames", type=int, default=10)
         p.add_argument("--report", default=None,
                        help="Also write the JSON report to this path.")
         a = p.parse_args(argv[1:])
         report = validate_episode(a.path, fps=a.fps, expected_duration=a.expected_duration,
-                                  max_tick_gap_s=a.max_tick_gap)
+                                  max_tick_gap_s=a.max_tick_gap,
+                                  warmup_frames=a.warmup_frames)
         text = json.dumps(report.to_dict(), indent=2)
         print(text)
         if a.report:
-            Path(a.report).write_text(text)
+            report_path = Path(a.report)
+            report_path.parent.mkdir(parents=True, exist_ok=True)
+            report_path.write_text(text)
         return 0 if report.ok else 1
     if argv and argv[0] == "run":
         argv = argv[1:]

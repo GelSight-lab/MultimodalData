@@ -4,10 +4,14 @@ timing, and content invariants the recorder is supposed to guarantee.
 Each check takes the open (read-only) file and a mutable `stats` dict, and
 returns a `Check`. A check that raises is caught by `validate_episode` and
 turned into a failing `Check` naming the exception, so one bad dataset
-never hides the results of the other checks.
+never hides the results of the other checks. A file that cannot even be
+opened (truncated, zero-byte, corrupted) never raises out of
+`validate_episode` either: it comes back as a report with every check
+failing.
 """
 from __future__ import annotations
 
+import json
 import logging
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
@@ -23,6 +27,11 @@ logger = logging.getLogger(__name__)
 
 CHECK_NAMES = ("metadata", "shapes", "tick_rate", "duration", "sensor_sync",
               "content", "optitrack", "writer")
+
+# Sensor-clock fallback bounds (see check_sensor_sync).
+_LAG_MIN_S = -0.005
+_LAG_MAX_S = 0.25
+_MIN_DISTINCT_HZ = 10.0
 
 
 def _to_jsonable(value: Any) -> Any:
@@ -67,25 +76,44 @@ class ValidationReport:
         }
 
 
+def _safe_T(f: h5py.File) -> int:
+    """T from the timestamps dataset, or 0 if it's missing/unreadable.
+
+    Used only for the fallback assignment after `check_tick_rate` (which
+    normally sets stats["T"] itself); this must never raise, because it
+    runs outside the per-check `run()` safety net in `validate_episode`.
+    """
+    try:
+        return int(f["timestamps"].shape[0])
+    except Exception:
+        return 0
+
+
 def _frame_streams(f: h5py.File):
-    """Yield (label, dataset, is_depth) for every configured frame dataset."""
+    """Yield (label, dataset, is_depth, expected_frame_shape, expected_dtype)
+    for every configured frame dataset. Arducam's expected per-frame shape
+    comes from its own group's height/width attrs (its resolution need not
+    match the RealSense/GelSight default)."""
     if "realsense" in f:
         for name in sorted(f["realsense"]):
             g = f[f"realsense/{name}"]
             if "color" in g:
-                yield f"realsense/{name}/color", g["color"], False
+                yield f"realsense/{name}/color", g["color"], False, COLOR_SHAPE, np.uint8
             if "depth" in g:
-                yield f"realsense/{name}/depth", g["depth"], True
+                yield f"realsense/{name}/depth", g["depth"], True, DEPTH_SHAPE, np.uint16
     if "gelsight" in f:
         for side in GELSIGHT_SIDES:
             ds_path = f"gelsight/{side}/frames"
             if ds_path in f:
-                yield ds_path, f[ds_path], False
+                yield ds_path, f[ds_path], False, COLOR_SHAPE, np.uint8
     if "arducam" in f:
         for slot in ARDUCAM_SLOTS:
             ds_path = f"arducam/{slot}/frames"
             if ds_path in f:
-                yield ds_path, f[ds_path], False
+                g = f[f"arducam/{slot}"]
+                height = int(g.attrs.get("height", COLOR_SHAPE[0]))
+                width = int(g.attrs.get("width", COLOR_SHAPE[1]))
+                yield ds_path, f[ds_path], False, (height, width, 3), np.uint8
 
 
 def _sensor_streams(f: h5py.File):
@@ -129,18 +157,52 @@ def check_metadata(f: h5py.File, stats: Dict[str, Any]) -> Check:
                 f"valid=True, ended_by={ended_by}, frame_count={frame_count}, gap_count=0")
 
 
+def _missing_promised_streams(f: h5py.File) -> List[str]:
+    """Groups metadata.attrs promises (by serial/config lists) that aren't there."""
+    attrs = f["metadata"].attrs
+    missing = []
+
+    realsense_serials = attrs.get("realsense_serials", [])
+    for i in range(len(realsense_serials)):
+        if f"realsense/cam{i}" not in f:
+            missing.append(f"realsense/cam{i}")
+
+    gelsight_serials = attrs.get("gelsight_serials", [])
+    if len(gelsight_serials) > 0:
+        for side in GELSIGHT_SIDES:
+            if f"gelsight/{side}" not in f:
+                missing.append(f"gelsight/{side}")
+
+    arducam_json = attrs.get("arducam_config", None)
+    if arducam_json:
+        try:
+            arducam_list = json.loads(arducam_json)
+        except (TypeError, ValueError) as exc:
+            return missing + [f"arducam_config: unparseable ({exc})"]
+        for c in arducam_list:
+            slot = c.get("slot")
+            if slot and f"arducam/{slot}" not in f:
+                missing.append(f"arducam/{slot}")
+
+    return missing
+
+
 def check_shapes(f: h5py.File, stats: Dict[str, Any]) -> Check:
     T = stats.get("T", int(f["timestamps"].shape[0]))
     problems = []
     checked = 0
-    for label, ds, is_depth in _frame_streams(f):
+
+    missing = _missing_promised_streams(f)
+    if missing:
+        problems.append("missing stream(s) promised by metadata: " + ", ".join(missing))
+
+    for label, ds, is_depth, frame_shape, dtype in _frame_streams(f):
         checked += 1
-        expected_shape = (T, *DEPTH_SHAPE) if is_depth else (T, *COLOR_SHAPE)
-        expected_dtype = np.uint16 if is_depth else np.uint8
+        expected_shape = (T, *frame_shape)
         if ds.shape != expected_shape:
             problems.append(f"{label}: shape {ds.shape} != {expected_shape}")
-        elif ds.dtype != expected_dtype:
-            problems.append(f"{label}: dtype {ds.dtype} != {expected_dtype}")
+        elif ds.dtype != dtype:
+            problems.append(f"{label}: dtype {ds.dtype} != {dtype}")
     for label, ds in _sensor_streams(f):
         checked += 1
         if ds.shape != (T,):
@@ -168,16 +230,20 @@ def check_tick_rate(f: h5py.File, stats: Dict[str, Any], fps: int,
         stats["median_dt"] = 0.0
         stats["max_dt"] = 0.0
         stats["late_fraction"] = 0.0
+        stats["late_count"] = 0
         return Check("tick_rate", False, f"only {T} tick(s), can't measure rate")
 
     dt = np.diff(ts)
     expected_dt = 1.0 / fps
     median_dt = float(np.median(dt))
     max_dt = float(np.max(dt))
-    late_fraction = float(np.mean(dt > 1.5 * expected_dt))
+    late_mask = dt > 1.5 * expected_dt
+    late_count = int(np.sum(late_mask))
+    late_fraction = float(np.mean(late_mask))
     stats["median_dt"] = median_dt
     stats["max_dt"] = max_dt
     stats["late_fraction"] = late_fraction
+    stats["late_count"] = late_count
 
     problems = []
     if not np.all(dt > 0):
@@ -189,28 +255,28 @@ def check_tick_rate(f: h5py.File, stats: Dict[str, Any], fps: int,
     if max_dt > max_tick_gap_s:
         problems.append(f"max dt {max_dt:.3f}s > max_tick_gap_s {max_tick_gap_s:.3f}s")
     if late_fraction >= 0.01:
-        problems.append(f"late_fraction {late_fraction * 100:.2f}% >= 1%")
+        problems.append(f"late_fraction {late_fraction * 100:.2f}% >= 1% ({late_count} tick(s))")
 
     if problems:
         return Check("tick_rate", False, "; ".join(problems))
     return Check("tick_rate", True,
                 f"median dt {median_dt * 1000:.2f} ms, max dt {max_dt * 1000:.2f} ms, "
-                f"late {late_fraction * 100:.2f}%")
+                f"late {late_fraction * 100:.2f}% ({late_count} tick(s))")
 
 
 def check_duration(f: h5py.File, stats: Dict[str, Any], fps: int,
-                   expected_duration: Optional[float]) -> Check:
+                   expected_duration: Optional[float], warmup_frames: int) -> Check:
     T = stats.get("T", int(f["timestamps"].shape[0]))
     if expected_duration is None:
-        return Check("duration", True, "no --expected-duration given, skipped")
-    required = 0.97 * expected_duration * fps
+        logger.warning("duration check skipped: no --expected-duration given for %s",
+                       f.filename)
+        return Check("duration", True, "skipped (no --expected-duration)")
+    required = 0.97 * (expected_duration * fps - warmup_frames)
+    term = (f"0.97 x ({expected_duration}s x {fps}fps - {warmup_frames} warmup) "
+           f"= {required:.1f}")
     if T < required:
-        return Check("duration", False,
-                     f"T={T} < required {required:.1f} "
-                     f"(0.97 x {expected_duration}s x {fps}fps)")
-    return Check("duration", True,
-                f"T={T} >= required {required:.1f} "
-                f"(0.97 x {expected_duration}s x {fps}fps)")
+        return Check("duration", False, f"T={T} < required {term}")
+    return Check("duration", True, f"T={T} >= required {term}")
 
 
 def check_sensor_sync(f: h5py.File, stats: Dict[str, Any]) -> Check:
@@ -238,8 +304,19 @@ def check_sensor_sync(f: h5py.File, stats: Dict[str, Any]) -> Check:
         lag = tick_ts - sensor_ts
         lag_min_val = float(np.min(lag))
         lag_max_val = float(np.max(lag))
+        stats[f"sensor_lag_min_s.{label}"] = lag_min_val
         stats[f"sensor_lag_max_s.{label}"] = lag_max_val
-        out_of_bounds = np.sum((lag < -0.005) | (lag > 0.25))
+
+        if np.array_equal(sensor_ts, tick_ts):
+            # The rig substitutes the tick clock when a stream reports no
+            # capture timestamp (rig.py's `frame_with_timestamp` fallback).
+            # That produces lag == 0 everywhere, which would otherwise pass
+            # every bound below without ever having measured a real sensor
+            # clock at all.
+            problems.append(f"{label}: timestamps identical to tick clock (fallback?)")
+            continue
+
+        out_of_bounds = np.sum((lag < _LAG_MIN_S) | (lag > _LAG_MAX_S))
         if out_of_bounds > 0:
             problems.append(f"{label}: lag out of [-5ms, 250ms] for {int(out_of_bounds)} "
                             f"tick(s) (min={lag_min_val * 1000:.1f}ms, "
@@ -249,13 +326,14 @@ def check_sensor_sync(f: h5py.File, stats: Dict[str, Any]) -> Check:
         if span > 1.0:
             distinct_hz = distinct / span
             stats[f"distinct_sensor_hz.{label}"] = distinct_hz
-            if distinct_hz < 10.0:
-                problems.append(f"{label}: distinct sensor rate {distinct_hz:.1f} Hz < 10 Hz")
+            if distinct_hz < _MIN_DISTINCT_HZ:
+                problems.append(f"{label}: distinct sensor rate {distinct_hz:.1f} Hz < "
+                                f"{_MIN_DISTINCT_HZ:.0f} Hz")
             else:
                 details.append(f"{label}: lag [{lag_min_val * 1000:.1f}, "
                                f"{lag_max_val * 1000:.1f}] ms, {distinct_hz:.1f} Hz distinct")
         else:
-            stats[f"distinct_sensor_hz.{label}"] = 0.0
+            stats[f"distinct_sensor_hz.{label}"] = None
             details.append(f"{label}: lag [{lag_min_val * 1000:.1f}, "
                            f"{lag_max_val * 1000:.1f}] ms, too short to judge rate")
 
@@ -278,7 +356,7 @@ def check_content(f: h5py.File, stats: Dict[str, Any], sample_frames: int) -> Ch
 
     problems = []
     checked = []
-    for label, ds, is_depth in _frame_streams(f):
+    for label, ds, is_depth, _frame_shape, _dtype in _frame_streams(f):
         frames = [np.asarray(ds[int(i)]) for i in idx]
         stds = [float(np.std(fr)) for fr in frames]
         low_std = [i for i, s in zip(idx, stds) if s <= 1.0]
@@ -367,13 +445,35 @@ def check_writer(f: h5py.File, stats: Dict[str, Any]) -> Check:
                 f"writer_mean_mb_s={stats['writer_mean_mb_s']:.1f}")
 
 
-def validate_episode(path: str, fps: int = 30, expected_duration: Optional[float] = None,
-                     max_tick_gap_s: float = 0.5, sample_frames: int = 20) -> ValidationReport:
+def _unreadable_file_report(path: str, exc: Exception) -> ValidationReport:
+    checks = [Check("metadata", False, f"could not open file: {type(exc).__name__}: {exc}")]
+    checks += [Check(name, False, "file not readable")
+              for name in CHECK_NAMES if name != "metadata"]
+    return ValidationReport(path=str(path), checks=checks, stats={})
+
+
+def validate_episode(path: str, fps: Optional[int] = 30, expected_duration: Optional[float] = None,
+                     max_tick_gap_s: float = 0.5, sample_frames: int = 20,
+                     warmup_frames: int = 10) -> ValidationReport:
     """Open `path` read-only and run every check in order.
 
     A check that raises never aborts the report: the exception is recorded
-    as a failing `Check` naming the exception type and message.
+    as a failing `Check` naming the exception type and message. A file that
+    cannot be opened at all (truncated, zero-byte, corrupted) never raises
+    either: it comes back as a report with a failing `metadata` check
+    carrying the exception text and every other check failed as "file not
+    readable".
+
+    `fps=None` reads the recording fps from `metadata.attrs["fps"]`
+    (falling back to 30 if that's unavailable too) — useful for the CLI,
+    which passes None when `--fps` was not given.
     """
+    try:
+        f = h5py.File(path, "r")
+    except Exception as exc:  # noqa: BLE001 - deliberately broad, see docstring
+        logger.exception("could not open %s", path)
+        return _unreadable_file_report(path, exc)
+
     stats: Dict[str, Any] = {}
     checks: List[Check] = []
 
@@ -384,18 +484,28 @@ def validate_episode(path: str, fps: int = 30, expected_duration: Optional[float
             logger.exception("check %s raised", name)
             checks.append(Check(name, False, f"{type(exc).__name__}: {exc}"))
 
-    with h5py.File(path, "r") as f:
+    try:
+        if fps is None:
+            try:
+                fps = int(f["metadata"].attrs.get("fps", 30))
+            except Exception:
+                logger.warning("could not read fps from metadata attrs for %s; "
+                               "defaulting to 30", path)
+                fps = 30
+
         # tick_rate computes T first; other checks read stats["T"] rather
         # than re-reading the dataset shape.
         run("tick_rate", lambda: check_tick_rate(f, stats, fps, max_tick_gap_s))
-        stats.setdefault("T", int(f["timestamps"].shape[0]))
+        stats.setdefault("T", _safe_T(f))
         run("metadata", lambda: check_metadata(f, stats))
         run("shapes", lambda: check_shapes(f, stats))
-        run("duration", lambda: check_duration(f, stats, fps, expected_duration))
+        run("duration", lambda: check_duration(f, stats, fps, expected_duration, warmup_frames))
         run("sensor_sync", lambda: check_sensor_sync(f, stats))
         run("content", lambda: check_content(f, stats, sample_frames))
         run("optitrack", lambda: check_optitrack(f, stats))
         run("writer", lambda: check_writer(f, stats))
+    finally:
+        f.close()
 
     # Reorder to the canonical name order for readability, regardless of the
     # run order above (tick_rate runs first so `stats["T"]` is available).
