@@ -48,6 +48,8 @@
 
 | Iteration 5b attempt (full rig, Disk1, 600 s, vm.dirty_ratio=60, after 1 h idle): refused at startup — `Arducam cam0 (/dev/video8) timed out waiting for first frame` on its single open; preflight was green (99.6 ticks/s with bitshuffle) and all 3 RealSense started | log `/tmp/twm_soak_iter5b_600s.log` 16:11 | none in code — left Arducam TWML0001 yields no frames on this hub via every path; needs a port/cable change or evidence from Cheese | — |
 
+| Iteration 5b run 1 (17:38, Arducams moved to ports 1-1.3 / 1-2): all 7 cameras opened and the episode started, then auto-ended at 0 frames — `capture_stall: no tick for 8.5s` | soak log shows `Restarting the camera [left serial=2DUPB53G]` during startup: the GelSight driver's blocking restart (3 s sleep + reopen) inside `get_frame()` stalled the capture thread; fail-fast worked as designed. A 30 s instrumented grab loop afterwards: 1325 grabs, worst sensor 18 ms, no stalls | startup transient; re-run; if it recurs, lengthen the settle phase / require stable frames before start | run 2 |
+
 ## Rejected ideas
 - zstd-3 (shuffle or bitshuffle): GelSight 1.45–1.71×, color 1.47–1.59× but 6–14 ms/frame → ~10–20 ticks/s single-threaded; too slow for 30 Hz. Rejected.
 - JPEG q95 for color/GelSight: 8.5× / 18.7×, 5 ms/frame — would solve the disk gap but is lossy; needs the user's decision, not taken.
