@@ -344,7 +344,7 @@ def record_verification(
     from camera_stream.arducam_video_stream import ArducamVideoStream
     from twm.data_collection import create_episode_file
     from twm.recorder.frames import Tick
-    from twm.recorder.writer import EpisodeWriter, queue_capacity_bytes
+    from twm.recorder.writer import EpisodeWriter, WriterOverloaded, queue_capacity_bytes
 
     if duration <= 0:
         raise ValueError("duration must be positive")
@@ -382,21 +382,25 @@ def record_verification(
         deadline = time.monotonic() + duration
         tick_dt = 1.0 / slots[0].fps
         next_tick = time.monotonic()
+        overloads = 0
         while time.monotonic() < deadline:
             samples = [stream.get_frame_with_timestamp(timeout=0.5)
                        for stream in streams]
             t = time.time()
-            writer.submit(h5_file, Tick(
-                timestamp=t,
-                arducam=tuple(s[0] for s in samples),
-                arducam_ts=tuple(t if s[1] is None else float(s[1]) for s in samples)))
+            try:
+                writer.submit(h5_file, Tick(
+                    timestamp=t,
+                    arducam=tuple(s[0] for s in samples),
+                    arducam_ts=tuple(t if s[1] is None else float(s[1]) for s in samples)))
+            except WriterOverloaded:
+                overloads += 1
             next_tick += tick_dt
             delay = next_tick - time.monotonic()
             if delay > 0:
                 time.sleep(delay)
         writer.drain()
         writer.stop()
-        dropped_frames = 0
+        dropped_frames = overloads
         writer = None
         h5_file.flush()
         h5_file.close()

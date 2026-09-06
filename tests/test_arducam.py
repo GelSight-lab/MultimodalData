@@ -190,6 +190,7 @@ def test_record_verification_uses_real_writer_and_reopens_valid_file(tmp_path):
 
     assert report["ok"] is True
     assert report["frame_count"] >= 3
+    assert report["dropped_frames"] == 0
     with h5py.File(output, "r") as f:
         assert f["arducam/cam0/frames"].shape[0] == report["frame_count"]
         assert f["arducam/cam1/frames"].shape[0] == report["frame_count"]
@@ -262,6 +263,34 @@ def test_verifier_rejects_under_rate_temporally_frozen_video(tmp_path):
     assert report["ok"] is False
     assert report["checks"]["cam0_cadence"] is False
     assert report["checks"]["cam0_temporal_change"] is False
+
+
+def test_record_verification_counts_writer_overloads_as_dropped_frames(tmp_path, monkeypatch):
+    """`no_writer_drops` must observe real overloads, not a hardcoded 0: a
+    writer too small for the stream must not abort the whole verification
+    (WriterOverloaded used to propagate out of record_verification), and
+    the resulting report must say so instead of claiming a clean pass."""
+    from twm.recorder import writer as writer_module
+
+    monkeypatch.setattr(writer_module, "queue_capacity_bytes", lambda *a, **k: 1)
+    config_path = tmp_path / "config.json"
+    config_path.write_text(json.dumps(_raw_config()))
+    devices = [
+        VideoDevice("/dev/video6", "usb-A", "SN001", True),
+        VideoDevice("/dev/video10", "usb-B", "SN001", True),
+    ]
+
+    report = record_verification(
+        config_path=config_path,
+        output_path=tmp_path / "verify.h5",
+        duration=0.12,
+        devices=devices,
+        stream_factory=FakeSensorCameraStream,
+    )
+
+    assert report["ok"] is False
+    assert report["dropped_frames"] > 0
+    assert report["checks"]["no_writer_drops"] is False
 
 
 def _raw_serial_config():

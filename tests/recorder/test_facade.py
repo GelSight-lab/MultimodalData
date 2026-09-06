@@ -21,11 +21,14 @@ def test_hdf5writer_adapter_raises_instead_of_dropping(tmp_path):
     color = [np.zeros((480, 640, 3), np.uint8)] * 3
     depth = [np.zeros((480, 640), np.uint16)] * 3
     gs = [np.zeros((480, 640, 3), np.uint8)] * 2
+    overloaded = False
     for t in range(3):
         try:
             w.enqueue(f, color, depth, gs, float(t), gs_timestamps=[None, t - 0.01])
         except WriterOverloaded:
+            overloaded = True
             break
+    assert overloaded, "expected the tiny (maxsize=2) writer to overload before all 3 ticks fit"
     w.flush()
     w.stop()
     assert w.dropped_frames == 0
