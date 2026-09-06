@@ -30,6 +30,37 @@ log = logging.getLogger("twm.recorder")
 
 
 @dataclass
+class Session:
+    writer: EpisodeWriter
+    capture: CaptureLoop
+    store: EpisodeStore
+    recorder: Recorder
+
+
+def build_session(config: RecorderConfig, rig) -> Session:
+    """The production wiring shared by the GUI and the headless soak.
+
+    If anything after the writer is built raises, stop the writer before
+    re-raising — the caller owns closing the rig itself."""
+    tick_bytes = full_rig_tick_nbytes(len(rig.realsense), 2, len(rig.arducam))
+    writer = EpisodeWriter(
+        capacity_bytes=queue_capacity_bytes(config.writer.queue_seconds, config.fps, tick_bytes),
+        batch_size=config.writer.batch_size, flush_interval_s=config.writer.flush_interval_s,
+        overload_fraction=config.writer.overload_fraction,
+        overload_sustained_s=config.writer.overload_sustained_s,
+        min_free_gb=config.disk.min_free_gb)
+    try:
+        capture = CaptureLoop(rig, writer, fps=config.fps,
+                              warmup_drop_frames=config.warmup_drop_frames,
+                              max_tick_gap_s=config.writer.max_tick_gap_s)
+        store = EpisodeStore(config.data_dir, config.task)
+        return Session(writer, capture, store, Recorder(config, rig, writer, capture, store))
+    except BaseException:
+        writer.stop()
+        raise
+
+
+@dataclass
 class OpenEpisode:
     num: int
     path: Path
@@ -201,29 +232,16 @@ def run(config: RecorderConfig, drivers: Optional[Drivers] = None) -> int:
     rig.wait_ready(config.startup_timeout_s, config.settle_s)
     log.info("all sensors ready")
 
-    writer = None
     try:
-        tick_bytes = full_rig_tick_nbytes(len(rig.realsense), 2, len(rig.arducam))
-        writer = EpisodeWriter(
-            capacity_bytes=queue_capacity_bytes(config.writer.queue_seconds, config.fps, tick_bytes),
-            batch_size=config.writer.batch_size,
-            flush_interval_s=config.writer.flush_interval_s,
-            overload_fraction=config.writer.overload_fraction,
-            overload_sustained_s=config.writer.overload_sustained_s,
-            min_free_gb=config.disk.min_free_gb)
-        capture = CaptureLoop(rig, writer, fps=config.fps,
-                              warmup_drop_frames=config.warmup_drop_frames,
-                              max_tick_gap_s=config.writer.max_tick_gap_s)
-        store = EpisodeStore(config.data_dir, config.task)
-        recorder = Recorder(config, rig, writer, capture, store)
-    except BaseException:
         # Nothing built here has an owner yet (Recorder.close() below is
-        # what usually stops the writer and closes the rig); if we fail
-        # partway through, do that ourselves before propagating.
-        if writer is not None:
-            writer.stop()
+        # what usually stops the writer and closes the rig); if build_session
+        # fails partway through, it stops any writer it managed to build,
+        # and we close the rig ourselves before propagating.
+        session = build_session(config, rig)
+    except BaseException:
         rig.close()
         raise
+    recorder, capture = session.recorder, session.capture
     try:
         capture.start()
         return _gui_loop(config, recorder, capture, rig, load_projection(config))
@@ -301,6 +319,56 @@ def _gui_loop(config, recorder: Recorder, capture: CaptureLoop, rig,
         remaining = gui_dt - (time.time() - t0)
         if remaining > 0:
             time.sleep(remaining)
+
+
+def run_headless(config: RecorderConfig, duration_s: float, drivers: Optional[Drivers] = None,
+                 poll_interval_s: float = 0.05, health_every_s: float = 10.0,
+                 clock: Callable[[], float] = time.time,
+                 sleep: Callable[[float], None] = time.sleep) -> int:
+    """Record one timed episode with no GUI. 0 valid, 1 auto-ended, 2 refused."""
+    n_arducam = 2 if config.use_arducam else 0
+    results = run_startup_preflight(config, n_arducam=n_arducam)
+    log.info("startup preflight:\n%s", format_report(results))
+    if failures(results):
+        return 2
+    rig = SensorRig.open(config, drivers)
+    rig.wait_ready(config.startup_timeout_s, config.settle_s)
+    try:
+        session = build_session(config, rig)
+    except BaseException:
+        rig.close()
+        raise
+    recorder, capture = session.recorder, session.capture
+    try:
+        capture.start()
+        while capture.latest() is None:
+            sleep(poll_interval_s)
+        failed = recorder.start_episode()
+        if failed:
+            log.error("soak refused:\n%s", format_report(failed))
+            return 2
+        t0 = clock()
+        next_health = t0 + health_every_s
+        while clock() - t0 < duration_s:
+            snap = capture.latest()
+            summary = recorder.poll(snap)
+            if summary is not None:
+                log.error("soak auto-ended after %.1fs: %s", clock() - t0, summary.describe())
+                log.info("episode file: %s", summary.path)
+                return 1
+            if clock() >= next_health:
+                text, level = health_line(snap.writer, config.writer.warn_fraction,
+                                          config.disk.min_free_gb)
+                log.info("[%s] t=%.0fs frames=%d fps=%.1f | %s", level.upper(), clock() - t0,
+                         snap.frame_count, snap.fps_meas, text)
+                next_health += health_every_s
+            sleep(poll_interval_s)
+        summary = recorder.end_episode("operator")
+        log.info(summary.describe())
+        log.info("episode file: %s", summary.path)
+        return 0 if summary.valid else 1
+    finally:
+        recorder.close()
 
 
 def main(argv=None) -> int:

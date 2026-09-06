@@ -6,12 +6,27 @@ import logging
 import sys
 from pathlib import Path
 
-from twm.recorder.config import WriterConfig
+from twm.recorder.config import WriterConfig, build_parser, config_from_namespace
 from twm.recorder.preflight import check_write_bandwidth
+
+
+def _configure_logging() -> None:
+    logging.basicConfig(level=logging.INFO, stream=sys.stdout,
+                        format="%(asctime)s %(levelname)-5s %(message)s",
+                        datefmt="%H:%M:%S")
 
 
 def main(argv=None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
+    if argv and argv[0] == "soak":
+        from twm.recorder.app import run_headless
+        p = build_parser()
+        p.add_argument("--duration", type=float, required=True,
+                       help="Recording duration in seconds.")
+        a = p.parse_args(argv[1:])
+        cfg = config_from_namespace(a)
+        _configure_logging()
+        return run_headless(cfg, a.duration)
     if argv and argv[0] == "bench":
         p = argparse.ArgumentParser(prog="python -m twm.recorder bench",
                                     description="Measure sustained writer throughput "

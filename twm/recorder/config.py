@@ -99,11 +99,13 @@ def build_parser() -> argparse.ArgumentParser:
                    help="Refuse to record below this much free disk.")
     p.add_argument("--no_bandwidth_test", action="store_true",
                    help="Skip the startup write-throughput self-test.")
+    p.add_argument("--bandwidth_margin", type=float, default=1.5,
+                   help="Writer must sustain fps × this margin (default 1.5; "
+                        "lower it for disks that can't clear the default headroom).")
     return p
 
 
-def parse_args(argv: Optional[Sequence[str]] = None) -> RecorderConfig:
-    a = build_parser().parse_args(argv)
+def config_from_namespace(a: argparse.Namespace) -> RecorderConfig:
     writer = WriterConfig()
     if a.queue_seconds is not None:
         writer = WriterConfig(**{**writer.__dict__, "queue_seconds": a.queue_seconds})
@@ -113,6 +115,7 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> RecorderConfig:
         disk_kw["min_free_gb"] = a.min_free_gb
     if a.no_bandwidth_test:
         disk_kw["bandwidth_test_s"] = 0.0
+    disk_kw["min_bandwidth_margin"] = a.bandwidth_margin
     disk = DiskConfig(**disk_kw)
     return RecorderConfig(
         task=a.task,
@@ -127,3 +130,7 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> RecorderConfig:
         writer=writer,
         disk=disk,
     )
+
+
+def parse_args(argv: Optional[Sequence[str]] = None) -> RecorderConfig:
+    return config_from_namespace(build_parser().parse_args(argv))

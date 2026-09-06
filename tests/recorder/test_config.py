@@ -39,6 +39,11 @@ def test_realsense_serials_and_no_optitrack_flags():
     assert parse_args(["--task", "t"]).use_optitrack is True
 
 
+def test_bandwidth_margin_flag():
+    assert parse_args(["--task", "t", "--bandwidth_margin", "1.1"]
+                      ).disk.min_bandwidth_margin == 1.1
+
+
 def test_config_is_frozen_and_has_tick_dt():
     cfg = RecorderConfig(task="t", fps=25)
     assert abs(cfg.tick_dt - 0.04) < 1e-9
