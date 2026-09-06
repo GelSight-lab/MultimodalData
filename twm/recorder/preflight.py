@@ -86,6 +86,22 @@ def check_writer_idle(stats: WriterStats) -> CheckResult:
                        f"{stats.queue_items} ticks still queued")
 
 
+def check_capture_alive(snapshot: Optional[Any], max_age_s: float, now: float) -> CheckResult:
+    """The capture thread proves it is alive by advancing the tick
+    timestamp. A capture thread parked inside a blocking sensor read (e.g.
+    GelSight's restart loop in base_video_stream.py) leaves the snapshot
+    frozen while OptiTrack freshness and disk checks — which read the rig
+    and filesystem live, not the snapshot — still pass. Without this check,
+    `start_episode` records a zero-frame episode that later gets finalized
+    VALID by the OptiTrack watchdog, blaming the wrong sensor."""
+    if snapshot is None:
+        return CheckResult("capture_alive", False, "no capture snapshot yet")
+    age = now - snapshot.tick.timestamp
+    return CheckResult("capture_alive", age <= max_age_s,
+                       f"last tick {age:.1f}s ago" if age > max_age_s
+                       else f"last tick {age:.1f}s ago (< {max_age_s:g}s)")
+
+
 def check_write_bandwidth(directory, fps: int, seconds: float, margin: float,
                           writer_config: WriterConfig, n_arducam: int = 0,
                           clock: Callable[[], float] = time.monotonic,

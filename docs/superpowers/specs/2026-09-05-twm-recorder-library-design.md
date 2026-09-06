@@ -92,6 +92,7 @@ positional tuples `b[0]…b[6]`.
 | Disk free < `min_free_gb` (50 GB) | writer samples disk at every flush | `stop_request(kind="disk_low")` |
 | Gap between consecutive ticks > `max_tick_gap_s` (0.5 s) while recording | CaptureLoop | `stop_request(kind="capture_stall")` |
 | Sensor raises during grab | CaptureLoop | `fatal_error`; recorder finalizes then exits |
+| No snapshot published for > 4 × `max_tick_gap_s` | `Recorder.poll` | `end_episode(capture_stall)` |
 
 `Recorder.poll` sees the stop request on the GUI thread and calls
 `end_episode(ended_by=kind, reason=detail)`. The episode is finalized like a

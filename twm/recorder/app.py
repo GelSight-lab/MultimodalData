@@ -19,9 +19,9 @@ from twm.recorder.config import RecorderConfig, parse_args
 from twm.recorder.episode import VALID_ENDINGS, EpisodeStore, EpisodeSummary
 from twm.recorder.frames import full_rig_tick_nbytes
 from twm.recorder.monitor import health_line
-from twm.recorder.preflight import (CheckResult, failures, format_report,
-                                    run_episode_preflight, run_startup_preflight,
-                                    stale_trackers)
+from twm.recorder.preflight import (CheckResult, check_capture_alive, failures,
+                                    format_report, run_episode_preflight,
+                                    run_startup_preflight, stale_trackers)
 from twm.recorder.rig import Drivers, SensorRig
 from twm.recorder.schema import count_optitrack_samples, write_episode_attrs
 from twm.recorder.writer import EpisodeWriter, WriterFault, queue_capacity_bytes
@@ -63,9 +63,13 @@ class Recorder:
         checks; an empty list means recording started."""
         if self._open is not None:
             return []
+        now = self._clock()
         poses = self.rig.latest_poses()
-        failed = failures(run_episode_preflight(self.config, poses, self.writer.stats(),
-                                                self._clock(), self._disk_usage))
+        checks = list(run_episode_preflight(self.config, poses, self.writer.stats(),
+                                            now, self._disk_usage))
+        checks.append(check_capture_alive(self.capture.latest(),
+                                          self.config.writer.max_tick_gap_s * 4, now))
+        failed = failures(checks)
         if failed:
             log.error("cannot start episode:\n%s", format_report(failed))
             return failed
@@ -129,6 +133,10 @@ class Recorder:
             return self.end_episode("sensor_error", snapshot.fatal_error)
         if snapshot.stop_request:
             return self.end_episode(snapshot.stop_request.kind, snapshot.stop_request.detail)
+        age = self._clock() - snapshot.tick.timestamp
+        if age > self.config.writer.max_tick_gap_s * 4:
+            return self.end_episode(
+                "capture_stall", f"no tick for {age:.1f}s (capture thread not producing)")
         stale = stale_trackers(snapshot.ot_poses, self.config.active_sensors,
                                self.config.ot_watchdog_timeout_s, self._clock())
         if stale:

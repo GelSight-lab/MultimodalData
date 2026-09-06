@@ -41,6 +41,27 @@ class FakeRig:
         self.closed = True
 
 
+class BlockingRig(FakeRig):
+    """Simulates a capture thread parked forever inside a blocking sensor
+    read (GelSight's restart loop in base_video_stream.py can do exactly
+    this). `grab()` behaves like `FakeRig` until `arm()` is called; every
+    call after that blocks on `release`, which the test must set in
+    teardown so the capture thread does not leak into later tests."""
+
+    def __init__(self):
+        super().__init__()
+        self._armed = threading.Event()
+        self.release = threading.Event()
+
+    def arm(self):
+        self._armed.set()
+
+    def grab(self):
+        if self._armed.is_set():
+            self.release.wait()
+        return super().grab()
+
+
 def _wait(pred, timeout=5.0):
     end = time.monotonic() + timeout
     while time.monotonic() < end:
@@ -76,6 +97,35 @@ def parts(tmp_path):
     _wait(capture.latest)
     yield SimpleNamespace(cfg=cfg, rig=rig, writer=writer, capture=capture,
                           store=store, rec=rec, gate=gate)
+    rec.close()
+
+
+@pytest.fixture
+def stalled(tmp_path):
+    """Like `parts`, but with a `BlockingRig` and a small `max_tick_gap_s`
+    so a stalled capture thread can be simulated (and the 4x threshold
+    crossed) without a multi-second sleep. `ot_watchdog_timeout_s` is set
+    high so the OptiTrack watchdog cannot fire first and mask the check
+    under test."""
+    cfg = RecorderConfig(task="t", data_dir=tmp_path, fps=60, warmup_drop_frames=0,
+                         writer=WriterConfig(queue_seconds=0.5, batch_size=2,
+                                             overload_sustained_s=0.2,
+                                             max_tick_gap_s=0.05),
+                         ot_watchdog_timeout_s=5.0)
+    rig = BlockingRig()
+    tick_bytes = rig.grab().nbytes()
+    writer = EpisodeWriter(capacity_bytes=tick_bytes * 20, batch_size=2,
+                           overload_sustained_s=0.2)
+    capture = CaptureLoop(rig, writer, fps=cfg.fps, warmup_drop_frames=0,
+                          max_tick_gap_s=cfg.writer.max_tick_gap_s)
+    store = EpisodeStore(tmp_path, "t", date="2026-09-05")
+    rec = Recorder(cfg, rig, writer, capture, store,
+                   disk_usage=lambda p: SimpleNamespace(free=500e9))
+    capture.start()
+    _wait(capture.latest)
+    yield SimpleNamespace(cfg=cfg, rig=rig, writer=writer, capture=capture,
+                          store=store, rec=rec)
+    rig.release.set()              # let a blocked grab() return so stop() can join
     rec.close()
 
 
@@ -127,6 +177,37 @@ def test_watchdog_auto_ends_but_keeps_episode_valid(parts):
                  if parts.capture.latest().ot_poses["sensor_left"][0] < time.time() - 4 else None)
     s = parts.rec.poll(snap)
     assert s.valid and s.ended_by == "watchdog" and "silent" in s.reason
+
+
+def test_poll_ends_stalled_capture_thread_as_invalid_not_watchdog(stalled):
+    """A capture thread parked in a blocking grab() publishes no new
+    snapshot: poll() must catch that itself, before it ever reaches the
+    OptiTrack watchdog, or a hung sensor gets finalized as a valid episode
+    with OptiTrack blamed for it."""
+    stalled.rig.fresh()
+    assert stalled.rec.start_episode() == []
+    _wait(lambda: stalled.capture.latest().frame_count >= 1)
+    stalled.rig.arm()
+    threshold = stalled.cfg.writer.max_tick_gap_s * 4
+    time.sleep(threshold + 0.2)
+    snap = stalled.capture.latest()
+    s = stalled.rec.poll(snap)
+    assert s is not None
+    assert s.valid is False and s.ended_by == "capture_stall"
+    assert "no tick for" in s.reason
+
+
+def test_start_refuses_on_a_stale_capture_snapshot(stalled):
+    """start_episode reads OptiTrack and disk live, so both pass even while
+    the capture thread is stuck; it must separately refuse on a stale
+    snapshot instead of starting a zero-tick recording."""
+    stalled.rig.fresh()
+    stalled.rig.arm()
+    threshold = stalled.cfg.writer.max_tick_gap_s * 4
+    time.sleep(threshold + 0.2)
+    fails = stalled.rec.start_episode()
+    assert [f.name for f in fails] == ["capture_alive"]
+    assert stalled.rec.recording is False
 
 
 def test_close_finalizes_open_episode_as_quit(parts):
