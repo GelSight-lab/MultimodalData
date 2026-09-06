@@ -1,0 +1,29 @@
+# TWM Recorder Soak — Five Verification Iterations (ledger)
+
+**Goal:** prove on the rig that every stream is recorded in the right format, per-stream timestamps are synchronized, and a 10-minute episode has no dropped or late ticks. Up to five debug→verify iterations; each iteration = a headless `soak` run + `validate` + root-cause any failure + fix.
+
+**Key facts**
+- Branch `feature/twm-soak-test` in `.worktrees/twm-arducam`. Commands: `python -m twm.recorder soak --task <t> --duration <s> [--data_dir D] [--no_optitrack] [--realsense_serials ...] [--bandwidth_margin M] [--min_free_gb G]`, `python -m twm.recorder validate <h5> --expected-duration <s> --report out.json`, `python -m twm.recorder bench --dir D --seconds 5 --arducams 2`.
+- Rig (2026-09-06): 3× D415 (`143322063538`, `104122062574`, `217222066989`), GelSight `2DUPB53G` left / `2BKRDTAD` right, Arducam `TWML0001` left (cam0) / `TWMR0001` right (cam1). No ROS master → `--no_optitrack`.
+- Disks: `/media/yxma/Disk1` HDD, 239 GB free, **106 MB/s sustained (fsync)**; root NVMe 41 GB free. `vm.dirty_ratio=20` (≈12 GB of 60 GB RAM absorbs write bursts).
+- Real stored size (lz4 SHUFFLE, June episode): 4.85 MB/tick for 3 RS + 2 GS; Arducam adds ~1.75 MB → ~6.6 MB/tick ≈ 198 MB/s at 30 Hz. With BITSHUFFLE (Task 4) ≈ 5.4 MB/tick ≈ 162 MB/s.
+
+**Phases**
+- [ ] Iteration 1 — 10 s smoke, full rig, `/tmp`: does it record; T, dt stats, per-stream lag by hand.
+- [ ] Iteration 2 — validator available: 60 s on `/tmp`, every check green.
+- [ ] Iteration 3 — 120 s on Disk1 with `--bandwidth_margin 1.0`: watch queue peak and file MB/s.
+- [ ] Iteration 4 — 600 s on Disk1 (expected to overload at ~4 min at `vm.dirty_ratio=20`); measure the break point.
+- [ ] Iteration 5 — 600 s on Disk1 after the chosen mitigation (dirty-page budget or storage change); all checks green.
+
+## Ledger
+
+| found | evidence | fix | verified by |
+|---|---|---|---|
+| Recorder refused with `--no_optitrack` absent on this host | no ROS master: `rostopic list` → "Unable to communicate with master" | `--no_optitrack` flag + `DummyOptitrack` (Task 1) | test_rig `test_no_optitrack_installs_dummy…`, smoke run |
+| Startup preflight refuses Disk1 at the default margin | bench 46 ticks/s < 57.9 required (1.5 × 1.29) | `--bandwidth_margin` flag (Task 2); the soak run's `queue_peak_fraction` is the real verdict | iteration 3 |
+| Bench numbers were page-cache illusions | 5 s bench 259 MB/s, 20 s bench 478 MB/s, fsync probe 106 MB/s | none in code; documented; validator/soak judge by queue occupancy | iteration 4 |
+| Smoke run failed "No device connected" for `143322063538` | pyrealsense2 enumerated only `217222066989`, `104122062574` at that moment; operator was re-cabling | none (operator reconnected all three) | iteration 1 |
+
+## Rejected ideas
+- zstd-3 (shuffle or bitshuffle): GelSight 1.45–1.71×, color 1.47–1.59× but 6–14 ms/frame → ~10–20 ticks/s single-threaded; too slow for 30 Hz. Rejected.
+- JPEG q95 for color/GelSight: 8.5× / 18.7×, 5 ms/frame — would solve the disk gap but is lossy; needs the user's decision, not taken.
