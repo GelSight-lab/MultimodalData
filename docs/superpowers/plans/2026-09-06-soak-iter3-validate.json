@@ -1,0 +1,59 @@
+{
+  "path": "/media/yxma/Disk1/twm/data/soak_test/2026-09-06/episode_000.h5",
+  "ok": true,
+  "checks": [
+    {
+      "name": "metadata",
+      "ok": true,
+      "detail": "valid=True, ended_by=operator, frame_count=3562, gap_count=0"
+    },
+    {
+      "name": "shapes",
+      "ok": true,
+      "detail": "13 dataset(s) match (T=3562) and expected dtype"
+    },
+    {
+      "name": "tick_rate",
+      "ok": true,
+      "detail": "median dt 33.41 ms, max dt 106.75 ms, late 0.06%"
+    },
+    {
+      "name": "duration",
+      "ok": true,
+      "detail": "T=3562 >= required 3492.0 (0.97 x 120.0s x 30fps)"
+    },
+    {
+      "name": "sensor_sync",
+      "ok": true,
+      "detail": "gelsight/left: lag [18.1, 156.7] ms, 15.5 Hz distinct; gelsight/right: lag [19.4, 160.3] ms, 15.5 Hz distinct"
+    },
+    {
+      "name": "content",
+      "ok": true,
+      "detail": "realsense/cam0/color (min std 61.02, 19/19 differ); realsense/cam0/depth (min std 519.59, 19/19 differ); realsense/cam1/color (min std 51.48, 19/19 differ); realsense/cam1/depth (min std 301.06, 19/19 differ); realsense/cam2/color (min std 36.16, 19/19 differ); realsense/cam2/depth (min std 299.61, 19/19 differ); gelsight/left/frames (min std 38.13, 19/19 differ); gelsight/right/frames (min std 24.67, 19/19 differ)"
+    },
+    {
+      "name": "optitrack",
+      "ok": true,
+      "detail": "no samples (ok if recorded with --no_optitrack)"
+    },
+    {
+      "name": "writer",
+      "ok": true,
+      "detail": "queue_peak_fraction=0.111, writer_mean_mb_s=350.1"
+    }
+  ],
+  "stats": {
+    "T": 3562,
+    "median_dt": 0.033406972885131836,
+    "max_dt": 0.10674786567687988,
+    "late_fraction": 0.0005616399887672002,
+    "sensor_lag_max_s.gelsight/left": 0.1567230224609375,
+    "distinct_sensor_hz.gelsight/left": 15.458809878683804,
+    "sensor_lag_max_s.gelsight/right": 0.1603243350982666,
+    "distinct_sensor_hz.gelsight/right": 15.508946559371427,
+    "optitrack_samples": 0,
+    "queue_peak_fraction": 0.1111111111111111,
+    "writer_mean_mb_s": 350.1485429232017
+  }
+}
