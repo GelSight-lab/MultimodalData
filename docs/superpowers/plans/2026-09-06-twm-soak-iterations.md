@@ -41,6 +41,8 @@
 
 | Iteration 5a (3 RS + 2 GS, Disk1, 600 s, BITSHUFFLE, default vm.dirty_ratio=20): **PASS** — 10 minutes, no drops | T=17839 (594.6 s), late 0.16 % (29 ticks), max gap 85 ms, queue peak 13 %, 69.6 GB = 3.90 MB/tick (−17 % vs SHUFFLE), GelSight lag 18–157 ms @ 16.7–17.1 Hz; validator 8/8 ok with `--expected-duration 600`; report `2026-09-06-soak-iter5a-validate.json` | BITSHUFFLE (Task 4) closed the gap for this rig without OS tuning | this run |
 
+| Arducam retest 07:2x (idle for hours, GelSights idle): TWML0001 no frames in 640x480 MJPG AND 320x240 YUYV (12 s each); TWMR0001 5 frames OK at 640x480 MJPG, then EPROTO on the next open | not bandwidth (smallest mode fails; uvcvideo quirks already 0xffffffff); device/hub fault on hub 1-12 | hardware only: move both Arducams off hub 1-12 — 5b remains blocked | — |
+
 ## Rejected ideas
 - zstd-3 (shuffle or bitshuffle): GelSight 1.45–1.71×, color 1.47–1.59× but 6–14 ms/frame → ~10–20 ticks/s single-threaded; too slow for 30 Hz. Rejected.
 - JPEG q95 for color/GelSight: 8.5× / 18.7×, 5 ms/frame — would solve the disk gap but is lossy; needs the user's decision, not taken.
