@@ -141,6 +141,18 @@ def test_grab_builds_tick_and_drains_optitrack():
     assert rig.arducam_labels() == ["cam0 usb-cam0 unknown", "cam1 usb-cam1 unknown"]
 
 
+def test_no_optitrack_installs_dummy_and_never_calls_the_driver():
+    log = []
+    d = drivers(log)
+    d = Drivers(**{**d.__dict__, "optitrack": lambda: (_ for _ in ()).throw(AssertionError("driver called"))})
+    rig = SensorRig.open(config(use_arducam=False, use_optitrack=False), d)
+    tick = rig.grab()
+    assert tick.optitrack == {name: [] for name in rig.trackers}
+    assert rig.latest_poses() == {name: None for name in rig.trackers}
+    rig.close()
+    assert "start optitrack" not in log and "stop optitrack" not in log
+
+
 def test_wait_ready_failure_closes_rig():
     log = []
     d = drivers(log)

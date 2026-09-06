@@ -77,7 +77,8 @@ class Recorder:
         h5, path = self.store.create(num, self.config.realsense_serials,
                                      list(self.config.gelsight_serials.values()),
                                      self.config.fps,
-                                     arducam_config=self.rig.arducam_config or None)
+                                     arducam_config=self.rig.arducam_config or None,
+                                     n_realsense=len(self.config.realsense_serials))
         self._open = OpenEpisode(num, path, h5)
         self.capture.start_recording(h5)
         log.info("recording episode %03d → %s", num, path)

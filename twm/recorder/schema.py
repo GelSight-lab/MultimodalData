@@ -48,11 +48,16 @@ def _scalar_dataset(group, name, width=None):
 
 def create_episode_file(date_dir, episode_num, realsense_serials,
                         gelsight_serials, fps, task_name="",
-                        arducam_config=None, include_legacy=True):
+                        arducam_config=None, include_legacy=True,
+                        n_realsense=None):
     """Create `episode_NNN.h5` with empty resizable datasets.
+
+    `n_realsense` sets how many `realsense/cam{i}` groups are created
+    (default: N_REALSENSE, the rig's legacy three).
 
     Returns (h5py.File, path). The caller closes the file.
     """
+    n_realsense = N_REALSENSE if n_realsense is None else int(n_realsense)
     os.makedirs(date_dir, exist_ok=True)
     path = os.path.join(date_dir, f"episode_{episode_num:03d}.h5")
     f = h5py.File(path, "w")
@@ -76,7 +81,7 @@ def create_episode_file(date_dir, episode_num, realsense_serials,
     _scalar_dataset(f, "timestamps")
 
     if include_legacy:
-        for i in range(N_REALSENSE):
+        for i in range(n_realsense):
             g = f.create_group(f"realsense/cam{i}")
             _frame_dataset(g, "color", COLOR_SHAPE, np.uint8)
             _frame_dataset(g, "depth", DEPTH_SHAPE, np.uint16)
@@ -106,6 +111,10 @@ def create_episode_file(date_dir, episode_num, realsense_serials,
     return f, path
 
 
+def count_realsense_groups(f) -> int:
+    return len([k for k in f["realsense"]]) if "realsense" in f else 0
+
+
 def _grow(ds, end: int):
     ds.resize(end, axis=0)
     return ds
@@ -128,7 +137,7 @@ def append_ticks(f: h5py.File, ticks: Sequence[Tick]) -> None:
         (t.timestamp for t in ticks), dtype=np.float64, count=len(ticks))
 
     if "realsense" in f:
-        for i in range(N_REALSENSE):
+        for i in range(count_realsense_groups(f)):
             _write_frames(_grow(f[f"realsense/cam{i}/color"], end), n,
                           (t.color[i] for t in ticks))
             _write_frames(_grow(f[f"realsense/cam{i}/depth"], end), n,

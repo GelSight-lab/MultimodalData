@@ -55,6 +55,7 @@ class RecorderConfig:
     gelsight_serials: Dict[str, str] = field(
         default_factory=lambda: dict(GELSIGHT_SERIALS))
     active_sensors: Tuple[str, ...] = ACTIVE_SENSOR_CHOICES["both"]
+    use_optitrack: bool = True
     use_arducam: bool = True
     arducam_config_path: Optional[Path] = None
     show_projection: bool = True
@@ -82,6 +83,10 @@ def build_parser() -> argparse.ArgumentParser:
                         "monitors.")
     p.add_argument("--no_projection", action="store_true",
                    help="Disable the GelSight→camera projection overlay.")
+    p.add_argument("--realsense_serials", default=None,
+                   help="Comma-separated RealSense serials to record (default: the rig's three).")
+    p.add_argument("--no_optitrack", action="store_true",
+                   help="Record without OptiTrack (no ROS needed); pose datasets stay empty.")
     p.add_argument("--no_arducam", action="store_true",
                    help="Run without the two sensor-mounted Arducams.")
     p.add_argument("--arducam_config", default=None,
@@ -112,7 +117,10 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> RecorderConfig:
     return RecorderConfig(
         task=a.task,
         data_dir=Path(a.data_dir) if a.data_dir else DATA_DIR,
-        active_sensors=ACTIVE_SENSOR_CHOICES[a.active_sensors],
+        realsense_serials=tuple(s.strip() for s in a.realsense_serials.split(",")
+                                if s.strip()) if a.realsense_serials else REALSENSE_SERIALS,
+        active_sensors=() if a.no_optitrack else ACTIVE_SENSOR_CHOICES[a.active_sensors],
+        use_optitrack=not a.no_optitrack,
         use_arducam=not a.no_arducam,
         arducam_config_path=Path(a.arducam_config) if a.arducam_config else None,
         show_projection=not a.no_projection,

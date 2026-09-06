@@ -30,6 +30,15 @@ def test_parse_args_maps_active_sensors_and_flags():
     assert cfg.disk.min_free_gb == 7.0
 
 
+def test_realsense_serials_and_no_optitrack_flags():
+    cfg = parse_args(["--task", "t", "--realsense_serials", "143322063538,134322071848",
+                      "--no_optitrack"])
+    assert cfg.realsense_serials == ("143322063538", "134322071848")
+    assert cfg.use_optitrack is False
+    assert cfg.active_sensors == ()
+    assert parse_args(["--task", "t"]).use_optitrack is True
+
+
 def test_config_is_frozen_and_has_tick_dt():
     cfg = RecorderConfig(task="t", fps=25)
     assert abs(cfg.tick_dt - 0.04) < 1e-9

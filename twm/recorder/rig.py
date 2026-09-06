@@ -39,6 +39,22 @@ class DummyGelSight:
         return self._frame, None
 
 
+class DummyOptitrack:
+    """Stands in for OptitrackStream when recording without ROS: no poses, empty buffers."""
+
+    def start(self):
+        pass
+
+    def stop(self):
+        pass
+
+    def get_latest_pose(self, name):
+        return None
+
+    def flush_buffer(self, name):
+        return []
+
+
 def frame_with_timestamp(stream) -> Tuple[np.ndarray, Optional[float]]:
     """(frame, capture_ts) from any stream; ts is None if it has no clock."""
     fn = getattr(stream, "get_frame_with_timestamp", None)
@@ -143,8 +159,12 @@ class SensorRig:
                     stream = DummyGelSight(side)
                 gelsight[side] = stream
 
-            log.info("starting OptiTrack")
-            optitrack = start(drivers.optitrack())
+            if config.use_optitrack:
+                log.info("starting OptiTrack")
+                optitrack = start(drivers.optitrack())
+            else:
+                log.info("OptiTrack disabled")
+                optitrack = DummyOptitrack()
         except BaseException:
             _stop_all(started)
             raise

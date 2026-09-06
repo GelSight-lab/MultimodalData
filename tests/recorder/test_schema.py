@@ -74,6 +74,19 @@ def test_write_episode_attrs_round_trips(episode):
         assert abs(float(m["max_tick_gap_s"]) - 0.7) < 1e-9
 
 
+def test_n_realsense_controls_group_count_and_append(tmp_path):
+    from twm.recorder.schema import count_realsense_groups
+    f, _ = create_episode_file(str(tmp_path), 3, ["A", "B"], ["L", "R"], 30, n_realsense=2)
+    assert count_realsense_groups(f) == 2 and "realsense/cam2" not in f
+    t = synthetic_tick(1.0, n_realsense=2)
+    append_ticks(f, [t])
+    assert f["realsense/cam1/color"].shape[0] == 1
+    f.close()
+    g, _ = create_episode_file(str(tmp_path), 4, ["A", "B", "C"], ["L", "R"], 30)
+    assert count_realsense_groups(g) == 3        # legacy default
+    g.close()
+
+
 def test_arducam_groups_record_configured_serial(tmp_path):
     from twm.sensor_camera import CameraSlot, ResolvedCamera
     cams = (ResolvedCamera(CameraSlot("cam0", serial="TWML0001", position="left"),
