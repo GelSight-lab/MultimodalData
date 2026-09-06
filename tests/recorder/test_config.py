@@ -52,3 +52,17 @@ def test_config_is_frozen_and_has_tick_dt():
     except Exception:
         return
     raise AssertionError("RecorderConfig must be frozen")
+
+
+def test_post_init_forces_empty_active_sensors_when_optitrack_disabled():
+    """Constructing RecorderConfig directly (not via config_from_namespace)
+    with use_optitrack=False but a stale active_sensors must still end up
+    with active_sensors == () — the watchdog and preflight must never see
+    active bodies to check when OptiTrack isn't running."""
+    cfg = RecorderConfig(task="t", use_optitrack=False,
+                         active_sensors=("sensor_left", "sensor_right"))
+    assert cfg.active_sensors == ()
+    # Untouched when OptiTrack is enabled.
+    cfg2 = RecorderConfig(task="t", use_optitrack=True,
+                          active_sensors=("sensor_left",))
+    assert cfg2.active_sensors == ("sensor_left",)

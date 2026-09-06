@@ -38,6 +38,12 @@ def test_optitrack_freshness_reports_missing_and_stale_bodies():
         ["sensor_left silent 11.0s"]        # watchdog: None is not stale
 
 
+def test_optitrack_freshness_with_no_active_bodies_reports_disabled():
+    r = check_optitrack_fresh({}, (), 2.0, now=0.0)
+    assert r.ok
+    assert r.detail == "OptiTrack disabled (no active bodies)"
+
+
 def test_writer_idle_requires_empty_queue_and_no_fault():
     assert check_writer_idle(stats()).ok
     assert not check_writer_idle(stats(items=3)).ok
@@ -89,3 +95,30 @@ def test_startup_preflight_skips_bandwidth_test_when_disk_check_fails(tmp_path):
     assert not results[1].ok
     assert "skipped" in results[1].detail
     assert list(tmp_path.iterdir()) == []
+
+
+def test_startup_preflight_measures_the_configured_realsense_count(tmp_path, monkeypatch):
+    """The self-test must build its synthetic file and ticks for the rig
+    actually configured (`config.realsense_serials`), not always the
+    legacy three — otherwise a 2-camera config's synthetic ticks would
+    mismatch a 3-group synthetic file and the self-test would measure the
+    wrong rig (or crash on the mismatch)."""
+    import twm.recorder.preflight as preflight_mod
+
+    captured = {}
+    real_create = preflight_mod.create_episode_file
+
+    def spy(*args, **kwargs):
+        captured["n_realsense"] = kwargs.get("n_realsense")
+        return real_create(*args, **kwargs)
+
+    monkeypatch.setattr(preflight_mod, "create_episode_file", spy)
+    cfg = RecorderConfig(task="t", data_dir=tmp_path, realsense_serials=("A", "B"),
+                         disk=DiskConfig(min_free_gb=0.0, bandwidth_test_s=0.2))
+    results = run_startup_preflight(cfg, disk_usage=usage(1e6))
+    bw = results[1]
+    assert bw.ok, bw.detail
+    assert captured["n_realsense"] == 2
+    # n_arducam defaults to 0 here, so the arducam scale factor is 1 and the
+    # "need" figure (fps × margin) does not depend on the RealSense count.
+    assert f"need {cfg.fps * cfg.disk.min_bandwidth_margin:.1f}" in bw.detail

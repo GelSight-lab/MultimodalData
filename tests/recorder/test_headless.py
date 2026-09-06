@@ -149,7 +149,70 @@ def test_run_headless_returns_2_when_capture_never_publishes(tmp_path, monkeypat
     assert any(entry.startswith("stop ") for entry in log)
 
 
+def test_soak_returns_130_on_keyboard_interrupt(monkeypatch):
+    """Ctrl-C during a soak must exit 130, not a traceback — run_headless's
+    own finally already finalizes the open episode via recorder.close()."""
+    from twm.recorder import __main__ as main_module
+
+    def boom(cfg, duration):
+        raise KeyboardInterrupt()
+
+    monkeypatch.setattr("twm.recorder.app.run_headless", boom)
+    code = main_module.main(["soak", "--task", "t", "--duration", "1"])
+    assert code == 130
+
+
+def test_run_returns_130_on_keyboard_interrupt(monkeypatch):
+    from twm.recorder import __main__ as main_module
+
+    def boom(argv):
+        raise KeyboardInterrupt()
+
+    monkeypatch.setattr("twm.recorder.app.main", boom)
+    code = main_module.main(["run", "--task", "t"])
+    assert code == 130
+
+
 def test_soak_rejects_non_positive_duration():
     from twm.recorder.__main__ import main
     with pytest.raises(SystemExit):
         main(["soak", "--task", "t", "--duration", "0"])
+
+
+@pytest.mark.parametrize("level, log_level_name", [("warn", "WARNING"), ("fail", "ERROR")])
+def test_run_headless_logs_periodic_health_line_at_warn_and_fail_levels(
+        tmp_path, monkeypatch, caplog, level, log_level_name):
+    """The periodic health line must surface at WARNING/ERROR, not buried in
+    INFO, so an operator tailing the soak log sees trouble without grepping."""
+    monkeypatch.setattr(app_module, "health_line", lambda *a, **kw: ("status text", level))
+    cfg = RecorderConfig(task="soak", data_dir=tmp_path, fps=60, warmup_drop_frames=2,
+                         realsense_serials=("1", "2"), use_optitrack=False, active_sensors=(),
+                         settle_s=0.0, writer=WriterConfig(queue_seconds=1.0),
+                         disk=DiskConfig(min_free_gb=0.0, bandwidth_test_s=0.0))
+    monkeypatch.setattr(app_module.shutil, "disk_usage",
+                        lambda p: SimpleNamespace(free=1e12))
+    with caplog.at_level("INFO", logger="twm.recorder"):
+        code = app_module.run_headless(cfg, duration_s=0.3, drivers=fake_drivers([]),
+                                       health_every_s=0.05)
+    assert code == 0
+    health_records = [r for r in caplog.records if r.message.startswith(f"[{level.upper()}]")]
+    assert health_records, [r.message for r in caplog.records]
+    assert all(r.levelname == log_level_name for r in health_records)
+
+
+def test_run_headless_does_not_log_summary_describe_twice(tmp_path, monkeypatch, caplog):
+    """end_episode already logs summary.describe(); run_headless must not
+    also log it, or every episode's outcome shows up twice in the soak log."""
+    cfg = RecorderConfig(task="soak", data_dir=tmp_path, fps=60, warmup_drop_frames=2,
+                         realsense_serials=("1", "2"), use_optitrack=False, active_sensors=(),
+                         settle_s=0.0, writer=WriterConfig(queue_seconds=1.0),
+                         disk=DiskConfig(min_free_gb=0.0, bandwidth_test_s=0.0))
+    monkeypatch.setattr(app_module.shutil, "disk_usage",
+                        lambda p: SimpleNamespace(free=1e12))
+    with caplog.at_level("INFO", logger="twm.recorder"):
+        code = app_module.run_headless(cfg, duration_s=0.3, drivers=fake_drivers([]),
+                                       health_every_s=1.0)
+    assert code == 0
+    describe_records = [r for r in caplog.records if r.message.startswith("Episode ")]
+    assert len(describe_records) == 1, [r.message for r in caplog.records]
+

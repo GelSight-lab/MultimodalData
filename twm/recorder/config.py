@@ -68,6 +68,15 @@ class RecorderConfig:
     writer: WriterConfig = WriterConfig()
     disk: DiskConfig = DiskConfig()
 
+    def __post_init__(self) -> None:
+        # A caller may construct RecorderConfig directly (tests, or future
+        # callers that don't go through config_from_namespace) with
+        # use_optitrack=False but a stale/non-empty active_sensors; force
+        # the invariant here too so the OptiTrack watchdog and preflight
+        # never see active bodies to check when OptiTrack isn't running.
+        if not self.use_optitrack and self.active_sensors:
+            object.__setattr__(self, "active_sensors", ())
+
     @property
     def tick_dt(self) -> float:
         return 1.0 / self.fps

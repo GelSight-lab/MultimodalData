@@ -67,6 +67,8 @@ def stale_trackers(poses: Mapping[str, Any], active: Sequence[str],
 
 def check_optitrack_fresh(poses: Mapping[str, Any], active: Sequence[str],
                           max_age_s: float, now: float) -> CheckResult:
+    if not active:
+        return CheckResult("optitrack_fresh", True, "OptiTrack disabled (no active bodies)")
     problems = []
     for name in active:
         p = poses.get(name)
@@ -104,13 +106,16 @@ def check_capture_alive(snapshot: Optional[Any], max_age_s: float, now: float) -
 
 def check_write_bandwidth(directory, fps: int, seconds: float, margin: float,
                           writer_config: WriterConfig, n_arducam: int = 0,
+                          n_realsense: int = 3,
                           clock: Callable[[], float] = time.monotonic,
                           sleep: Callable[[float], None] = time.sleep) -> CheckResult:
     """Push synthetic full-rig ticks through the real writer into a temp
     file in `directory` for `seconds`; require fps × margin ticks/s.
 
-    The synthetic file uses the legacy schema; the requirement is scaled by
-    the extra bytes Arducams add so the number still means "the real rig".
+    The synthetic file uses the legacy schema; the requirement — and the
+    synthetic ticks pushed through it — are sized for `n_realsense` cameras
+    plus `n_arducam` extra streams, so the number means "the rig actually
+    configured", not always the full three-RealSense rig.
 
     Any failure of the measurement itself (a real disk error surfacing as
     WriterFault, or an OSError creating the file) is reported as a failing
@@ -122,14 +127,16 @@ def check_write_bandwidth(directory, fps: int, seconds: float, margin: float,
         return CheckResult("write_bandwidth", True, "skipped")
     directory = Path(directory)
     directory.mkdir(parents=True, exist_ok=True)
-    scale = full_rig_tick_nbytes(3, 2, n_arducam) / full_rig_tick_nbytes(3, 2, 0)
+    scale = (full_rig_tick_nbytes(n_realsense, 2, n_arducam)
+            / full_rig_tick_nbytes(n_realsense, 2, 0))
     required = fps * margin * scale
-    ticks = [synthetic_tick(0.0, seed=k) for k in range(2)]
+    ticks = [synthetic_tick(0.0, seed=k, n_realsense=n_realsense) for k in range(2)]
     with tempfile.TemporaryDirectory(dir=str(directory), prefix=".twm_bandwidth_") as tmp:
         f = None
         writer = None
         try:
-            f, path = create_episode_file(tmp, 0, [], [], fps, task_name="bandwidth_test")
+            f, path = create_episode_file(tmp, 0, [], [], fps, task_name="bandwidth_test",
+                                          n_realsense=n_realsense)
             writer = EpisodeWriter(
                 capacity_bytes=queue_capacity_bytes(1.0, fps, ticks[0].nbytes()),
                 batch_size=writer_config.batch_size, flush_interval_s=float("inf"),
@@ -175,7 +182,8 @@ def run_startup_preflight(config: RecorderConfig, n_arducam: int = 0,
                                   "skipped: not enough free disk to run the self-test")]
     return [disk, check_write_bandwidth(config.data_dir, config.fps, config.disk.bandwidth_test_s,
                                         config.disk.min_bandwidth_margin, config.writer,
-                                        n_arducam=n_arducam)]
+                                        n_arducam=n_arducam,
+                                        n_realsense=len(config.realsense_serials))]
 
 
 def run_episode_preflight(config: RecorderConfig, poses: Mapping[str, Any],

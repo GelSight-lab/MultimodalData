@@ -59,6 +59,12 @@ def synthetic_tick(timestamp: float, seed: int = 0, n_realsense: int = 3,
 
     Pure noise defeats BLOSC and understates throughput; a flat frame
     overstates it. This sits in between, like a real scene.
+
+    Under BITSHUFFLE, this synthetic noise still compresses noticeably
+    worse than real camera frames: the write-bandwidth preflight measured
+    ~170 ticks/s on real frames vs. ~104 ticks/s on this synthetic tick on
+    the same NVMe drive (about 40% slower). The preflight's pass/fail bound
+    is therefore pessimistic relative to what the real rig will sustain.
     """
     rng = np.random.default_rng(seed)
     yy, xx = np.mgrid[0:COLOR_SHAPE[0], 0:COLOR_SHAPE[1]]

@@ -29,7 +29,12 @@ def main(argv=None) -> int:
             p.error("--duration must be positive")
         cfg = config_from_namespace(a)
         _configure_logging()
-        return run_headless(cfg, a.duration)
+        try:
+            return run_headless(cfg, a.duration)
+        except KeyboardInterrupt:
+            # recorder.close() (in run_headless's finally) already finalized
+            # the open episode; a bare Ctrl-C exit code beats a traceback.
+            return 130
     if argv and argv[0] == "bench":
         p = argparse.ArgumentParser(prog="python -m twm.recorder bench",
                                     description="Measure sustained writer throughput "
@@ -71,7 +76,12 @@ def main(argv=None) -> int:
     if argv and argv[0] == "run":
         argv = argv[1:]
     from twm.recorder.app import main as run_main
-    return run_main(argv)
+    try:
+        return run_main(argv)
+    except KeyboardInterrupt:
+        # Recorder.close() has already finalized the open episode by the
+        # time a KeyboardInterrupt reaches here; exit cleanly instead.
+        return 130
 
 
 if __name__ == "__main__":

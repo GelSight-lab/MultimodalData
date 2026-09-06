@@ -358,18 +358,21 @@ def run_headless(config: RecorderConfig, duration_s: float, drivers: Optional[Dr
             snap = capture.latest()
             summary = recorder.poll(snap)
             if summary is not None:
-                log.error("soak auto-ended after %.1fs: %s", clock() - t0, summary.describe())
+                # end_episode (called inside recorder.poll) already logged
+                # summary.describe() at the right level; don't repeat it.
+                log.error("soak auto-ended after %.1fs", clock() - t0)
                 log.info("episode file: %s", summary.path)
                 return 1
             if clock() >= next_health:
                 text, level = health_line(snap.writer, config.writer.warn_fraction,
                                           config.disk.min_free_gb)
-                log.info("[%s] t=%.0fs frames=%d fps=%.1f | %s", level.upper(), clock() - t0,
-                         snap.frame_count, snap.fps_meas, text)
+                log_fn = {"ok": log.info, "warn": log.warning, "fail": log.error}[level]
+                log_fn("[%s] t=%.0fs frames=%d fps=%.1f | %s", level.upper(), clock() - t0,
+                      snap.frame_count, snap.fps_meas, text)
                 next_health += health_every_s
             sleep(poll_interval_s)
         summary = recorder.end_episode("operator")
-        log.info(summary.describe())
+        # end_episode already logged summary.describe(); avoid the duplicate.
         log.info("episode file: %s", summary.path)
         return 0 if summary.valid else 1
     finally:
