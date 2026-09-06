@@ -11,7 +11,7 @@
 **Phases**
 - [x] Iteration 1 — 10 s smoke (1b: without Arducams; Arducam hub faulty, see ledger), full rig, `/tmp`: does it record; T, dt stats, per-stream lag by hand.
 - [ ] Iteration 2 — validator available: 60 s on `/tmp`, every check green.
-- [ ] Iteration 3 — 120 s on Disk1 with `--bandwidth_margin 1.0`: watch queue peak and file MB/s.
+- [x] Iteration 3 — 120 s on Disk1 with `--bandwidth_margin 1.0`: watch queue peak and file MB/s.
 - [ ] Iteration 4 — 600 s on Disk1 (expected to overload at ~4 min at `vm.dirty_ratio=20`); measure the break point.
 - [ ] Iteration 5 — 600 s on Disk1 after the chosen mitigation (dirty-page budget or storage change); all checks green.
 
@@ -29,6 +29,8 @@
 
 | Hub 1-12 hosts both Arducams + both GelSights, all bMaxPower=500mA; kernel log shows repeated `reset high-speed USB device` on 1-12.3/1-12.4 during runs; hub descriptor says Self Powered, MaxPower 100mA | dmesg 43814/44185 resets; lsusb -v 0xe0 | hardware: move the Arducams to direct host ports or a hub with an adequate supply — operator action | iteration 2 |
 | Iteration 1b (3 RS + 2 GS, `--no_arducam`, /tmp, 10 s): PASS by hand | T=289, median dt 33.4 ms, max 78 ms, late 0.69 %, strictly increasing; GelSight lag median 52 ms / max 171 ms, 17.7–18.3 Hz distinct, non-decreasing; shapes/dtypes correct; frames vary; stored 4.71 MB/tick; queue peak 5.6 % | — | validator (iteration 2) |
+
+| Iteration 3 (3 RS + 2 GS, Disk1, 120 s, `--bandwidth_margin 1.0`): PASS by hand | T=3562 (29.75 Hz), late 0.06 % (2 ticks: 68/107 ms), p99 dt 38 ms, queue peak 11 %, writer 350 MB/s (cached), 16.9 GB = 4.74 MB/tick; GelSight lag median 55 ms / max 160 ms, 15.5 Hz distinct, non-decreasing; valid | — | validator (iteration 2, on this file) |
 
 ## Rejected ideas
 - zstd-3 (shuffle or bitshuffle): GelSight 1.45–1.71×, color 1.47–1.59× but 6–14 ms/frame → ~10–20 ticks/s single-threaded; too slow for 30 Hz. Rejected.
