@@ -24,6 +24,8 @@ def main(argv=None) -> int:
         p.add_argument("--duration", type=float, required=True,
                        help="Recording duration in seconds.")
         a = p.parse_args(argv[1:])
+        if a.duration <= 0:
+            p.error("--duration must be positive")
         cfg = config_from_namespace(a)
         _configure_logging()
         return run_headless(cfg, a.duration)

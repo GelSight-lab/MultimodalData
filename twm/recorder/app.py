@@ -341,7 +341,12 @@ def run_headless(config: RecorderConfig, duration_s: float, drivers: Optional[Dr
     recorder, capture = session.recorder, session.capture
     try:
         capture.start()
+        snapshot_deadline = clock() + config.startup_timeout_s
         while capture.latest() is None:
+            if clock() >= snapshot_deadline:
+                log.error("capture thread published no snapshot within %.0fs",
+                         config.startup_timeout_s)
+                return 2
             sleep(poll_interval_s)
         failed = recorder.start_episode()
         if failed:
