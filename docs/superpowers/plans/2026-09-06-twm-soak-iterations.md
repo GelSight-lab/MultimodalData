@@ -15,7 +15,7 @@
 - [x] Iteration 2 — validator available: 60 s on `/tmp`, every check green.
 - [x] Iteration 3 — 120 s on Disk1 with `--bandwidth_margin 1.0`: watch queue peak and file MB/s.
 - [x] Iteration 4 — 600 s on Disk1 (expected to overload at ~4 min at `vm.dirty_ratio=20`); measure the break point.
-- [x] Iteration 5a — 600 s on Disk1 with BITSHUFFLE, no Arducams: PASS. [ ] 5b — full rig incl. Arducams: blocked on the hub rewiring (+ sysctl for the extra ~40 MB/s) (dirty-page budget or storage change); all checks green.
+- [x] Iteration 5a — 600 s on Disk1 with BITSHUFFLE, no Arducams: PASS. [x] 5b — full rig incl. Arducams: PASS (run 2, 17:41–17:51) after moving the Arducams off hub 1-12 and raising vm.dirty_ratio to 60 (dirty-page budget or storage change); all checks green.
 
 ## Ledger
 
@@ -49,6 +49,8 @@
 | Iteration 5b attempt (full rig, Disk1, 600 s, vm.dirty_ratio=60, after 1 h idle): refused at startup — `Arducam cam0 (/dev/video8) timed out waiting for first frame` on its single open; preflight was green (99.6 ticks/s with bitshuffle) and all 3 RealSense started | log `/tmp/twm_soak_iter5b_600s.log` 16:11 | none in code — left Arducam TWML0001 yields no frames on this hub via every path; needs a port/cable change or evidence from Cheese | — |
 
 | Iteration 5b run 1 (17:38, Arducams moved to ports 1-1.3 / 1-2): all 7 cameras opened and the episode started, then auto-ended at 0 frames — `capture_stall: no tick for 8.5s` | soak log shows `Restarting the camera [left serial=2DUPB53G]` during startup: the GelSight driver's blocking restart (3 s sleep + reopen) inside `get_frame()` stalled the capture thread; fail-fast worked as designed. A 30 s instrumented grab loop afterwards: 1325 grabs, worst sensor 18 ms, no stalls | startup transient; re-run; if it recurs, lengthen the settle phase / require stable frames before start | run 2 |
+
+| **Iteration 5b run 2 (FULL RIG: 3 RS + 2 GS + 2 Arducam, Disk1, 600 s, BITSHUFFLE, vm.dirty_ratio=60, Arducams on ports 1-1.3 / 1-2): PASS** | T=17839 (594.6 s @ 30 Hz), late 0.17 % (31 ticks), max gap 121 ms, queue peak 24 %, 85.1 GB = 4.77 MB/tick, writer 247 MB/s; GelSight lag 18–183 ms @ 17.0 Hz, Arducam lag 0.1–46 ms @ 29.7 Hz, all monotonic, 0 late sensor samples; 17 datasets correct shape/dtype, frames vary; dirty pages peaked 14.3 GB of the 36 GB budget; validator 8/8 ok with `--expected-duration 600`; report `2026-09-06-soak-iter5b-validate.json` | — | this run |
 
 ## Rejected ideas
 - zstd-3 (shuffle or bitshuffle): GelSight 1.45–1.71×, color 1.47–1.59× but 6–14 ms/frame → ~10–20 ticks/s single-threaded; too slow for 30 Hz. Rejected.
