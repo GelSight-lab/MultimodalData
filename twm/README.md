@@ -130,10 +130,14 @@ of the preview shows `writer <queue %> | <MB/s> | disk <GB> (~min left) | OK/WAR
 Before every episode the recorder checks free disk, OptiTrack freshness for
 the active bodies, and that the writer is idle. At startup it also writes
 two seconds of synthetic frames through the real pipeline and refuses to
-run below 45 ticks/s (30 fps × 1.5) for the legacy rig, scaled up to
-~58 ticks/s when two Arducams are configured (the requirement tracks the
-extra bytes per tick, not a different tick rate). Run the same test by
-hand:
+start below `fps × margin` ticks/s (30 fps × 1.5 margin = 45 ticks/s by
+default for the legacy rig, scaled up to ~58 ticks/s when two Arducams are
+configured — the requirement tracks the extra bytes per tick, not a
+different tick rate). The margin is tunable with `--bandwidth_margin` for
+disks that can't clear the default headroom; on a slow disk that number is
+only a startup gate, not the final word — the soak's `queue_peak_fraction`
+(see below) is the real verdict on whether the disk kept up for the whole
+episode. Run the startup self-test by hand:
 
     python -m twm.recorder bench --dir /media/yxma/Disk1/twm/data --seconds 5
 
@@ -141,6 +145,70 @@ Episode metadata gained `valid`, `invalid_reason`, `ended_by`,
 `max_tick_gap_s`, `gap_count`, `queue_peak_fraction`, `writer_mean_mb_s`.
 OptiTrack poses are now written continuously with each batch rather than
 only at episode end, so episodes longer than ~7 minutes keep every sample.
+
+### Soak test and validation
+
+For an unattended timed recording with no preview window (e.g. an overnight
+capacity test), use `soak` instead of the GUI `run`:
+
+```bash
+python -m twm.recorder soak --task <task_name> --duration <seconds> \
+  [--data_dir D] [--no_optitrack] [--no_arducam] \
+  [--realsense_serials A,B,C] [--bandwidth_margin M] [--min_free_gb G]
+```
+
+It runs the same startup preflight, records for exactly `--duration`
+seconds (or until the writer/watchdog auto-ends the episode early), prints
+`episode file: <path>`, and exits:
+
+| Exit code | Meaning |
+|-----------|---------|
+| `0` | Recording completed the full duration and the episode is valid |
+| `1` | The episode auto-ended early (overload, watchdog, disk low, ...) or fell short of the requested duration |
+| `2` | The recorder refused to start (preflight failure, or no capture snapshot within the startup timeout) |
+
+Partial-rig flags (usable with `soak` and the GUI `run`):
+
+| Flag | Effect |
+|------|--------|
+| `--realsense_serials A,B,C` | Record only these RealSense cameras instead of the rig's default three; the episode file gets exactly that many `realsense/cam{i}` groups, and the startup self-test sizes itself to match |
+| `--no_optitrack` | Record without OptiTrack — no ROS master needed; pose datasets stay empty, and the OptiTrack watchdog and preflight freshness check both go inert (`active_sensors` is forced empty) |
+| `--no_arducam` | Run without the two sensor-mounted Arducams (see [Full recorder](#full-recorder) above) |
+| `--bandwidth_margin M` | Startup self-test requires `fps × M × arducam-scale` ticks/s instead of the default `M=1.5` — lower it for a disk that can't clear the default headroom |
+| `--min_free_gb G` | Refuse to start, and auto-end an in-progress episode, below `G` GB free (default 50) |
+
+Validate a recorded episode's format, timing, and content invariants:
+
+```bash
+python -m twm.recorder validate <episode.h5> --expected-duration <seconds> \
+  [--fps N] [--warmup-frames 10] [--report out.json]
+```
+
+`--fps` defaults to the fps stored in the episode's own metadata.
+`--warmup-frames` must match the recorder's `warmup_drop_frames` (default
+10) so the duration check doesn't penalize episodes for warm-up frames the
+recorder itself always drops. `--report` also writes the JSON report
+(the same object printed to stdout) to that path. Exit code is `0` if
+every check passes, `1` otherwise. The eight checks:
+
+| Check | Passes when |
+|-------|-------------|
+| `metadata` | `valid=True`, `ended_by` is `operator`/`quit`/`watchdog`, `frame_count == T`, `gap_count == 0` |
+| `shapes` | Every stream metadata promises (by serial/config lists) is present; every dataset's shape and dtype match `T` and the expected per-frame shape |
+| `tick_rate` | Timestamps strictly increasing; median tick interval within 10% of `1/fps`; max gap ≤ `--max-tick-gap`; fewer than 1% of ticks late |
+| `duration` | `T ≥ 0.97 × (expected_duration × fps − warmup_frames)` |
+| `sensor_sync` | Every per-sensor timestamp stream is non-decreasing, not identical to the tick clock (which would mean the driver never reported a real capture time), has a distinct-sample rate ≥ 10 Hz, and has fewer than 1% of ticks lagging the tick clock by more than 250 ms — with no tick ever lagging past the drivers' own 500 ms `max_age`/`max_no_update_time` contract |
+| `content` | Sampled frames aren't blank (std > 1.0), aren't frozen (most consecutive sampled pairs differ), and depth frames aren't all-zero |
+| `optitrack` | Pose timestamps are non-decreasing and fall within the episode's tick span (± 1 s); trivially passes if no OptiTrack data was recorded |
+| `writer` | `queue_peak_fraction < 0.5` and `writer_mean_mb_s > 0` |
+
+**Measured on 2026-09-06:** `/media/yxma/Disk1` sustains ~100 MB/s of real
+(fsync'd) writes. 3 RealSense + 2 GelSight store ≈3.9 MB/tick under
+BITSHUFFLE (≈117 MB/s at 30 Hz), and a 600 s soak at that configuration
+passed every `validate` check. Each Arducam adds ≈0.7 MB/tick. Short
+benches (a few seconds) read far higher throughput than this because the
+page cache absorbs the burst before it ever reaches the disk — trust a
+multi-minute soak's `queue_peak_fraction`, not a short bench number.
 
 ### Library layout
 
