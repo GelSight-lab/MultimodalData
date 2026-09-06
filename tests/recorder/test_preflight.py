@@ -2,11 +2,12 @@ from types import SimpleNamespace
 
 import pytest
 
-from twm.recorder.config import RecorderConfig, WriterConfig
+from twm.recorder.config import DiskConfig, RecorderConfig, WriterConfig
 from twm.recorder.preflight import (check_disk_free, check_optitrack_fresh,
                                     check_write_bandwidth, check_writer_idle,
                                     failures, format_report,
-                                    run_episode_preflight, stale_trackers)
+                                    run_episode_preflight, run_startup_preflight,
+                                    stale_trackers)
 from twm.recorder.writer import WriterStats
 
 
@@ -73,3 +74,18 @@ def test_episode_preflight_collects_every_failure(tmp_path):
     assert names == ["disk_free", "optitrack_fresh", "writer_idle"]
     report = format_report(results)
     assert "FAIL disk_free" in report and "FAIL writer_idle" in report
+
+
+def test_startup_preflight_skips_bandwidth_test_when_disk_check_fails(tmp_path):
+    """The bandwidth self-test writes real data (~fps * bandwidth_test_s
+    ticks, hundreds of MB at full-rig size) to `data_dir`. Running it after
+    disk_free has already failed can itself blow past a nearly-full disk;
+    it must be skipped, not attempted, and nothing may be written."""
+    cfg = RecorderConfig(task="t", data_dir=tmp_path,
+                         disk=DiskConfig(min_free_gb=50.0, bandwidth_test_s=0.2))
+    results = run_startup_preflight(cfg, disk_usage=usage(1.0))
+    assert [r.name for r in results] == ["disk_free", "write_bandwidth"]
+    assert not results[0].ok
+    assert not results[1].ok
+    assert "skipped" in results[1].detail
+    assert list(tmp_path.iterdir()) == []

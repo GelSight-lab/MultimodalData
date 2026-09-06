@@ -165,12 +165,17 @@ def check_write_bandwidth(directory, fps: int, seconds: float, margin: float,
 def run_startup_preflight(config: RecorderConfig, n_arducam: int = 0,
                           disk_usage: Callable[[str], Any] = shutil.disk_usage
                           ) -> List[CheckResult]:
-    return [
-        check_disk_free(config.data_dir, config.disk.min_free_gb, disk_usage),
-        check_write_bandwidth(config.data_dir, config.fps, config.disk.bandwidth_test_s,
-                              config.disk.min_bandwidth_margin, config.writer,
-                              n_arducam=n_arducam),
-    ]
+    disk = check_disk_free(config.data_dir, config.disk.min_free_gb, disk_usage)
+    if not disk.ok:
+        # The self-test writes real ticks (fps * bandwidth_test_s of them,
+        # full-rig size) into data_dir; running it against a disk that has
+        # already failed the free-space check risks the self-test itself
+        # filling the disk instead of merely reporting that it is full.
+        return [disk, CheckResult("write_bandwidth", False,
+                                  "skipped: not enough free disk to run the self-test")]
+    return [disk, check_write_bandwidth(config.data_dir, config.fps, config.disk.bandwidth_test_s,
+                                        config.disk.min_bandwidth_margin, config.writer,
+                                        n_arducam=n_arducam)]
 
 
 def run_episode_preflight(config: RecorderConfig, poses: Mapping[str, Any],
