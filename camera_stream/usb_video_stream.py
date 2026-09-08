@@ -57,7 +57,7 @@ class USBVideoStream(BaseVideoStream):
         self.streaming = True
         self.frame_ts = None        # capture timestamp of self.frame (epoch s)
         if create_thread:
-            threading.Thread(target=self.update, args=(), daemon=True).start()
+            self._start_update_thread()
 
     def stop(self):
         self.streaming = False

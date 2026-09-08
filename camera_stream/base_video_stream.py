@@ -82,13 +82,39 @@ class BaseVideoStream(object):
                 self.recording_frame_count += 1
                 self.last_record_frame_t = time.time()
     
+    def _start_update_thread(self):
+        """Run update() on a fresh daemon thread and remember it."""
+        self._update_thread = threading.Thread(target=self.update, daemon=True)
+        self._update_thread.start()
+
     def restart(self):
+        """Reopen the camera after a stall.
+
+        stop() ends the update thread (it exits when `streaming` goes False),
+        so start() must create a new one: an earlier version reopened the
+        device with create_thread=False, which left `frame` None forever and
+        hung every get_frame() caller after the first restart.
+        """
         self.stop()
+        old = getattr(self, "_update_thread", None)
+        if old is not None and old is not threading.current_thread():
+            old.join(timeout=5.0)
         logging(f"Restarting the camera {self._tag()}...", self.verbose, "cyan")
         self.frame = None
         time.sleep(3)
-        # Avoid creating new thread
-        self.start(create_thread=False)
+        self.start(create_thread=True)
+
+    def peek_frame_with_timestamp(self):
+        """(frame_copy, capture_ts) of the latest frame, or (None, None).
+
+        Never waits and never restarts the camera; the caller decides what to
+        do with a stale frame (the recorder keeps ticking and lets a
+        supervisor restart the stream off the capture thread).
+        """
+        with self.lock:
+            frame = self.frame
+            ts = getattr(self, "frame_ts", None)
+            return (frame.copy() if frame is not None else None), ts
     
     def update(self):
         raise NotImplementedError

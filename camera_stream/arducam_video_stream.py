@@ -156,6 +156,13 @@ class ArducamVideoStream:
             if self._error is not None:
                 raise self._error
 
+    def peek_frame_with_timestamp(self):
+        """(frame_copy, capture_ts) of the latest frame, or (None, None); never waits."""
+        with self._condition:
+            if self._frame is None or self._frame_ts is None:
+                return None, None
+            return self._frame.copy(), float(self._frame_ts)
+
     def get_frame(self, timeout: float = 0.5, max_age: float = 0.5):
         return self.get_frame_with_timestamp(timeout=timeout, max_age=max_age)[0]
 

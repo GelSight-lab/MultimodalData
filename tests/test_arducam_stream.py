@@ -184,3 +184,21 @@ def test_stop_never_releases_the_capture_while_a_read_is_in_progress():
     assert capture.released is True
     assert capture.released_during_read is False
     assert time.monotonic() - t0 < 6.0
+
+
+def test_peek_frame_with_timestamp_never_waits():
+    capture = FakeCapture(frames=[])
+    stream = ArducamVideoStream(_slot(), "/dev/video6", capture_factory=lambda *a: capture)
+    assert stream.peek_frame_with_timestamp() == (None, None)    # before start
+    stream._running.set()                                        # emulate a started stream with no frame yet
+    t0 = time.monotonic()
+    assert stream.peek_frame_with_timestamp() == (None, None)
+    assert time.monotonic() - t0 < 0.05
+    stream._running.clear()
+    image = np.full((480, 640, 3), 9, np.uint8)
+    capture2 = FakeCapture([image])
+    stream2 = ArducamVideoStream(_slot(), "/dev/video6", capture_factory=lambda *a: capture2)
+    stream2.start(timeout=0.5)
+    frame, ts = stream2.peek_frame_with_timestamp()
+    assert frame is not None and frame[0, 0, 0] == 9 and ts is not None
+    stream2.stop()
