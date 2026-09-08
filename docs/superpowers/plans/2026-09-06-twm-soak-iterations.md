@@ -56,6 +56,8 @@
 | After "starting OptiTrack" the recorder printed nothing | `rospy.init_node` replaces the root logging handlers with a ROS file handler | `restore_logging()` after the rig opens (commit 266993c) | unit test + the 30 s OptiTrack run shows health lines and "Episode saved" |
 | Startup bandwidth self-test refused with 54.3 ticks/s < 57.9 minutes after a passing 10-min full-rig episode | page-cache bench under-reads the HDD | write_bandwidth is advisory (warning), disk_free still blocks (commit 9fa6242) | 30 s run with OptiTrack: 882 frames, queue peak 14 %, 5942 OT samples in range, validator 8/8 |
 
+| 2026-09-07 22:31: a GelSight `Restarting the camera [left serial=2DUPB53G]` froze the recorder (preview and `[IDLE]` log stopped) | driver bug: `restart()` reopened the camera with `create_thread=False` after `stop()` had ended the update thread, and set `frame=None`, so `get_frame()` waited forever | driver: restart recreates the thread + `peek_frame_with_timestamp()`; recorder: non-blocking grabs with last-good fallback, `SensorSupervisor` restarts stalled streams off the capture thread, health line `STALE`, `sensor_restarts` metadata; validator: outages reported, tolerated ≤ 5 % and resolved | unit tests (driver, rig, capture, monitor, recorder, validator); 90 s rig run with OptiTrack: 2648 frames valid, `sensor_restarts` stamped (no stall occurred in that window) |
+
 ## Rejected ideas
 - zstd-3 (shuffle or bitshuffle): GelSight 1.45–1.71×, color 1.47–1.59× but 6–14 ms/frame → ~10–20 ticks/s single-threaded; too slow for 30 Hz. Rejected.
 - JPEG q95 for color/GelSight: 8.5× / 18.7×, 5 ms/frame — would solve the disk gap but is lossy; needs the user's decision, not taken.
