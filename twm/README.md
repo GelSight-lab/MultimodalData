@@ -1,25 +1,66 @@
 # TWM Data Collection
 
-Tools for collecting and reviewing multimodal data for the Tactile World Model (TWM) project.
+Tools for collecting and reviewing multimodal data for the Tactile World Model
+(TWM) project: a 30 Hz recorder for the full rig, an unattended soak test, an
+episode validator, calibration tools, and a viewer.
+
+## Quick start
+
+```bash
+# terminal 1 — OptiTrack poses over VRPN (skip and pass --no_optitrack to record without poses)
+roslaunch vrpn_client_ros sample.launch
+
+# terminal 2 — record; run from a checkout that contains twm/recorder/
+cd ~/MultimodalData
+python -m twm.data_collection --task <task_name>
+#   s = start episode   e = end episode   r = reset GelSight diff reference
+#   p = toggle projection overlay   q = quit (saves an in-progress episode)
+
+# afterwards — check any episode
+python -m twm.recorder validate /media/yxma/Disk1/twm/data/<task>/<date>/episode_000.h5 --expected-duration <seconds>
+```
+
+If you ever see black GelSight images or no wrist cameras in the preview, you
+are running an old checkout without `twm/recorder/` (its hard-coded serials
+fall back to black dummy frames). Pull the branch that has it.
+
+---
 
 ## Hardware
 
-| Sensor | Count | Details |
-|--------|-------|---------|
-| Intel RealSense D415 | 3 | Color (640×480 @ 30 Hz) + depth (640×480 @ 30 Hz) |
-| GelSight Mini | 2 | Left + right tactile sensors, USB video (640×480 @ 30 Hz) |
-| Arducam B0578 | 2 | Sensor-mounted RGB cameras (640×480 MJPEG @ 30 Hz) |
-| OptiTrack | 3 trackers | `motherboard`, `sensor_left`, `sensor_right` via VRPN/ROS |
+| Sensor | Serials / identity | Where configured |
+|--------|--------------------|------------------|
+| 3× Intel RealSense D415, 640×480 color + depth @ 30 Hz | `143322063538` (right, cam0), `104122062574` (left, cam1), `217222066989` (middle, cam2) | `REALSENSE_SERIALS` in `twm/recorder/config.py` |
+| 2× GelSight Mini, 640×480 @ ~18 Hz | `2DUPB53G` = left, `2BKRDTAD` = right | `GELSIGHT_SERIALS` in `twm/recorder/config.py` |
+| 2× Arducam B0578 sensor-mounted RGB, 640×480 MJPEG @ 30 Hz | `TWML0001` = left → `arducam/cam0`, `TWMR0001` = right → `arducam/cam1` | `twm/config/arducam.json` (selected by USB serial, any port) |
+| OptiTrack rigid bodies | `motherboard`, `sensor_left`, `sensor_right` via VRPN/ROS | `OT_TRACKERS` in `twm/recorder/config.py` |
 
-Camera serials, the data root, and every threshold live in
-`twm/recorder/config.py` (`RecorderConfig`). Override at the command line:
-`--data_dir`, `--queue_seconds`, `--min_free_gb`, `--no_bandwidth_test`.
-The two Arducams are selected by USB serial in `config/arducam.json`
-(`TWML0001` = left, `TWMR0001` = right), so they can be plugged into any port.
-A camera without a unique serial can still be selected by its USB topology
-path (`id_path`). Their HDF5 groups stay `arducam/cam0` (left) and
-`arducam/cam1` (right); each group's `position` and `serial` attributes say
-which is which.
+Every other threshold (queue size, fail-fast limits, disk minimums, warm-up
+frames) lives in `RecorderConfig` in `twm/recorder/config.py`, and each has a
+command-line override (`--data_dir`, `--queue_seconds`, `--min_free_gb`,
+`--bandwidth_margin`, `--no_bandwidth_test`, `--realsense_serials`,
+`--no_optitrack`, `--no_arducam`, `--arducam_config`, `--no_projection`).
+
+### Two rig rules learned the hard way (2026-09-06)
+
+1. **Do not put the Arducams on the USB 2.0 hub at port 1-12 with the
+   GelSights.** There they alternate between "no frames" and
+   `VIDIOC_STREAMON: Protocol error` at the driver level. On the PC's own
+   ports (currently 1-1.3 and 1-2) they stream for hours.
+2. **The recording disk is slower than the rig.** `/media/yxma/Disk1` (HDD)
+   sustains ~100 MB/s of real writes; the full rig stores ~4.8 MB per tick
+   ≈ 145 MB/s. The kernel's write cache bridges the gap for a whole episode
+   only if it is allowed to grow. Set once, and keep across reboots:
+
+   ```bash
+   sudo sysctl -w vm.dirty_ratio=60 vm.dirty_background_ratio=5
+   echo -e "vm.dirty_ratio=60\nvm.dirty_background_ratio=5" | sudo tee /etc/sysctl.d/90-twm-recorder.conf
+   ```
+
+   With that, a 600 s full-rig episode (85 GB) recorded with a 24 % writer-queue
+   peak and 14 GB of dirty pages. Without it the default 20 % budget runs out
+   around 8–9 minutes and the episode is ended (explicitly, see below). Between
+   long episodes give the disk a few minutes to drain.
 
 ---
 
@@ -27,131 +68,107 @@ which is which.
 
 ### OptiTrack stream (required for pose data)
 
-OptiTrack poses are streamed over VRPN. Before launching `data_collection.py`,
-start the VRPN client in a separate terminal:
+OptiTrack poses are streamed over VRPN. Before launching the recorder, start
+the VRPN client in a separate terminal:
 
 ```bash
 roslaunch vrpn_client_ros sample.launch
 ```
 
 This connects to the Motive server and publishes pose topics for the
-`motherboard`, `sensor_left`, and `sensor_right` rigid bodies. If the launch
-isn't running, OptiTrack pose datasets in the saved HDF5 will be empty
-(camera/GelSight recording still works).
+`motherboard`, `sensor_left`, and `sensor_right` rigid bodies. Motive on the
+OptiTrack PC must be open and tracking the bodies. Without a ROS master the
+recorder refuses to start unless you pass `--no_optitrack`, which records
+every camera and leaves the pose datasets empty.
 
-> **Tip:** The Motive software on the OptiTrack PC must be open and tracking
-> the rigid bodies for VRPN to broadcast poses.
+The recorder will not start an episode while an active body has no fresh
+pose (`--active_sensors both|left|right`, default both), and it auto-ends an
+episode after 10 s of OptiTrack silence.
 
 ---
 
 ## Collecting Data
 
-### Sensor-camera setup and verification
-
-After moving USB connections, run the identification preview to confirm the
-serial → side mapping. To view both feeds and optionally assign their
-physical positions:
-
-```bash
-python -m twm.sensor_camera identify
-```
-
-Press `0` or `1` to declare that slot the left camera (the other becomes
-right), `u` to leave both positions unknown, `s` to save, or `q` to exit
-without changing the mapping. Unknown positions do not prevent recording;
-the HDF5 file retains each slot's USB path so it can always be identified.
-
-Before collecting, run a five-second real-camera recording and validation:
-
-```bash
-python -m twm.sensor_camera verify --duration 5 \
-  --output /tmp/twm_arducam_verification.h5 --force
-```
-
-The command exits nonzero unless both datasets reopen correctly, have equal
-nonzero frame counts, valid 640×480 BGR images, finite monotonic timestamps,
-approximately 30 Hz capture cadence, non-black content, and distinct feeds.
-
-### Full recorder
-
 ```bash
 python -m twm.data_collection --task <task_name>
 ```
 
-Both configured Arducams are required by default. Use `--no_arducam` only for
-intentional legacy collection without sensor-camera data. A missing configured
-USB path is a startup error rather than a silent black stream. Use
-`--arducam_config <path>` to select a different mapping file.
-
-`--task` is required and controls where data is saved. Episodes are written to:
+`--task` is required and controls where data is saved:
 
 ```
 /media/yxma/Disk1/twm/data/<task_name>/<YYYY-MM-DD>/episode_000.h5
                                                     episode_001.h5
-                                                    ...
 ```
 
-The root directory is `RecorderConfig.data_dir`, set in
-`twm/recorder/config.py` (currently `/media/yxma/Disk1/twm/data`) and
-overridable with `--data_dir`. The dataset log is written to
-`<data_dir>/dataset_log.csv`.
+A row is appended to `<data_dir>/dataset_log.csv` after every episode.
+
+### The preview window
+
+Three rows: the RealSense color views (with the GelSight projection overlay
+when calibrated), the two GelSight images with their contact-difference
+thumbnails, and the two wrist cameras labelled by slot, serial and side.
+The status bar shows the episode state, and the health line at the bottom
+shows `writer <queue %> | <MB/s> | disk <GB free> (~min left) | OK/WARN/FAIL`.
+Watch the queue percentage: it is the one number that says whether the disk
+is keeping up.
 
 ### Controls
 
 | Key | Action |
 |-----|--------|
-| `s` | Start a new episode |
-| `e` | End episode and save |
-| `r` | Reset GelSight diff reference to current frame |
-| `q` | Quit (saves in-progress episode if recording) |
+| `s` | Start a new episode (refused, with reasons, if a preflight check fails) |
+| `e` | End the episode and save |
+| `r` | Reset the GelSight diff reference to the current frame |
+| `p` | Toggle the GelSight→camera projection overlay |
+| `q` | Quit (saves an in-progress episode first) |
 
 ### Typical workflow
 
-1. Start the script. The preview window opens; all sensors initialize.
-2. Position the setup. Press `r` to set the GelSight diff reference (grey = no contact).
-3. Press `s` to begin recording. The status bar turns red: `[REC ep_0000 | ...]`.
+1. Start the script. All sensors initialize; the preview opens once every camera
+   has delivered frames and settled.
+2. Position the setup. Press `r` so the GelSight difference thumbnails are grey.
+3. Press `s`. The first 10 ticks are discarded (camera warm-up), then recording
+   runs at a strict 30 Hz.
 4. Perform the task.
-5. Press `e` to end the episode. The script flushes buffered frames and OptiTrack poses to disk.
-6. Repeat from step 2 for the next episode.
-7. Press `q` to quit.
+5. Press `e`. The writer drains, OptiTrack poses are flushed, the file is
+   stamped valid and closed, and the summary is logged.
+6. Repeat from 2, or `q` to quit.
 
-A log row is appended to `<data_dir>/dataset_log.csv` after each episode.
+### What is guaranteed, and what happens when it cannot be
 
-### What happens when the disk cannot keep up
+The recorder never drops a frame from the middle of an episode. Every tick
+either reaches the file or ends the episode explicitly:
 
-The recorder never drops frames from the middle of an episode. The writer
-queue is bounded in bytes (3 s of ticks ≈ 750 MB by default). If it stays
-above 50 % for 3 s, fills up, hits a write error, or free disk falls below
-50 GB, the current episode is finalized immediately, marked
-`metadata.attrs["valid"] = False` with an `invalid_reason`, logged with
-`notes = "INVALID: ..."`, and recording stops. The status line at the bottom
-of the preview shows `writer <queue %> | <MB/s> | disk <GB> (~min left) | OK/WARN/FAIL`.
+| Condition | Result |
+|-----------|--------|
+| Writer queue (3 s of ticks, ~750 MB) full, or above 50 % for 3 s | episode ended, `ended_by=overload` |
+| HDF5 write error | `ended_by=writer_fault` |
+| Free disk below 50 GB | `ended_by=disk_low` |
+| Two ticks more than 0.5 s apart, or no tick published for 2 s | `ended_by=capture_stall` |
+| A sensor raises while grabbing | `ended_by=sensor_error`, recorder exits |
+| OptiTrack silent for 10 s | `ended_by=watchdog` (episode stays valid) |
 
-Before every episode the recorder checks free disk, OptiTrack freshness for
-the active bodies, and that the writer is idle. At startup it also writes
-two seconds of synthetic frames through the real pipeline and compares the
-result with `fps × margin` ticks/s (30 fps × 1.5 margin = 45 ticks/s for the
-legacy rig, ~58 ticks/s with two Arducams — the requirement tracks the extra
-bytes per tick, not a different tick rate). That self-test is **advisory**:
-it measures the page cache and under-reads a slow HDD (54 ticks/s was seen
-minutes after a 10-minute full-rig episode passed with a 24 % queue peak),
-so a shortfall is logged as a warning and recording proceeds; a real
-shortfall is caught at runtime by the writer's fail-fast. Only low free
-disk refuses to start. The margin is tunable with `--bandwidth_margin`, and
-the soak's `queue_peak_fraction` (see below) is the real verdict on whether
-the disk kept up. Run the self-test by hand:
+An auto-ended episode is written to disk intact up to the last good tick, gets
+`metadata.attrs["valid"] = False` and an `invalid_reason`, and its CSV row says
+`notes = "INVALID: ..."`. Recording stops; press `s` for a new episode.
 
-    python -m twm.recorder bench --dir /media/yxma/Disk1/twm/data --seconds 5
+Before every episode the recorder checks free disk, OptiTrack freshness for the
+active bodies, that the writer is idle, and that the capture thread is alive.
+At startup it also pushes two seconds of synthetic frames through the real
+pipeline. That bandwidth self-test is advisory: it measures the page cache and
+under-reads a slow HDD, so a shortfall against `fps × 1.5 × arducam-scale`
+ticks/s is logged as a warning and recording proceeds (`--bandwidth_margin`
+tunes it); only low free disk refuses to start. Run it by hand with
 
-Episode metadata gained `valid`, `invalid_reason`, `ended_by`,
-`max_tick_gap_s`, `gap_count`, `queue_peak_fraction`, `writer_mean_mb_s`.
-OptiTrack poses are now written continuously with each batch rather than
-only at episode end, so episodes longer than ~7 minutes keep every sample.
+```bash
+python -m twm.recorder bench --dir /media/yxma/Disk1/twm/data --seconds 5
+```
 
-### Soak test and validation
+---
 
-For an unattended timed recording with no preview window (e.g. an overnight
-capacity test), use `soak` instead of the GUI `run`:
+## Verifying the pipeline
+
+### Soak test (unattended timed recording, no window)
 
 ```bash
 python -m twm.recorder soak --task <task_name> --duration <seconds> \
@@ -159,65 +176,65 @@ python -m twm.recorder soak --task <task_name> --duration <seconds> \
   [--realsense_serials A,B,C] [--bandwidth_margin M] [--min_free_gb G]
 ```
 
-It runs the same startup preflight, records for exactly `--duration`
-seconds (or until the writer/watchdog auto-ends the episode early), prints
-`episode file: <path>`, and exits:
-
-| Exit code | Meaning |
-|-----------|---------|
-| `0` | Recording completed the full duration and the episode is valid |
-| `1` | The episode auto-ended early (overload, watchdog, disk low, ...) or fell short of the requested duration |
-| `2` | The recorder refused to start (preflight failure, or no capture snapshot within the startup timeout) |
-
-Partial-rig flags (usable with `soak` and the GUI `run`):
+Same preflight and recorder as the window; records for `--duration` seconds
+(or until an auto-end), prints `episode file: <path>`, logs a health line
+every 10 s, and exits `0` (valid episode), `1` (auto-ended or short), or `2`
+(refused to start). Ctrl-C finalizes the episode as `quit` before exiting.
 
 | Flag | Effect |
 |------|--------|
-| `--realsense_serials A,B,C` | Record only these RealSense cameras instead of the rig's default three; the episode file gets exactly that many `realsense/cam{i}` groups, and the startup self-test sizes itself to match |
-| `--no_optitrack` | Record without OptiTrack — no ROS master needed; pose datasets stay empty, and the OptiTrack watchdog and preflight freshness check both go inert (`active_sensors` is forced empty) |
-| `--no_arducam` | Run without the two sensor-mounted Arducams (see [Full recorder](#full-recorder) above) |
-| `--bandwidth_margin M` | Startup self-test requires `fps × M × arducam-scale` ticks/s instead of the default `M=1.5` — lower it for a disk that can't clear the default headroom |
-| `--min_free_gb G` | Refuse to start, and auto-end an in-progress episode, below `G` GB free (default 50) |
+| `--realsense_serials A,B,C` | Record only these RealSense cameras; the file gets that many `realsense/cam{i}` groups |
+| `--no_optitrack` | No ROS needed; pose datasets stay empty; the OptiTrack watchdog and freshness check are inert |
+| `--no_arducam` | Legacy collection without the wrist cameras |
+| `--bandwidth_margin M` | Advisory self-test threshold `fps × M × arducam-scale` (default `M=1.5`) |
+| `--min_free_gb G` | Refuse to start, and auto-end an episode, below `G` GB free (default 50) |
 
-Validate a recorded episode's format, timing, and content invariants:
+### Validate an episode
 
 ```bash
 python -m twm.recorder validate <episode.h5> --expected-duration <seconds> \
-  [--fps N] [--warmup-frames 10] [--report out.json]
+  [--fps N] [--warmup-frames 10] [--max-tick-gap 0.5] [--report out.json]
 ```
 
-`--fps` defaults to the fps stored in the episode's own metadata.
-`--warmup-frames` must match the recorder's `warmup_drop_frames` (default
-10) so the duration check doesn't penalize episodes for warm-up frames the
-recorder itself always drops. `--report` also writes the JSON report
-(the same object printed to stdout) to that path. Exit code is `0` if
-every check passes, `1` otherwise. The eight checks:
+Prints a JSON report and exits `0` only if all eight checks pass:
 
 | Check | Passes when |
 |-------|-------------|
-| `metadata` | `valid=True`, `ended_by` is `operator`/`quit`/`watchdog`, `frame_count == T`, `gap_count == 0` |
-| `shapes` | Every stream metadata promises (by serial/config lists) is present; every dataset's shape and dtype match `T` and the expected per-frame shape |
-| `tick_rate` | Timestamps strictly increasing; median tick interval within 10% of `1/fps`; max gap ≤ `--max-tick-gap`; fewer than 1% of ticks late |
+| `metadata` | `valid=True`, `ended_by` ∈ {operator, quit, watchdog}, `frame_count == T`, `gap_count == 0` |
+| `shapes` | Every stream promised by the metadata (RealSense serials, GelSight serials, Arducam config) exists with the right shape and dtype for all `T` ticks |
+| `tick_rate` | Timestamps strictly increasing; median interval within 10 % of `1/fps`; max gap ≤ `--max-tick-gap`; fewer than 1 % of ticks late (count reported) |
 | `duration` | `T ≥ 0.97 × (expected_duration × fps − warmup_frames)` |
-| `sensor_sync` | Every per-sensor timestamp stream is non-decreasing, not identical to the tick clock (which would mean the driver never reported a real capture time), has a distinct-sample rate ≥ 10 Hz, and has fewer than 1% of ticks lagging the tick clock by more than 250 ms — with no tick ever lagging past the drivers' own 500 ms `max_age`/`max_no_update_time` contract |
-| `content` | Sampled frames aren't blank (std > 1.0), aren't frozen (most consecutive sampled pairs differ), and depth frames aren't all-zero |
-| `optitrack` | Pose timestamps are non-decreasing and fall within the episode's tick span (± 1 s); trivially passes if no OptiTrack data was recorded |
+| `sensor_sync` | Each GelSight/Arducam timestamp stream is non-decreasing, is not a copy of the tick clock, updates at ≥ 10 Hz, lags the tick by at most 250 ms on 99 % of ticks and never more than 500 ms |
+| `content` | Sampled frames are not blank, not frozen, and depth is not all zero |
+| `optitrack` | Pose timestamps non-decreasing and within the episode's span (± 1 s); ok when recorded with `--no_optitrack` |
 | `writer` | `queue_peak_fraction < 0.5` and `writer_mean_mb_s > 0` |
 
-**Measured on 2026-09-06:** `/media/yxma/Disk1` sustains ~100 MB/s of real
-(fsync'd) writes. 3 RealSense + 2 GelSight store ≈3.9 MB/tick under
-BITSHUFFLE (≈117 MB/s at 30 Hz), and a 600 s soak at that configuration
-passed every `validate` check. Each Arducam adds ≈0.7 MB/tick. Short
-benches (a few seconds) read far higher throughput than this because the
-page cache absorbs the burst before it ever reaches the disk — trust a
-multi-minute soak's `queue_peak_fraction`, not a short bench number.
+### Measured on this rig (2026-09-06/07)
+
+| Configuration | Result |
+|---------------|--------|
+| 3 RealSense + 2 GelSight, 600 s, default `vm.dirty_ratio=20` | 17,839 frames, 29 late ticks, queue peak 13 %, ~3.9 MB/tick, all checks green |
+| Full rig incl. 2 Arducam, 600 s, `vm.dirty_ratio=60` | 17,839 frames, 31 late ticks, max gap 121 ms, queue peak 24 %, 85 GB, GelSight lag 18–183 ms @ 17 Hz, Arducam lag ≤ 46 ms @ 29.7 Hz, all checks green |
+| 3 RealSense + 2 GelSight, 600 s, old byte-shuffle compression | overloaded at 521 s, ended INVALID with 15,641 intact frames (the fail-fast working as designed) |
+
+Short benches read 250–900 MB/s because the page cache absorbs them; trust a
+multi-minute soak's `queue_peak_fraction`, not a bench number.
+
+### Wrist-camera tools
+
+`python -m twm.sensor_camera identify` shows both Arducam feeds labelled by
+slot, serial and side (`0`/`1` choose the left slot, `u` unknown, `s` save,
+`q` quit). `python -m twm.sensor_camera verify --duration 5 --output
+/tmp/twm_arducam_verification.h5 --force` records both Arducams through the
+production writer and validates the file.
 
 ### Library layout
 
-`twm/recorder/`: `config` → `rig` (hardware) → `capture` (30 Hz thread) →
-`writer` (HDF5 thread) with `schema` (layout), `preflight`, `monitor`,
-`episode` (paths + CSV log) and `app` (state machine + preview).
-`twm/data_collection.py` is a thin compatibility facade.
+`twm/recorder/`: `config` → `rig` (hardware, ordered start/stop) → `capture`
+(strict-rate thread) → `writer` (byte-bounded HDF5 thread) with `schema`
+(the only place that names a dataset), `preflight`, `monitor`, `episode`
+(paths + CSV log), `validate`, and `app` (episode state machine, window,
+headless soak). `twm/data_collection.py` is a thin compatibility facade.
 
 Before merging any change under `twm/`, run `python -m twm.pipeline_guard`
 (must print `14 checks, 0 violation(s)`) and `python -m pytest tests -q`.
@@ -386,7 +403,9 @@ Each episode is one `.h5` file. Structure:
 
 ```
 episode_NNN.h5
-├── metadata/               (attrs: fps, task, created_at, realsense_serials, gelsight_serials)
+├── metadata/               (attrs: fps, task, created_at, realsense_serials, gelsight_serials, arducam_config,
+│                            and at finalize: valid, invalid_reason, ended_by, frame_count, duration_s,
+│                            max_tick_gap_s, gap_count, queue_peak_fraction, writer_mean_mb_s, ended_at)
 ├── timestamps              float64 [T]           — Unix time per frame
 ├── realsense/
 │   ├── cam0/
@@ -396,7 +415,8 @@ episode_NNN.h5
 │   └── cam2/  (same)
 ├── gelsight/
 │   ├── left/
-│   │   └── frames          uint8  [T, 480, 640, 3]   — raw RGB
+│   │   ├── frames          uint8   [T, 480, 640, 3]  — raw RGB
+│   │   └── timestamps      float64 [T]               — capture time (sensor runs ~18 Hz)
 │   └── right/  (same)
 ├── arducam/
 │   ├── cam0/
@@ -412,9 +432,10 @@ episode_NNN.h5
 ```
 
 **Notes:**
-- `T` = number of camera frames (same across all camera streams within an episode).
+- `T` = number of recorder ticks (same across all camera streams within an episode). GelSight and
+  Arducam frames each carry their own capture `timestamps`; align by nearest time, not by index.
 - `N` = number of OptiTrack samples, recorded at the motion capture system rate (typically higher than camera FPS). Use `timestamps` to align with camera frames.
-- Camera image data is BLOSC-LZ4-compressed and chunked per frame for fast
+- Camera image data is BLOSC-LZ4 (bitshuffle) compressed and chunked per frame for fast
   random access. Import `hdf5plugin` before reading with h5py so the filter is
   registered.
 - Each `arducam/cam*` group stores `usb_path`, `serial`, `device_at_recording`,
