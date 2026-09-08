@@ -15,8 +15,11 @@ Usage:
     # Export every episode in a directory to mp4 (with overlay)
     python -m twm.visualize path/to/ --save_videos
 
-    # Override calibration paths (rarely needed; default is the input's task
-    # epoch resolved via calib_epoch)
+    # Episode whose path does not name a known task (e.g. task "test"):
+    # pick the calibration epoch by task name
+    python -m twm.visualize path/to/test/2026-09-08/episode_000.h5 --cam_calib motherboard
+
+    # Override individual calibration files (rarely needed)
     python -m twm.visualize path/to/episode_000.h5 \
         --cam_calib <epoch_dir>/T_mocap_to_cam_middle.json \
         --gel_left  <epoch_dir>/T_gel_to_rigid_left.json \
@@ -375,12 +378,15 @@ def main():
     parser.add_argument("--fps", type=float, default=None,
                         help="Playback FPS (default: use recorded FPS from metadata)")
     parser.add_argument("--cam_calib", type=str, nargs='+', default=None,
-                        help="Path(s) to T_mocap_to_cam_<name>.json (one per "
-                             "camera); default: the input's task epoch via calib_epoch")
+                        metavar="TASK|JSON",
+                        help="A task name (motherboard, pushT) whose calibration "
+                             "epoch supplies all five files, or explicit "
+                             "T_mocap_to_cam_<name>.json path(s). Default: the "
+                             "task named in the input path.")
     parser.add_argument("--gel_left", type=str, default=None,
-                        help="Path to T_gel_to_rigid_left.json (default: task epoch)")
+                        help="Path to T_gel_to_rigid_left.json (default: same epoch as --cam_calib)")
     parser.add_argument("--gel_right", type=str, default=None,
-                        help="Path to T_gel_to_rigid_right.json (default: task epoch)")
+                        help="Path to T_gel_to_rigid_right.json (default: same epoch as --cam_calib)")
     parser.add_argument("--save_video", type=str, default=None,
                         help="Single-file mode: path to output mp4.")
     parser.add_argument("--save_videos", action="store_true",
@@ -397,16 +403,14 @@ def main():
                              "compensate for tactile capture lag. Default: 3.")
     args = parser.parse_args()
 
-    if not args.no_projection and None in (args.gel_left, args.gel_right,
-                                           args.cam_calib):
-        from twm.calib_epoch import calib_dir_for_path
-        cdir = calib_dir_for_path(args.path)   # raises rather than guessing
-        print(f"calibration epoch: {cdir.name} (from input path)")
-        if args.cam_calib is None:
-            args.cam_calib = [str(cdir / f"T_mocap_to_cam_{n}.json")
-                              for n in ("middle", "left", "right")]
-        args.gel_left = args.gel_left or str(cdir / "T_gel_to_rigid_left.json")
-        args.gel_right = args.gel_right or str(cdir / "T_gel_to_rigid_right.json")
+    if not args.no_projection:
+        from twm.calib_epoch import resolve_calibration
+        # A task name (--cam_calib motherboard) selects a whole epoch; explicit
+        # paths pass through; nothing given infers the epoch from the input
+        # path and raises rather than guessing.
+        args.cam_calib, args.gel_left, args.gel_right = resolve_calibration(
+            args.cam_calib, args.gel_left, args.gel_right, args.path)
+        print(f"calibration epoch: {os.path.dirname(args.cam_calib[0])}")
 
     # ── Resolve input: file or directory ─────────────────────────────────────
     if os.path.isdir(args.path):

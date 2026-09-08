@@ -304,21 +304,18 @@ choices:
    python -m twm.visualize path/to/test/2026-09-08/episode_000.h5 --no_projection
    ```
 
-2. **Explicit files.** `--cam_calib` takes JSON *paths*, not a task name, and
-   the viewer only skips the task lookup when all three of `--cam_calib`,
-   `--gel_left` and `--gel_right` are given:
+2. **Pick the epoch by task name.** `--cam_calib` accepts a task name and
+   then supplies all five files of that epoch:
 
    ```bash
-   C="twm/calibration/result backup"      # motherboard epoch; quotes matter (space in the name)
-   python -m twm.visualize path/to/episode_000.h5 \
-     --cam_calib "$C/T_mocap_to_cam_middle.json" "$C/T_mocap_to_cam_left.json" "$C/T_mocap_to_cam_right.json" \
-     --gel_left  "$C/T_gel_to_rigid_left.json" \
-     --gel_right "$C/T_gel_to_rigid_right.json"
+   python -m twm.visualize path/to/test/2026-09-08/episode_000.h5 --cam_calib motherboard
    ```
 
    Those extrinsics are only right if the cameras and the OptiTrack origin
    have not moved since that epoch. Dots landing off the sensors mean the
-   calibration is stale, not the recording.
+   calibration is stale, not the recording. Individual files can still be
+   overridden with explicit paths (`--cam_calib a.json b.json c.json`,
+   `--gel_left`, `--gel_right`); anything not given comes from the same epoch.
 
 3. **A new task**: record under its own task name, calibrate (below), and add
    the task to `CALIB_DIRS` so the viewer finds it automatically.

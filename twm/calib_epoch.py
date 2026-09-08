@@ -152,6 +152,44 @@ def calib_dir_for_path(p: str | Path, *, up_axis: str = "y") -> Path:
         f"explicit --cam_calib/--gel_* paths. Known tasks: {sorted(CALIB_DIRS)}")
 
 
+CAM_CALIB_FILES = ("T_mocap_to_cam_middle.json", "T_mocap_to_cam_left.json",
+                   "T_mocap_to_cam_right.json")
+GEL_CALIB_FILES = ("T_gel_to_rigid_left.json", "T_gel_to_rigid_right.json")
+
+
+def resolve_calibration(cam_calib, gel_left, gel_right, path, *, up_axis: str = "y"):
+    """Turn the viewer's calibration flags into five file paths.
+
+    `cam_calib` is one of:
+        None                  -> the epoch inferred from `path` (task name in it)
+        ["motherboard"]       -> every file of that task's epoch, whatever the path says
+        ["a.json", "b.json"]  -> explicit T_mocap_to_cam files, used as given
+
+    A single value is a task name when it is a key of CALIB_DIRS and not an
+    existing file. `gel_left` / `gel_right` given explicitly are kept; missing
+    ones come from the same epoch as the cameras (task epoch if a task was
+    named, else the path's). Returns (cam_paths, gel_left, gel_right) as str.
+    """
+    cam_calib = list(cam_calib) if cam_calib else None
+    epoch = None
+    if cam_calib and len(cam_calib) == 1 and not Path(cam_calib[0]).is_file():
+        name = cam_calib[0]
+        if name not in CALIB_DIRS:
+            raise KeyError(
+                f"--cam_calib {name!r} is neither a calibration file nor a known "
+                f"task. Known tasks: {sorted(CALIB_DIRS)}")
+        epoch = calib_dir(name, up_axis=up_axis)
+        cam_calib = None
+    need_epoch = cam_calib is None or gel_left is None or gel_right is None
+    if epoch is None and need_epoch:
+        epoch = calib_dir_for_path(path, up_axis=up_axis)
+    if cam_calib is None:
+        cam_calib = [str(epoch / f) for f in CAM_CALIB_FILES]
+    gel_left = gel_left or str(epoch / GEL_CALIB_FILES[0])
+    gel_right = gel_right or str(epoch / GEL_CALIB_FILES[1])
+    return cam_calib, gel_left, gel_right
+
+
 def epoch_of(task: str) -> str:
     """The calibration date actually on disk for `task` (from the files)."""
     p = calib_dir(task) / "T_mocap_to_cam_middle.json"
