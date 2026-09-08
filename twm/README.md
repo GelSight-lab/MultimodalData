@@ -134,6 +134,29 @@ is keeping up.
    stamped valid and closed, and the summary is logged.
 6. Repeat from 2, or `q` to quit.
 
+### Sensor stalls (GelSight "Restarting the camera")
+
+A GelSight whose USB link hiccups stops delivering frames; its driver prints
+`Frame is not updated ... Restarting the camera [left serial=...]` and reopens
+it (about 3 s). The recorder handles this without stopping:
+
+- the capture thread never waits on a GelSight or Arducam. While a stream is
+  stalled the tick still runs at 30 Hz and records that sensor's **last frame
+  with its old capture timestamp**, so the gap is visible in
+  `gelsight/<side>/timestamps` and every other stream is untouched;
+- a supervisor thread restarts the stalled stream in the background (the
+  restart used to run on the capture thread and, because of a driver bug,
+  froze the whole recorder after the first one);
+- the health line shows `gelsight_left STALE 3.2s (restarting, 1 restarts)`
+  and turns yellow; the episode file stays open and valid, and
+  `metadata.attrs["sensor_restarts"]` records how many restarts happened
+  during the episode;
+- `validate` reports such gaps as sensor outages (`sensor_outage_count`,
+  `sensor_outage_longest_s`) and still passes the episode unless outages
+  cover more than 5 % of its ticks or the sensor never came back.
+
+If the restarts are frequent, the USB link is the problem (see rule 1 above).
+
 ### What is guaranteed, and what happens when it cannot be
 
 The recorder never drops a frame from the middle of an episode. Every tick

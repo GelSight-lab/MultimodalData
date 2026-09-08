@@ -320,3 +320,19 @@ def test_restore_logging_survives_ros_style_reconfiguration(capsys):
     out = capsys.readouterr().out
     assert "lost" not in out
     assert "visible again" in out
+
+
+def test_episode_metadata_records_sensor_restarts_during_the_episode(parts):
+    import json
+    counts = {"gelsight_left": 3, "gelsight_right": 0}
+    parts.rig.sensor_status = lambda: {n: {"stale_s": 0.0, "restarting": False, "restarts": c}
+                                       for n, c in counts.items()}
+    parts.rig.fresh()
+    assert parts.rec.start_episode() == []
+    counts["gelsight_left"] = 5                       # two restarts while recording
+    _wait(lambda: parts.capture.latest().frame_count >= 2)
+    s = parts.rec.end_episode()
+    assert s.valid and s.sensor_restarts == {"gelsight_left": 2, "gelsight_right": 0}
+    assert "restarts" in s.describe()
+    with h5py.File(s.path, "r") as f:
+        assert json.loads(f["metadata"].attrs["sensor_restarts"]) == {"gelsight_left": 2, "gelsight_right": 0}

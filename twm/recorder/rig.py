@@ -6,6 +6,7 @@ without cameras. `default_drivers()` imports the real stream classes.
 from __future__ import annotations
 
 import logging
+import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -54,6 +55,9 @@ class DummyOptitrack:
     def flush_buffer(self, name):
         return []
 
+    def peek_frame_with_timestamp(self):
+        return self._frame, None
+
 
 def frame_with_timestamp(stream) -> Tuple[np.ndarray, Optional[float]]:
     """(frame, capture_ts) from any stream; ts is None if it has no clock."""
@@ -98,6 +102,89 @@ def _stop_all(started: List[Any]) -> None:
             log.warning("could not stop %r: %s", resource, exc)
 
 
+STALL_AFTER_S = 1.0        # a stream whose capture clock is older than this is restarted
+SUPERVISOR_POLL_S = 0.25
+
+
+def restart_stream(stream) -> None:
+    """Restart a video stream the way its driver expects (blocking)."""
+    restart = getattr(stream, "restart", None)
+    if restart is not None:
+        restart()
+        return
+    stream.stop()
+    stream.start()
+
+
+class SensorSupervisor:
+    """Watches the capture clocks of the USB video streams and restarts a
+    stalled one on its own thread, so the capture thread never blocks on a
+    sensor. Streams without a capture clock (dummies) are not supervised.
+    """
+
+    def __init__(self, streams: Dict[str, Any], stall_after_s: float = STALL_AFTER_S,
+                 poll_s: float = SUPERVISOR_POLL_S,
+                 clock: Callable[[], float] = time.time):
+        self._streams = dict(streams)
+        self.stall_after_s = stall_after_s
+        self.poll_s = poll_s
+        self._clock = clock
+        self._lock = threading.Lock()
+        self._restarts: Dict[str, int] = {n: 0 for n in self._streams}
+        self._restarting: set = set()
+        self._stop = threading.Event()
+        self._thread = threading.Thread(target=self._run, name="SensorSupervisor", daemon=True)
+
+    def start(self) -> None:
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._stop.set()
+        if self._thread.is_alive():
+            self._thread.join(timeout=15.0)     # a driver restart sleeps ~3 s
+
+    def alive(self) -> bool:
+        return self._thread.is_alive()
+
+    @staticmethod
+    def _peek_ts(stream) -> Optional[float]:
+        peek = getattr(stream, "peek_frame_with_timestamp", None)
+        return None if peek is None else peek()[1]
+
+    def _run(self) -> None:
+        while not self._stop.is_set():
+            now = self._clock()
+            for name, stream in self._streams.items():
+                ts = self._peek_ts(stream)
+                if ts is None or now - ts <= self.stall_after_s:
+                    continue
+                with self._lock:
+                    if name in self._restarting:
+                        continue
+                    self._restarting.add(name)
+                log.warning("%s: no frame for %.1fs — restarting the stream", name, now - ts)
+                try:
+                    restart_stream(stream)
+                except Exception as exc:
+                    log.error("%s: restart failed: %s", name, exc)
+                finally:
+                    with self._lock:
+                        self._restarts[name] += 1
+                        self._restarting.discard(name)
+            self._stop.wait(self.poll_s)
+
+    def status(self) -> Dict[str, Dict[str, Any]]:
+        now = self._clock()
+        out = {}
+        with self._lock:
+            for name, stream in self._streams.items():
+                ts = self._peek_ts(stream)
+                out[name] = {"stale_s": (now - ts) if ts is not None else None,
+                             "restarting": name in self._restarting,
+                             "restarts": self._restarts[name]}
+        return out
+
+
 class SensorRig:
     def __init__(self, realsense: Sequence[Any], gelsight_left, gelsight_right,
                  optitrack, arducam: Sequence[Any] = (),
@@ -114,6 +201,8 @@ class SensorRig:
         self._clock = clock
         self._started: List[Any] = [*self.realsense, *self.arducam,
                                     gelsight_left, gelsight_right, optitrack]
+        self._last: Dict[str, Tuple[np.ndarray, Optional[float]]] = {}
+        self._supervisor: Optional[SensorSupervisor] = None
 
     # ── lifecycle ────────────────────────────────────────────────────────────
     @classmethod
@@ -198,8 +287,35 @@ class SensorRig:
         except BaseException:
             self.close()
             raise
+        self.start_supervisor()
+
+    # ── stalled-stream supervision ───────────────────────────────────────────
+    def supervised_streams(self) -> Dict[str, Any]:
+        streams = {"gelsight_left": self.gelsight_left, "gelsight_right": self.gelsight_right}
+        for i, stream in enumerate(self.arducam):
+            streams[f"arducam_cam{i}"] = stream
+        return streams
+
+    def start_supervisor(self, stall_after_s: float = STALL_AFTER_S,
+                         poll_s: float = SUPERVISOR_POLL_S) -> None:
+        if self._supervisor is not None:
+            return
+        self._supervisor = SensorSupervisor(self.supervised_streams(), stall_after_s, poll_s,
+                                            clock=self._clock)
+        self._supervisor.start()
+
+    def supervisor_alive(self) -> bool:
+        return self._supervisor is not None and self._supervisor.alive()
+
+    def sensor_status(self) -> Dict[str, Dict[str, Any]]:
+        if self._supervisor is not None:
+            return self._supervisor.status()
+        return {name: {"stale_s": None, "restarting": False, "restarts": 0}
+                for name in self.supervised_streams()}
 
     def close(self) -> None:
+        if self._supervisor is not None:
+            self._supervisor.stop()
         _stop_all(self._started)
 
     def __enter__(self):
@@ -213,8 +329,9 @@ class SensorRig:
         """Snapshot every sensor and drain the OptiTrack buffers into one Tick."""
         color = tuple(s.get_color_frame() for s in self.realsense)
         depth = tuple(s.get_depth_frame() for s in self.realsense)
-        gs = [frame_with_timestamp(s) for s in (self.gelsight_left, self.gelsight_right)]
-        ard = [s.get_frame_with_timestamp() for s in self.arducam]
+        gs = [self._peek_or_last(name, stream) for name, stream in
+              (("gelsight_left", self.gelsight_left), ("gelsight_right", self.gelsight_right))]
+        ard = [self._peek_or_last(f"arducam_cam{i}", stream) for i, stream in enumerate(self.arducam)]
         t = self._clock()
         flush = getattr(self.optitrack, "flush_buffer", None)
         ot = {name: flush(name) for name in self.trackers} if flush else {}
@@ -227,6 +344,20 @@ class SensorRig:
             arducam_ts=tuple(t if ts is None else float(ts) for _, ts in ard),
             optitrack=ot,
         )
+
+    def _peek_or_last(self, name: str, stream) -> Tuple[np.ndarray, Optional[float]]:
+        """Latest frame and its capture time without waiting. During a stall
+        (or a restart) the last good frame is returned with its OLD capture
+        time, so the file stays honest and the tick never blocks."""
+        peek = getattr(stream, "peek_frame_with_timestamp", None)
+        frame, ts = peek() if peek is not None else frame_with_timestamp(stream)
+        if frame is None:
+            last = self._last.get(name)
+            if last is None:
+                raise RuntimeError(f"{name}: no frame available yet")
+            return last
+        self._last[name] = (frame, ts)
+        return frame, ts
 
     def latest_poses(self) -> Dict[str, Any]:
         return {name: self.optitrack.get_latest_pose(name) for name in self.trackers}

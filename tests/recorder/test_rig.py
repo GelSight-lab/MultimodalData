@@ -1,3 +1,5 @@
+import time
+
 import numpy as np
 import pytest
 
@@ -166,3 +168,89 @@ def test_wait_ready_failure_closes_rig():
     with pytest.raises(TimeoutError):
         rig.wait_ready(timeout_s=0.01, settle_s=0.0)
     assert log[-1] == "stop rs A"
+
+
+class StallableStream:
+    """A GelSight/Arducam-like stream: peek() returns the last frame with its
+    capture time; the clock stops advancing while `healthy` is False; restart()
+    (blocking, like the drivers') makes it healthy again. get_frame* must
+    NOT be called by the rig any more — they would block on a stall."""
+
+    def __init__(self, log, name, value=1):
+        self.log, self.name, self.healthy = log, name, True
+        self.frame = np.full((480, 640, 3), value, np.uint8)
+        self.ts = time.time()
+        self.restarts = 0
+
+    def peek_frame_with_timestamp(self):
+        if self.healthy:
+            self.ts = time.time()
+        return self.frame.copy(), self.ts
+
+    def get_frame_with_timestamp(self, **kw):
+        raise AssertionError(f"{self.name}: blocking read used by the rig")
+
+    get_frame = get_frame_with_timestamp
+
+    def restart(self):
+        self.log.append(f"restart {self.name}")
+        time.sleep(0.1)
+        self.healthy = True
+        self.restarts += 1
+
+    def start(self, **kw): pass
+
+    def stop(self): self.log.append(f"stop {self.name}")
+
+
+def _stallable_rig(log):
+    import time as _t
+    rs = [Stream(log, "rs A")]
+    left, right = StallableStream(log, "gs left", 5), StallableStream(log, "gs right", 6)
+    rig = SensorRig(rs, left, right, Optitrack(log))
+    return rig, left, right
+
+
+def test_grab_never_blocks_on_a_stalled_stream_and_the_supervisor_restarts_it():
+    log = []
+    rig, left, right = _stallable_rig(log)
+    rig.start_supervisor(stall_after_s=0.2, poll_s=0.05)
+    try:
+        good = rig.grab()
+        assert good.gelsight_ts[0] > time.time() - 1.0
+        left.healthy = False                              # left GelSight stalls
+        time.sleep(0.1)
+        t0 = time.monotonic()
+        stale = rig.grab()
+        assert time.monotonic() - t0 < 0.05               # never waits on the sensor
+        assert stale.gelsight_ts[0] == left.ts            # last frame, its OLD capture time
+        assert int(stale.gelsight[0][0, 0, 0]) == 5
+        assert stale.gelsight_ts[1] > stale.gelsight_ts[0]  # right side still live
+        deadline = time.monotonic() + 3.0
+        while time.monotonic() < deadline and "restart gs left" not in log:
+            time.sleep(0.02)
+        assert "restart gs left" in log and "restart gs right" not in log
+        deadline = time.monotonic() + 2.0
+        while time.monotonic() < deadline and rig.grab().gelsight_ts[0] < time.time() - 0.2:
+            time.sleep(0.02)
+        assert rig.grab().gelsight_ts[0] > time.time() - 0.2  # fresh again
+        status = rig.sensor_status()
+        assert status["gelsight_left"]["restarts"] == 1 and status["gelsight_right"]["restarts"] == 0
+        assert status["gelsight_left"]["stale_s"] < 0.5 and status["gelsight_left"]["restarting"] is False
+    finally:
+        rig.close()
+    assert "stop gs left" in log and not rig.supervisor_alive()
+
+
+def test_streams_without_a_capture_clock_are_never_restarted():
+    log = []
+    rig = SensorRig.open(config(use_arducam=False, gelsight_serials={"left": "L", "right": "R"}),
+                         drivers(log, gelsight_fail={"left", "right"}))   # both dummies
+    rig.start_supervisor(stall_after_s=0.05, poll_s=0.02)
+    time.sleep(0.3)
+    tick = rig.grab()
+    rig.close()
+    assert isinstance(rig.gelsight_left, DummyGelSight)
+    assert tick.gelsight_ts == (tick.timestamp, tick.timestamp)
+    assert rig.sensor_status()["gelsight_left"]["restarts"] == 0
+    assert "restart" not in " ".join(log)

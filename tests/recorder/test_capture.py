@@ -280,3 +280,14 @@ def test_stop_recording_frame_count_matches_writer_with_no_gating():
         writer.stop()
         assert result.stop_request is None
         assert result.frame_count == len(written)
+
+
+def test_snapshot_carries_sensor_status_from_the_rig():
+    rig = FakeRig()
+    rig.sensor_status = lambda: {"gelsight_left": {"stale_s": 2.5, "restarting": True, "restarts": 1}}
+    writer = EpisodeWriter(capacity_bytes=TICK * 10, batch_size=1, sink=lambda f, t: None)
+    loop = CaptureLoop(rig, writer, fps=200, warmup_drop_frames=0)
+    loop.start()
+    snap = _wait(loop.latest)
+    loop.stop(); writer.stop()
+    assert snap.sensors["gelsight_left"]["restarts"] == 1 and snap.sensors["gelsight_left"]["restarting"]

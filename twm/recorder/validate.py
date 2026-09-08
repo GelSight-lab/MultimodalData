@@ -292,6 +292,24 @@ def check_duration(f: h5py.File, stats: Dict[str, Any], fps: int,
     return Check("duration", True, f"T={T} >= required {term}")
 
 
+_MAX_OUTAGE_FRACTION = 0.05   # sensor outages (stalls/restarts) may cover this much of an episode
+
+
+def _runs(mask: np.ndarray):
+    """[(start, end)) index pairs of consecutive True values."""
+    runs = []
+    start = None
+    for i, v in enumerate(mask):
+        if v and start is None:
+            start = i
+        elif not v and start is not None:
+            runs.append((start, i))
+            start = None
+    if start is not None:
+        runs.append((start, len(mask)))
+    return runs
+
+
 def check_sensor_sync(f: h5py.File, stats: Dict[str, Any]) -> Check:
     tick_ts = f["timestamps"][:]
     T = tick_ts.shape[0]
@@ -329,14 +347,43 @@ def check_sensor_sync(f: h5py.File, stats: Dict[str, Any]) -> Check:
             problems.append(f"{label}: timestamps identical to tick clock (fallback?)")
             continue
 
-        hard_bad = int(np.sum((lag < _LAG_MIN_S) | (lag > _LAG_HARD_MAX_S)))
-        if hard_bad > 0:
-            problems.append(f"{label}: lag outside the driver contract "
-                            f"[{_LAG_MIN_S * 1000:.0f}ms, {_LAG_HARD_MAX_S * 1000:.0f}ms] "
-                            f"for {hard_bad} tick(s) (min={lag_min_val * 1000:.1f}ms, "
-                            f"max={lag_max_val * 1000:.1f}ms)")
+        ahead = int(np.sum(lag < _LAG_MIN_S))
+        if ahead > 0:
+            problems.append(f"{label}: sensor clock ahead of the tick clock by more than "
+                            f"{-_LAG_MIN_S * 1000:.0f}ms on {ahead} tick(s)")
 
-        late_mask = lag > _LAG_MAX_S
+        # Outage: consecutive ticks whose sensor frame is older than the
+        # drivers' 0.5 s staleness contract. The recorder keeps ticking through
+        # a stalled sensor (recording the last frame with its OLD capture time)
+        # while its supervisor restarts the stream, so an outage is expected
+        # to look exactly like this. It is reported, and tolerated when short
+        # and resolved; it fails the episode when it covers more than
+        # _MAX_OUTAGE_FRACTION of the ticks or the sensor never came back.
+        # A run of consecutive ticks with lag > 250 ms is one event: it is an
+        # outage if the lag ever exceeds the 500 ms contract inside it (the
+        # ramp into a stall belongs to the stall), otherwise a late spell.
+        late_any = lag > _LAG_MAX_S
+        outage_mask = np.zeros(T, dtype=bool)
+        for a, b in _runs(late_any):
+            if np.max(lag[a:b]) > _LAG_HARD_MAX_S:
+                outage_mask[a:b] = True
+        outages = _runs(outage_mask)
+        outage_ticks = int(np.sum(outage_mask))
+        outage_fraction = outage_ticks / T if T else 0.0
+        longest_s = max((float(tick_ts[b - 1] - tick_ts[a]) + float(np.median(np.diff(tick_ts))) if T > 1 else 0.0
+                         for a, b in outages), default=0.0)
+        stats[f"sensor_outage_count.{label}"] = len(outages)
+        stats[f"sensor_outage_longest_s.{label}"] = longest_s
+        stats[f"sensor_outage_fraction.{label}"] = outage_fraction
+        if outage_fraction > _MAX_OUTAGE_FRACTION:
+            problems.append(f"{label}: {len(outages)} outage(s) covering "
+                            f"{outage_fraction * 100:.1f}% of ticks (> "
+                            f"{_MAX_OUTAGE_FRACTION * 100:.0f}%), longest {longest_s:.1f}s")
+        elif outage_mask[-1]:
+            problems.append(f"{label}: sensor still stale at the end of the episode "
+                            f"(lag {lag[-1]:.1f}s) — it never resumed")
+
+        late_mask = (lag > _LAG_MAX_S) & ~outage_mask
         late_count = int(np.sum(late_mask))
         late_fraction = late_count / T if T else 0.0
         stats[f"sensor_late_count.{label}"] = late_count
@@ -347,6 +394,9 @@ def check_sensor_sync(f: h5py.File, stats: Dict[str, Any]) -> Check:
 
         late_note = (f", {late_count} late ({late_fraction * 100:.2f}%)"
                     if late_count else "")
+        if outages:
+            late_note += (f", {len(outages)} outage(s) ({outage_ticks} ticks, "
+                          f"{outage_fraction * 100:.1f}%, longest {longest_s:.1f}s)")
         distinct = int(np.unique(sensor_ts).shape[0])
         if span > 1.0:
             distinct_hz = distinct / span

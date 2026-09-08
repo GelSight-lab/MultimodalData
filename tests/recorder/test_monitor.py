@@ -30,3 +30,14 @@ def test_health_line_text():
     assert level == "ok"
     text, _ = health_line(stats(fault="OSError: No space"), 0.25, 50.0)
     assert text.endswith("| FAULT: OSError: No space")
+
+
+def test_health_line_names_stale_sensors_and_warns():
+    sensors = {"gelsight_left": {"stale_s": 3.2, "restarting": True, "restarts": 2},
+               "gelsight_right": {"stale_s": 0.03, "restarting": False, "restarts": 0},
+               "arducam_cam0": {"stale_s": None, "restarting": False, "restarts": 0}}
+    text, level = health_line(stats(bytes_written=100e6, write_seconds=1.0), 0.25, 50.0, sensors=sensors)
+    assert "gelsight_left STALE 3.2s (restarting, 2 restarts)" in text
+    assert "gelsight_right" not in text and level == "warn"
+    text, level = health_line(stats(), 0.25, 50.0, sensors={"gelsight_left": {"stale_s": 0.1, "restarting": False, "restarts": 0}})
+    assert "STALE" not in text and level == "ok"

@@ -12,7 +12,7 @@ import collections
 import logging
 import threading
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, Optional, Tuple
 
 import numpy as np
@@ -41,6 +41,7 @@ class CaptureSnapshot:
     writer: WriterStats
     stop_request: Optional[StopRequest]
     fatal_error: Optional[str] = None
+    sensors: Dict[str, Dict[str, Any]] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -185,6 +186,8 @@ class CaptureLoop:
                             and self._tick_times[-1] > self._tick_times[0] else 0.0)
                 ot_poses = self.rig.latest_poses()
                 stats = self.writer.stats()
+                sensor_status = getattr(self.rig, "sensor_status", None)
+                sensors = sensor_status() if sensor_status is not None else {}
 
                 with self._lock:
                     if self._gs_ref is None or self._reset_ref:
@@ -192,6 +195,7 @@ class CaptureLoop:
                         self._reset_ref = False
                     self._latest = CaptureSnapshot(
                         tick=tick, gs_ref=self._gs_ref, ot_poses=ot_poses,
+                        sensors=sensors,
                         recording=self._recording, frame_count=self._frame_count,
                         elapsed=(tick.timestamp - self._start_t) if self._recording else 0.0,
                         fps_meas=fps_meas, writer=stats, stop_request=self._stop_request)

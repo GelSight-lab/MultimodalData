@@ -85,6 +85,17 @@ class Recorder:
         self.last_summary: Optional[EpisodeSummary] = None
         self._closed = False
 
+    def _sensor_restart_counts(self) -> Dict[str, int]:
+        status = getattr(self.rig, "sensor_status", None)
+        if status is None:
+            return {}
+        return {name: int(st.get("restarts", 0)) for name, st in status().items()}
+
+    def _sensor_restarts_since_start(self) -> Dict[str, int]:
+        start = getattr(self, "_restarts_at_start", {})
+        return {name: count - start.get(name, 0)
+                for name, count in self._sensor_restart_counts().items()}
+
     @property
     def recording(self) -> bool:
         return self._open is not None
@@ -111,6 +122,7 @@ class Recorder:
                                      arducam_config=self.rig.arducam_config or None,
                                      n_realsense=len(self.config.realsense_serials))
         self._open = OpenEpisode(num, path, h5)
+        self._restarts_at_start = self._sensor_restart_counts()
         self.capture.start_recording(h5)
         log.info("recording episode %03d → %s", num, path)
         return []
@@ -142,7 +154,8 @@ class Recorder:
             max_tick_gap_s=result.max_gap_s if result else 0.0,
             gap_count=result.gap_count if result else 0,
             queue_peak_fraction=stats.peak_fraction,
-            writer_mean_mb_s=stats.mean_mb_s, has_optitrack=has_ot)
+            writer_mean_mb_s=stats.mean_mb_s, has_optitrack=has_ot,
+            sensor_restarts=self._sensor_restarts_since_start())
         try:
             write_episode_attrs(ep.h5, summary.attrs())
         except Exception as exc:
@@ -279,7 +292,7 @@ def _gui_loop(config, recorder: Recorder, capture: CaptureLoop, rig,
 
     def draw_health(panel, snap):
         text, level = health_line(snap.writer, config.writer.warn_fraction,
-                                  config.disk.min_free_gb)
+                                  config.disk.min_free_gb, sensors=snap.sensors)
         color = {"ok": (80, 200, 80), "warn": (0, 200, 255), "fail": (0, 0, 255)}[level]
         cv2.putText(panel, text, (8, panel.shape[0] - 8), cv2.FONT_HERSHEY_SIMPLEX,
                     0.5, color, 1, cv2.LINE_AA)
@@ -381,7 +394,7 @@ def run_headless(config: RecorderConfig, duration_s: float, drivers: Optional[Dr
                 return 1
             if clock() >= next_health:
                 text, level = health_line(snap.writer, config.writer.warn_fraction,
-                                          config.disk.min_free_gb)
+                                          config.disk.min_free_gb, sensors=snap.sensors)
                 log_fn = {"ok": log.info, "warn": log.warning, "fail": log.error}[level]
                 log_fn("[%s] t=%.0fs frames=%d fps=%.1f | %s", level.upper(), clock() - t0,
                       snap.frame_count, snap.fps_meas, text)

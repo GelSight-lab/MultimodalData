@@ -2,9 +2,10 @@
 from __future__ import annotations
 
 import csv
+import json
 import os
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, Optional, Sequence, Tuple
 
@@ -31,6 +32,7 @@ class EpisodeSummary:
     queue_peak_fraction: float
     writer_mean_mb_s: float
     has_optitrack: bool
+    sensor_restarts: Dict[str, int] = field(default_factory=dict)
 
     @property
     def duration_s(self) -> float:
@@ -49,6 +51,7 @@ class EpisodeSummary:
             "queue_peak_fraction": self.queue_peak_fraction,
             "writer_mean_mb_s": self.writer_mean_mb_s,
             "ended_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+            "sensor_restarts": json.dumps(dict(self.sensor_restarts), sort_keys=True),
         }
 
     def notes(self) -> str:
@@ -65,6 +68,9 @@ class EpisodeSummary:
             text += f" — INVALID ({self.ended_by}: {self.reason})"
         elif self.ended_by != "operator":
             text += f" ({self.notes()})"
+        restarted = {n: c for n, c in self.sensor_restarts.items() if c}
+        if restarted:
+            text += " — sensor restarts: " + ", ".join(f"{n}={c}" for n, c in sorted(restarted.items()))
         return text
 
 

@@ -9,11 +9,12 @@ from twm.recorder.validate import validate_episode
 
 
 def make_episode(tmp_path, n=90, fps=30, gap_at=None, sensor_lag=0.02, lag_overrides=None,
-                 frozen_stream=None, valid=True, drop_last_gelsight=False):
+                 frozen_stream=None, valid=True, drop_last_gelsight=False, frozen_ticks=None):
     """`lag_overrides` maps tick index -> gelsight lag (seconds) for that
     tick only, so a test can inject a lag spike on a handful of ticks while
     the rest stay at `sensor_lag` (e.g. "2% of ticks are 0.4s late")."""
     lag_overrides = lag_overrides or {}
+    frozen_at = 100.0 - sensor_lag
     f, path = create_episode_file(str(tmp_path), 0, ["A"], ["L", "R"], fps, n_realsense=1)
     rng = np.random.default_rng(0)
     ticks = []
@@ -24,8 +25,13 @@ def make_episode(tmp_path, n=90, fps=30, gap_at=None, sensor_lag=0.02, lag_overr
         tk = synthetic_tick(t, seed=k, n_realsense=1)
         gs = tk.gelsight if frozen_stream != "gelsight" else synthetic_tick(0, seed=0, n_realsense=1).gelsight
         lag = lag_overrides.get(k, sensor_lag)
+        gs_ts = t - lag
+        if frozen_ticks is not None and frozen_ticks[0] <= k < frozen_ticks[0] + frozen_ticks[1]:
+            gs_ts = frozen_at                        # the sensor clock stops: a stall/restart
+        else:
+            frozen_at = gs_ts
         ticks.append(Tick(t, color=tk.color, depth=tk.depth, gelsight=gs,
-                          gelsight_ts=(t - lag, t - lag),
+                          gelsight_ts=(gs_ts, t - lag),
                           optitrack={"motherboard": [(t, [0, 0, 0, 0, 0, 0, 1])]}))
         t += 1.0 / fps
     append_ticks(f, ticks)
@@ -82,13 +88,16 @@ def test_sensor_sync_passes_when_only_half_a_percent_of_ticks_are_late(tmp_path)
     assert r.stats["sensor_late_count.gelsight/left"] == 1
 
 
-def test_sensor_sync_hard_fails_a_single_tick_beyond_the_driver_contract(tmp_path):
-    n = 200
-    overrides = {0: 0.6}                            # 0.5 % of ticks, but past 0.5s hard bound
-    r = validate_episode(make_episode(tmp_path, n=n, lag_overrides=overrides), fps=30)
+def test_a_brief_stall_beyond_the_driver_contract_is_a_resolved_outage(tmp_path):
+    """A sensor clock frozen for 0.53 s (16 ticks) is what a brief stall looks
+    like once the recorder stops blocking on sensors; it is reported as one
+    outage on that side and, because it resolved, does not fail the episode."""
+    r = validate_episode(make_episode(tmp_path, n=200, frozen_ticks=(5, 16)), fps=30)
     names = {c.name: c for c in r.checks}
-    assert not names["sensor_sync"].ok
-    assert "gelsight/left" in names["sensor_sync"].detail
+    assert names["sensor_sync"].ok, names["sensor_sync"].detail
+    assert "1 outage" in names["sensor_sync"].detail
+    assert r.stats["sensor_outage_count.gelsight/left"] == 1
+    assert r.stats["sensor_outage_count.gelsight/right"] == 0
 
 
 # ── Critical 1: unreadable files never crash the validator ──────────────────
@@ -218,3 +227,29 @@ def test_shapes_check_fails_when_promised_stream_is_missing(tmp_path):
     names = {c.name: c for c in r.checks}
     assert not names["shapes"].ok
     assert "gelsight/right" in names["shapes"].detail
+
+
+def test_sensor_outage_is_reported_and_tolerated_when_short(tmp_path):
+    """A GelSight stall + driver restart freezes its capture clock for a few
+    seconds; the recorder keeps ticking with the last frame and its old
+    timestamp. That is an outage to report, not a reason to fail the episode."""
+    r = validate_episode(make_episode(tmp_path, n=300, frozen_ticks=(100, 18)),
+                         fps=30, expected_duration=10.0)
+    sync = next(c for c in r.checks if c.name == "sensor_sync")
+    assert sync.ok, sync.detail
+    assert "1 outage" in sync.detail and "gelsight/left" in sync.detail
+    assert r.stats["sensor_outage_count.gelsight/left"] == 1
+    # an 18-tick (0.6 s) freeze: the outage spans the ticks with lag > 250 ms (~0.35 s, 3.7 %)
+    assert 0.25 < r.stats["sensor_outage_longest_s.gelsight/left"] < 0.45
+    assert r.stats["sensor_outage_count.gelsight/right"] == 0
+
+
+@pytest.mark.parametrize("frozen, why", [
+    ((100, 50), "outages cover more than 5% of the episode"),
+    ((270, 30), "the sensor never came back before the episode ended"),
+])
+def test_sensor_outage_fails_when_long_or_unresolved(tmp_path, frozen, why):
+    r = validate_episode(make_episode(tmp_path, n=300, frozen_ticks=frozen), fps=30, expected_duration=10.0)
+    sync = next(c for c in r.checks if c.name == "sensor_sync")
+    assert not sync.ok, why
+    assert "gelsight/left" in sync.detail
