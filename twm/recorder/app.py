@@ -217,15 +217,31 @@ def load_projection(config: RecorderConfig) -> Optional[Dict[str, Any]]:
     return {"cams": cams, "gel_left": gel_left, "gel_right": gel_right} if cams else None
 
 
+def _startup_preflight_ok(config: RecorderConfig, n_arducam: int) -> bool:
+    """Run the startup checks. Low free disk refuses to start; the
+    write-bandwidth self-test is advisory: it runs against the page cache
+    and under-reads a slow HDD (54 ticks/s was measured minutes after a
+    10-minute full-rig episode passed with a 24 % queue peak), and a real
+    shortfall is caught at runtime by the writer's fail-fast anyway."""
+    results = run_startup_preflight(config, n_arducam=n_arducam)
+    log.info("startup preflight:\n%s", format_report(results))
+    blocking = [r for r in failures(results) if r.name != "write_bandwidth"]
+    advisory = [r for r in failures(results) if r.name == "write_bandwidth"]
+    for r in advisory:
+        log.warning("write_bandwidth below the %.2gx margin (%s); recording anyway — "
+                    "watch the writer queue in the health line", config.disk.min_bandwidth_margin, r.detail)
+    if blocking:
+        log.error("startup preflight failed; fix the above and retry")
+        return False
+    return True
+
+
 # ── operator loop ────────────────────────────────────────────────────────────
 
 def run(config: RecorderConfig, drivers: Optional[Drivers] = None) -> int:
     n_arducam = 2 if config.use_arducam else 0
     log.info("task %s → %s", config.task, config.data_dir / config.task)
-    results = run_startup_preflight(config, n_arducam=n_arducam)
-    log.info("startup preflight:\n%s", format_report(results))
-    if failures(results):
-        log.error("startup preflight failed; fix the above and retry")
+    if not _startup_preflight_ok(config, n_arducam):
         return 2
 
     rig = SensorRig.open(config, drivers)
@@ -328,9 +344,7 @@ def run_headless(config: RecorderConfig, duration_s: float, drivers: Optional[Dr
                  sleep: Callable[[float], None] = time.sleep) -> int:
     """Record one timed episode with no GUI. 0 valid, 1 auto-ended, 2 refused."""
     n_arducam = 2 if config.use_arducam else 0
-    results = run_startup_preflight(config, n_arducam=n_arducam)
-    log.info("startup preflight:\n%s", format_report(results))
-    if failures(results):
+    if not _startup_preflight_ok(config, n_arducam):
         return 2
     rig = SensorRig.open(config, drivers)
     restore_logging()
@@ -403,12 +417,28 @@ def restore_logging() -> None:
     logging.getLogger("twm.recorder").disabled = False
     if root.level > logging.INFO:
         root.setLevel(logging.INFO)
-    console = (sys.stdout, sys.stderr)
-    if not any(isinstance(h, logging.StreamHandler) and getattr(h, "stream", None) in console
+    if not any(isinstance(h, (_ConsoleHandler, logging.StreamHandler))
+               and getattr(h, "stream", None) in (sys.stdout, sys.stderr)
                for h in root.handlers):
-        handler = logging.StreamHandler(sys.stdout)
+        handler = _ConsoleHandler()
         handler.setFormatter(logging.Formatter(_LOG_FORMAT, "%H:%M:%S"))
         root.addHandler(handler)
+
+
+class _ConsoleHandler(logging.StreamHandler):
+    """A stdout handler that resolves sys.stdout at emit time, so it keeps
+    working when the stream object is swapped (pytest capture, redirects)."""
+
+    def __init__(self):
+        super().__init__(sys.stdout)
+
+    @property
+    def stream(self):
+        return sys.stdout
+
+    @stream.setter
+    def stream(self, value):
+        pass
 
 
 def main(argv=None) -> int:

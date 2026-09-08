@@ -216,3 +216,27 @@ def test_run_headless_does_not_log_summary_describe_twice(tmp_path, monkeypatch,
     describe_records = [r for r in caplog.records if r.message.startswith("Episode ")]
     assert len(describe_records) == 1, [r.message for r in caplog.records]
 
+
+
+def test_bandwidth_preflight_is_advisory_but_disk_free_still_refuses(tmp_path, monkeypatch, caplog):
+    """The page-cache bench under-reads a slow HDD (54 ticks/s measured minutes
+    after a 10-minute full-rig pass with a 24 % queue peak), so a failing
+    write_bandwidth check warns loudly and the recording proceeds; a failing
+    disk_free check still refuses."""
+    from twm.recorder.preflight import CheckResult
+    cfg = RecorderConfig(task="adv", data_dir=tmp_path, fps=60, warmup_drop_frames=0,
+                         realsense_serials=("1", "2"), use_optitrack=False, active_sensors=(),
+                         settle_s=0.0, writer=WriterConfig(queue_seconds=1.0),
+                         disk=DiskConfig(min_free_gb=0.0, bandwidth_test_s=0.0))
+    monkeypatch.setattr(app_module.shutil, "disk_usage", lambda p: SimpleNamespace(free=1e12))
+    monkeypatch.setattr(app_module, "run_startup_preflight", lambda config, n_arducam=0: [
+        CheckResult("disk_free", True, "plenty"),
+        CheckResult("write_bandwidth", False, "40.0 ticks/s sustained, need 57.9")])
+    caplog.set_level("WARNING")
+    code = app_module.run_headless(cfg, duration_s=0.4, drivers=fake_drivers([]))
+    assert code == 0
+    assert any("write_bandwidth" in r.message and r.levelname == "WARNING" for r in caplog.records)
+    monkeypatch.setattr(app_module, "run_startup_preflight", lambda config, n_arducam=0: [
+        CheckResult("disk_free", False, "1 GB free"),
+        CheckResult("write_bandwidth", True, "fine")])
+    assert app_module.run_headless(cfg, duration_s=0.4, drivers=fake_drivers([])) == 2
