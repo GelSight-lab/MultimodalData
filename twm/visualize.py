@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """
-Visualize a TWM episode HDF5 file. By default the overlay draws the GelSight
+Visualize a TWM episode HDF5 file: three RealSense views, the two GelSights
+(raw and difference), and, when the episode has them, the two Arducam wrist
+cameras on a third row. By default the overlay draws the GelSight
 contact centers projected onto each RealSense view using the calibrations in
 the task's calibration epoch (see `calib_epoch`). Pass `--no_projection` to skip the overlay (and the
 calibration loading).
@@ -11,6 +13,9 @@ Usage:
 
     # Same, but no overlay
     python -m twm.visualize path/to/episode_000.h5 --no_projection
+
+    # Print each stream's frame rate and lost-frame count first
+    python -m twm.visualize path/to/episode_000.h5 --check
 
     # Export every episode in a directory to mp4 (with overlay)
     python -m twm.visualize path/to/ --save_videos
@@ -86,8 +91,14 @@ class FramePrefetcher:
         self._thread.start()
 
     def _read_frame(self, f, idx):
+        """(color[3], gelsight[2], arducam[2] or None) for tick `idx`."""
         _blank = np.full((480, 640, 3), 128, dtype=np.uint8)
         color = [f[f"realsense/cam{i}/color"][idx] for i in range(3)]
+        arducam = None
+        if "arducam" in f:
+            arducam = [f[f"arducam/{slot}/frames"][idx] for slot in sorted(f["arducam"])][:2]
+            while len(arducam) < 2:
+                arducam.append(_blank.copy())
         # Tactile-latency compensation: pull gelsight from idx+lat so that
         # delayed tactile data is shifted forward to match the vision frame.
         gs_idx = idx + self._tac_lat
@@ -97,7 +108,7 @@ class FramePrefetcher:
             f["gelsight/right/frames"][max(0, min(gs_idx, self._gs_right_n - 1))].copy()
                 if self._gs_right_n > 0 else _blank.copy(),
         ]
-        return color, gs
+        return color, gs, arducam
 
     def _worker(self):
         f = h5py.File(self._filepath, "r")
@@ -133,6 +144,22 @@ class FramePrefetcher:
     def stop(self):
         self._stop = True
         self._thread.join(timeout=1.0)
+
+
+def arducam_labels(f):
+    """Row-3 labels ("cam0 left", "cam1 right") for an episode's Arducam
+    groups, or None when the episode has none (recorded before the wrist
+    cameras existed, or with --no_arducam)."""
+    if "arducam" not in f:
+        return None
+    labels = []
+    for slot in sorted(f["arducam"]):
+        position = str(f[f"arducam/{slot}"].attrs.get("position", "") or "")
+        labels.append(f"{slot} {position}" if position and position != "unknown" else slot)
+    labels = labels[:2]
+    while len(labels) < 2:
+        labels.append("-")
+    return labels
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -194,6 +221,11 @@ def process_episode(h5_path, out_video_path, args,
         print(f"File not found: {h5_path}")
         return
 
+    if getattr(args, "check", False):
+        from twm.recorder.integrity import check_integrity
+        print(check_integrity(h5_path).table())
+        print()
+
     # ── Open HDF5 ────────────────────────────────────────────────────────────
     f = h5py.File(h5_path, "r")
     n_frames = int(f["timestamps"].shape[0])
@@ -224,6 +256,9 @@ def process_episode(h5_path, out_video_path, args,
 
     prefetcher = FramePrefetcher(h5_path, n_frames, gs_left_n, gs_right_n,
                                  tactile_latency=tac_lat)
+    ard_labels = arducam_labels(f)
+    if ard_labels:
+        print(f"Wrist cameras: {', '.join(ard_labels)} (row 3)")
 
     paused     = False
     loop       = False
@@ -249,9 +284,6 @@ def process_episode(h5_path, out_video_path, args,
     video_writer = None
     if out_video_path:
         os.makedirs(os.path.dirname(os.path.abspath(out_video_path)) or ".", exist_ok=True)
-        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-        out_fps = fps if fps else 30.0
-        video_writer = cv2.VideoWriter(out_video_path, fourcc, out_fps, (1280, 480))
         print(f"Saving video to: {out_video_path}")
 
     try:
@@ -264,7 +296,7 @@ def process_episode(h5_path, out_video_path, args,
 
             frame_idx = max(0, min(frame_idx, n_frames - 1))
 
-            color_frames, gs_frames = prefetcher.get(frame_idx, f)
+            color_frames, gs_frames, ard_frames = prefetcher.get(frame_idx, f)
             cam_t           = float(timestamps[frame_idx])
             optitrack_poses = optitrack_at(optitrack, cam_t)
             elapsed         = cam_t - float(timestamps[0])
@@ -274,6 +306,7 @@ def process_episode(h5_path, out_video_path, args,
                 optitrack_poses,
                 recording=False, frame_count=frame_idx, elapsed=elapsed,
                 task_name=task_name,
+                arducam_frames=ard_frames, arducam_labels=ard_labels,
             )
 
             # ── Project GelSight centers (single source of truth) ────────────
@@ -295,7 +328,11 @@ def process_episode(h5_path, out_video_path, args,
             cv2.putText(preview, status, (10, 22),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 200, 255), 2)
 
-            if video_writer is not None:
+            if out_video_path:
+                if video_writer is None:   # sized from the panel: 2 or 3 rows
+                    h, w = preview.shape[:2]
+                    video_writer = cv2.VideoWriter(out_video_path, cv2.VideoWriter_fourcc(*'mp4v'),
+                                                   fps if fps else 30.0, (w, h))
                 video_writer.write(preview)
                 if frame_idx % 100 == 0:
                     print(f"  wrote frame {frame_idx + 1}/{n_frames}")
@@ -352,7 +389,7 @@ def process_episode(h5_path, out_video_path, args,
                         paused    = True
                         print("End of episode.")
 
-            if not paused and video_writer is None:
+            if not paused and not out_video_path:
                 if fps_override or frame_idx >= n_frames - 1 or frame_idx - speed < 0:
                     target_dt = tick_dt
                 else:
@@ -398,6 +435,9 @@ def main():
     parser.add_argument("--no_projection", action="store_true",
                         help="Skip the GelSight→camera projection overlay "
                              "(and the calibration loading). Default: overlay ON.")
+    parser.add_argument("--check", action="store_true",
+                        help="Print each stream's frame rate and lost-frame count "
+                             "(python -m twm.recorder integrity) before playing.")
     parser.add_argument("--tactile_latency", type=int, default=3,
                         help="Frames to advance gelsight reads (h5_frame + N) to "
                              "compensate for tactile capture lag. Default: 3.")

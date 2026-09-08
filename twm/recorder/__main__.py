@@ -1,4 +1,4 @@
-"""`python -m twm.recorder run --task X` or `python -m twm.recorder bench --dir D`."""
+"""`python -m twm.recorder run|soak|bench|validate|integrity ...`."""
 from __future__ import annotations
 
 import argparse
@@ -72,6 +72,9 @@ def main(argv=None) -> int:
             report_path.parent.mkdir(parents=True, exist_ok=True)
             report_path.write_text(text)
         return 0 if report.ok else 1
+    if argv and argv[0] == "integrity":
+        from twm.recorder.integrity import main as integrity_main
+        return integrity_main(argv[1:])
     if argv and argv[0] == "run":
         argv = argv[1:]
     from twm.recorder.app import main as run_main

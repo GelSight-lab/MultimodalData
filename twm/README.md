@@ -236,6 +236,57 @@ Prints a JSON report and exits `0` only if all eight checks pass:
 | `optitrack` | Pose timestamps non-decreasing and within the episode's span (± 1 s); ok when recorded with `--no_optitrack` |
 | `writer` | `queue_peak_fraction < 0.5` and `writer_mean_mb_s > 0` |
 
+### Check integrity: frame rate and lost frames per stream
+
+```bash
+python -m twm.recorder integrity <episode.h5>            # table, exit 0 when nothing is lost
+python -m twm.recorder integrity <episode.h5> --json     # same as JSON
+python -m twm.visualize <episode.h5> --check             # the table, then playback
+```
+
+`validate` answers "does this episode meet the recorder's contract". This
+answers the simpler question stream by stream: how many frames, at what
+rate, and were any dropped.
+
+```
+stream                  frames  rate Hz  native Hz  median dt    max dt  lost  held  status
+timestamps                1052    29.76          -    33.5 ms   45.7 ms     0     -  ok
+realsense/cam0/color      1052    29.76          -          -         -     0     -  ok
+gelsight/left             1052    29.76       16.9    53.4 ms  113.3 ms    67   456  LOST 67
+arducam/cam0              1052    29.76       29.7    32.3 ms   67.8 ms     3     3  ok
+optitrack/sensor_left     3535   100.03          -    10.0 ms   20.5 ms     0     -  ok
+INTEGRITY FAILED: ...  (T=1052, 30 fps)
+  problem: gelsight/left: 67 lost frame(s)
+  warning: optitrack/motherboard: no samples (rigid body not broadcast)
+```
+
+How to read it:
+
+- **frames** is the dataset length; every frame dataset must have exactly
+  `T` entries (a short one is reported as `1000/1052`).
+- **rate Hz** is samples per second of the stored stream. For the tick-sampled
+  sensors that is the tick rate; **native Hz** is how often the sensor itself
+  produced a new frame. A GelSight runs at about 17 Hz, so about every second
+  tick stores the previous tactile frame again: that is **held**, not lost.
+- **lost** is counted, not guessed from single gaps, because sensor clocks
+  jitter (OptiTrack delivers packets in bursts; a late Arducam frame is
+  followed by an early one). Expected = span / the stream's typical period
+  (its declared fps when it has one, else the densest interval in its
+  histogram), capped at one frame per tick for GelSight and Arducam; lost =
+  expected minus delivered. The tick clock is the recorder's own scheduler and
+  barely jitters, so a tick is lost when an interval reaches 1.5/fps.
+- A stream passes when lost is at most 0.5 % of expected, or 2 frames for
+  short clips. The count is always shown, so a tolerated hiccup stays visible.
+- Warnings do not fail the check: an empty tracker (rigid body not
+  broadcast), tracker data that does not cover the tick span, or a single
+  long gap inside the budget.
+
+On this rig (2026-09-08 test episodes): ticks, RealSense, Arducams and
+OptiTrack are clean; the GelSights skip about 10 % of their own frames
+(intervals of 100 to 150 ms between new frames with no short neighbour). That
+is the sensor/driver, not the recorder; the tactile timestamps record exactly
+which ticks carry a new frame.
+
 ### Measured on this rig (2026-09-06/07)
 
 | Configuration | Result |
@@ -277,9 +328,14 @@ python -m twm.visualize path/to/episode_000.h5 --save_video ep.mp4   # export in
 python -m twm.visualize path/to/2026-09-08 --save_videos       # one mp4 next to every .h5 in a folder
 ```
 
-The viewer shows the three RealSense color views and the two GelSight images.
-It does not yet draw the Arducam wrist cameras (`arducam/cam0`, `cam1`); their
-frames are recorded and validated, just not shown here.
+The window has three rows: the RealSense color views with the OptiTrack
+poses, the two GelSights (raw and difference against a reference), and, when
+the episode has them, the two Arducam wrist cameras (`cam0 left`, `cam1
+right`). Episodes recorded without wrist cameras get two rows. Exported mp4s
+follow the same layout (1280x480 or 1280x720).
+
+Add `--check` to print each stream's frame rate and lost-frame count before
+playback (the same report as `python -m twm.recorder integrity`, below).
 
 ### Calibration: which overlay, and when it is needed
 
