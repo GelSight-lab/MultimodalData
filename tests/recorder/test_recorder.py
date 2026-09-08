@@ -300,3 +300,23 @@ def test_run_closes_rig_when_startup_fails_after_open(tmp_path, monkeypatch):
     assert log.count("stop gs left") == 1
     assert log.count("stop gs right") == 1
     assert log.count("stop optitrack") == 1
+
+
+def test_restore_logging_survives_ros_style_reconfiguration(capsys):
+    """rospy.init_node() replaces the root logger's handlers with a ROS file
+    handler, silencing every recorder message after OptiTrack starts. The
+    recorder re-applies its own console logging once the rig is open."""
+    import logging
+    from twm.recorder.app import configure_logging, restore_logging
+    configure_logging()
+    root = logging.getLogger()
+    for h in list(root.handlers):                 # what rospy does
+        root.removeHandler(h)
+    root.addHandler(logging.NullHandler())
+    logging.getLogger("twm.recorder").disabled = True
+    logging.getLogger("twm.recorder").info("lost")
+    restore_logging()
+    logging.getLogger("twm.recorder").info("visible again")
+    out = capsys.readouterr().out
+    assert "lost" not in out
+    assert "visible again" in out

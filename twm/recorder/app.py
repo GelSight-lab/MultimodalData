@@ -229,6 +229,7 @@ def run(config: RecorderConfig, drivers: Optional[Drivers] = None) -> int:
         return 2
 
     rig = SensorRig.open(config, drivers)
+    restore_logging()
     rig.wait_ready(config.startup_timeout_s, config.settle_s)
     log.info("all sensors ready")
 
@@ -332,6 +333,7 @@ def run_headless(config: RecorderConfig, duration_s: float, drivers: Optional[Dr
     if failures(results):
         return 2
     rig = SensorRig.open(config, drivers)
+    restore_logging()
     rig.wait_ready(config.startup_timeout_s, config.settle_s)
     try:
         session = build_session(config, rig)
@@ -379,10 +381,38 @@ def run_headless(config: RecorderConfig, duration_s: float, drivers: Optional[Dr
         recorder.close()
 
 
-def main(argv=None) -> int:
+_LOG_FORMAT = "%(asctime)s %(levelname)-5s %(message)s"
+
+
+def configure_logging() -> None:
+    """Console logging for the recorder's entry points."""
     logging.basicConfig(level=logging.INFO, stream=sys.stdout,
-                        format="%(asctime)s %(levelname)-5s %(message)s",
-                        datefmt="%H:%M:%S")
+                        format=_LOG_FORMAT, datefmt="%H:%M:%S")
+
+
+def restore_logging() -> None:
+    """Re-apply console logging after a driver reconfigured Python logging.
+
+    `rospy.init_node()` (OptiTrack) installs its own logging config: it
+    replaces the root handlers with a ROS file handler and disables existing
+    loggers, so every recorder message after "starting OptiTrack" would land
+    in ~/.ros/log instead of the operator's terminal. Called once the rig is
+    open, on both the GUI and the headless path.
+    """
+    root = logging.getLogger()
+    logging.getLogger("twm.recorder").disabled = False
+    if root.level > logging.INFO:
+        root.setLevel(logging.INFO)
+    console = (sys.stdout, sys.stderr)
+    if not any(isinstance(h, logging.StreamHandler) and getattr(h, "stream", None) in console
+               for h in root.handlers):
+        handler = logging.StreamHandler(sys.stdout)
+        handler.setFormatter(logging.Formatter(_LOG_FORMAT, "%H:%M:%S"))
+        root.addHandler(handler)
+
+
+def main(argv=None) -> int:
+    configure_logging()
     return run(parse_args(argv))
 
 

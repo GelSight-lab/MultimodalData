@@ -12,9 +12,8 @@ from twm.recorder.preflight import check_write_bandwidth
 
 
 def _configure_logging() -> None:
-    logging.basicConfig(level=logging.INFO, stream=sys.stdout,
-                        format="%(asctime)s %(levelname)-5s %(message)s",
-                        datefmt="%H:%M:%S")
+    from twm.recorder.app import configure_logging
+    configure_logging()
 
 
 def main(argv=None) -> int:
