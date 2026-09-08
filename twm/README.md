@@ -219,6 +219,10 @@ python -m twm.recorder validate <episode.h5> --expected-duration <seconds> \
   [--fps N] [--warmup-frames 10] [--max-tick-gap 0.5] [--report out.json]
 ```
 
+`--expected-duration` is the length you meant to record; the episode's own
+length is in the CSV log (`duration_s`). Leave it off to skip the `duration`
+check and still run the other seven.
+
 Prints a JSON report and exits `0` only if all eight checks pass:
 
 | Check | Passes when |
@@ -267,9 +271,57 @@ Before merging any change under `twm/`, run `python -m twm.pipeline_guard`
 ## Visualizing Episodes
 
 ```bash
-python -m twm.visualize path/to/episode_000.h5
-python -m twm.visualize path/to/episode_000.h5 --fps 15   # override playback speed
+python -m twm.visualize path/to/episode_000.h5                 # play at the recorded FPS
+python -m twm.visualize path/to/episode_000.h5 --fps 15        # slower playback
+python -m twm.visualize path/to/episode_000.h5 --save_video ep.mp4   # export instead of a window
+python -m twm.visualize path/to/2026-09-08 --save_videos       # one mp4 next to every .h5 in a folder
 ```
+
+The viewer shows the three RealSense color views and the two GelSight images.
+It does not yet draw the Arducam wrist cameras (`arducam/cam0`, `cam1`); their
+frames are recorded and validated, just not shown here.
+
+### Calibration: which overlay, and when it is needed
+
+By default the viewer projects each GelSight's centre onto the RealSense views
+(see [Camera Calibration](#camera-calibration)). That needs the extrinsics of
+the **epoch the episode was recorded in**, which the viewer picks from the task
+name in the path (`twm/calib_epoch.py`, `CALIB_DIRS`):
+
+| task in the path | calibration folder | epoch |
+|---|---|---|
+| `motherboard` | `twm/calibration/result backup/` | 2026-05-12 |
+| `pushT` | `twm/calibration/result/` | 2026-06-26 |
+
+Any other task name (for example `test`) stops with
+`cannot infer task from '...'`. It refuses on purpose: viewing through the
+wrong epoch silently draws the dots in the wrong place. You then have three
+choices:
+
+1. **No overlay** (test recordings, quickest):
+
+   ```bash
+   python -m twm.visualize path/to/test/2026-09-08/episode_000.h5 --no_projection
+   ```
+
+2. **Explicit files.** `--cam_calib` takes JSON *paths*, not a task name, and
+   the viewer only skips the task lookup when all three of `--cam_calib`,
+   `--gel_left` and `--gel_right` are given:
+
+   ```bash
+   C="twm/calibration/result backup"      # motherboard epoch; quotes matter (space in the name)
+   python -m twm.visualize path/to/episode_000.h5 \
+     --cam_calib "$C/T_mocap_to_cam_middle.json" "$C/T_mocap_to_cam_left.json" "$C/T_mocap_to_cam_right.json" \
+     --gel_left  "$C/T_gel_to_rigid_left.json" \
+     --gel_right "$C/T_gel_to_rigid_right.json"
+   ```
+
+   Those extrinsics are only right if the cameras and the OptiTrack origin
+   have not moved since that epoch. Dots landing off the sensors mean the
+   calibration is stale, not the recording.
+
+3. **A new task**: record under its own task name, calibrate (below), and add
+   the task to `CALIB_DIRS` so the viewer finds it automatically.
 
 ### Controls
 
