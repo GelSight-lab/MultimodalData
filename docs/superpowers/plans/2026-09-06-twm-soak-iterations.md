@@ -52,6 +52,10 @@
 
 | **Iteration 5b run 2 (FULL RIG: 3 RS + 2 GS + 2 Arducam, Disk1, 600 s, BITSHUFFLE, vm.dirty_ratio=60, Arducams on ports 1-1.3 / 1-2): PASS** | T=17839 (594.6 s @ 30 Hz), late 0.17 % (31 ticks), max gap 121 ms, queue peak 24 %, 85.1 GB = 4.77 MB/tick, writer 247 MB/s; GelSight lag 18–183 ms @ 17.0 Hz, Arducam lag 0.1–46 ms @ 29.7 Hz, all monotonic, 0 late sensor samples; 17 datasets correct shape/dtype, frames vary; dirty pages peaked 14.3 GB of the 36 GB budget; validator 8/8 ok with `--expected-duration 600`; report `2026-09-06-soak-iter5b-validate.json` | — | this run |
 
+| 2026-09-07: `python -m twm.data_collection --task test` from the MAIN checkout showed no wrist cameras and black GelSight images | the main checkout was still on the old 821-line recorder with serials `28YGZL6K`/`2BGLKZNT` (absent → black dummy frames, no `arducam` group); file `test/2026-09-07/episode_000.h5` confirms it | fast-forwarded `chore/preprocess-extraction` to `feature/twm-arducam` | 30 s headless run from the main checkout: 17 datasets, GelSight frames mean 82, Arducam serials present, validator 8/8 |
+| After "starting OptiTrack" the recorder printed nothing | `rospy.init_node` replaces the root logging handlers with a ROS file handler | `restore_logging()` after the rig opens (commit 266993c) | unit test + the 30 s OptiTrack run shows health lines and "Episode saved" |
+| Startup bandwidth self-test refused with 54.3 ticks/s < 57.9 minutes after a passing 10-min full-rig episode | page-cache bench under-reads the HDD | write_bandwidth is advisory (warning), disk_free still blocks (commit 9fa6242) | 30 s run with OptiTrack: 882 frames, queue peak 14 %, 5942 OT samples in range, validator 8/8 |
+
 ## Rejected ideas
 - zstd-3 (shuffle or bitshuffle): GelSight 1.45–1.71×, color 1.47–1.59× but 6–14 ms/frame → ~10–20 ticks/s single-threaded; too slow for 30 Hz. Rejected.
 - JPEG q95 for color/GelSight: 8.5× / 18.7×, 5 ms/frame — would solve the disk gap but is lossy; needs the user's decision, not taken.

@@ -129,15 +129,17 @@ of the preview shows `writer <queue %> | <MB/s> | disk <GB> (~min left) | OK/WAR
 
 Before every episode the recorder checks free disk, OptiTrack freshness for
 the active bodies, and that the writer is idle. At startup it also writes
-two seconds of synthetic frames through the real pipeline and refuses to
-start below `fps × margin` ticks/s (30 fps × 1.5 margin = 45 ticks/s by
-default for the legacy rig, scaled up to ~58 ticks/s when two Arducams are
-configured — the requirement tracks the extra bytes per tick, not a
-different tick rate). The margin is tunable with `--bandwidth_margin` for
-disks that can't clear the default headroom; on a slow disk that number is
-only a startup gate, not the final word — the soak's `queue_peak_fraction`
-(see below) is the real verdict on whether the disk kept up for the whole
-episode. Run the startup self-test by hand:
+two seconds of synthetic frames through the real pipeline and compares the
+result with `fps × margin` ticks/s (30 fps × 1.5 margin = 45 ticks/s for the
+legacy rig, ~58 ticks/s with two Arducams — the requirement tracks the extra
+bytes per tick, not a different tick rate). That self-test is **advisory**:
+it measures the page cache and under-reads a slow HDD (54 ticks/s was seen
+minutes after a 10-minute full-rig episode passed with a 24 % queue peak),
+so a shortfall is logged as a warning and recording proceeds; a real
+shortfall is caught at runtime by the writer's fail-fast. Only low free
+disk refuses to start. The margin is tunable with `--bandwidth_margin`, and
+the soak's `queue_peak_fraction` (see below) is the real verdict on whether
+the disk kept up. Run the self-test by hand:
 
     python -m twm.recorder bench --dir /media/yxma/Disk1/twm/data --seconds 5
 
