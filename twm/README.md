@@ -134,8 +134,12 @@ do not need, and watch the `queue` percentage in the `[REC]` log lines: it
 must stay well under 50 %. If the dots sit off the sensors,
 recalibrate (see [Camera Calibration](#camera-calibration)); do not record
 through a stale calibration expecting to fix it later.
-The status bar shows the episode state, and the health line at the bottom
-shows `writer <queue %> | <MB/s> | disk <GB free> (~min left) | OK/WARN/FAIL`.
+A black text strip under the images carries the status bar (episode state)
+and, below it, the health line
+`writer <queue %> | <MB/s> | disk <GB free> (~min left) | OK/WARN/FAIL`;
+neither is drawn over a camera image. The `MB/s` figure counts raw
+(uncompressed) tick bytes; the full rig is about 8.3 MB per tick, so the
+writer must sustain about 250 MB/s raw to keep up at 30 Hz.
 Watch the queue percentage: it is the one number that says whether the disk
 is keeping up.
 

@@ -24,3 +24,16 @@ def test_overlay_leaves_the_rows_below_the_cameras_untouched_and_draws_the_dot()
     x, y = _scale_to_thumb(u, v)
     x += DISPLAY_POSITION[2] * RS_THUMB_W
     assert not np.array_equal(panel[y - 2:y + 3, x - 2:x + 3], before[y - 2:y + 3, x - 2:x + 3])
+
+
+def test_status_text_lives_in_a_strip_below_the_images():
+    from twm.viz import STATUS_STRIP_H, build_preview_panel
+    color = [np.full((480, 640, 3), 90, np.uint8) for _ in range(3)]
+    gs = [np.full((480, 640, 3), 90, np.uint8) for _ in range(2)]
+    panel = build_preview_panel(color, gs, gs, {}, False, 0, 0.0,
+                                arducam_frames=gs, arducam_labels=["a", "b"])
+    assert panel.shape == (3 * RS_THUMB_H + STATUS_STRIP_H, 1280, 3)
+    wrist = panel[2 * RS_THUMB_H:3 * RS_THUMB_H, :RS_THUMB_W]
+    assert (wrist[40:] == 90).all()                       # no status text on the wrist image (label at top only)
+    strip = panel[3 * RS_THUMB_H:]
+    assert strip.max() > 0                                # the status bar is drawn in the strip

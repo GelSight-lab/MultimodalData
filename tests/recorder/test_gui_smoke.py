@@ -75,6 +75,6 @@ def test_gui_loop_renders_overlay_with_fresh_poses_and_quits(monkeypatch):
 
     assert rc == 0
     assert len(shown) == 5
-    assert shown[0].shape == (720, 1280, 3)          # 3 rows: wrist cameras present
+    assert shown[0].shape == (720 + 48, 1280, 3)     # 3 rows + text strip: wrist cameras present
     assert FakeRig.calls >= 3                          # a fresh pose per rendered frame (overlay on)
     assert not np.array_equal(shown[0][:240, :960], shown[3][:240, :960])  # p toggled the overlay off

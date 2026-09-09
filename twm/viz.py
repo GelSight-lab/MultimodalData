@@ -54,6 +54,7 @@ CAM_CALIB_NAME: dict[int, str] = {
 
 # Layout constants — match what the live recording UI used historically.
 RS_THUMB_W, RS_THUMB_H = 320, 240   # one RealSense thumbnail
+STATUS_STRIP_H = 48                 # text strip under the image rows: status bar + health line
 GS_THUMB_W, GS_THUMB_H = 240, 240   # one GelSight thumbnail (raw or diff)
 ROW2_Y = RS_THUMB_H                 # top of row 2 (the tactile strip)
 PANEL_W, PANEL_H = 1280, 480
@@ -349,6 +350,9 @@ def build_preview_panel(color_frames, gs_frames, gs_ref, optitrack_poses,
       Row 1 (y=0..240):    [cam slot 0 | slot 1 | slot 2 | OptiTrack text]
       Row 2 (y=240..480):  [gs_L_raw | gs_L_diff | gs_R_raw | gs_R_diff | blank]
       Optional row 3:      [Arducam cam0 | Arducam cam1 | blank | blank]
+      Status strip:        STATUS_STRIP_H px of black under the rows; the
+                           status bar is its first line, the recorder's
+                           health line its second. Text never covers an image.
 
     `color_frames` is indexed by H5 cam_idx (0=right, 1=left, 2=middle as per
     `REALSENSE_SERIALS`). This function reorders to the spatial **left,
@@ -401,6 +405,9 @@ def build_preview_panel(color_frames, gs_frames, gs_ref, optitrack_poses,
                 cv2.LINE_AA,
             )
 
+    # Text strip under the image rows (status bar + room for the health line)
+    panel = np.vstack([panel, np.zeros((STATUS_STRIP_H, panel.shape[1], 3), np.uint8)])
+
     # Bottom status bar
     if status_override is not None:
         status = status_override
@@ -414,7 +421,7 @@ def build_preview_panel(color_frames, gs_frames, gs_ref, optitrack_poses,
             status = f"{task_prefix}[IDLE]  s=start  e=end  r=reset-ref  q=quit  |  {fps:.1f}fps"
             color = (0, 200, 0)
 
-    cv2.putText(panel, status, (10, panel.shape[0] - 10),
+    cv2.putText(panel, status, (10, panel.shape[0] - STATUS_STRIP_H + 20),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
 
     # Tile-label headers at the top of each cam thumb

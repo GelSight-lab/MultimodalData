@@ -23,7 +23,7 @@ for k, v in _saved.items():
 # twm.visualize imported twm.viz while cv2 was mocked. Reload the canonical
 # panel module with the real cv2 before exercising its pixel output below.
 sys.modules.pop('twm.viz', None)
-from twm.viz import build_preview_panel
+from twm.viz import build_preview_panel, STATUS_STRIP_H
 
 
 class TestOptitrackAt(unittest.TestCase):
@@ -77,7 +77,7 @@ class TestSensorCameraPreview(unittest.TestCase):
             *self._args(), recording=False, frame_count=0, elapsed=0,
         )
 
-        self.assertEqual(panel.shape, (480, 1280, 3))
+        self.assertEqual(panel.shape, (480 + STATUS_STRIP_H, 1280, 3))
 
     def test_two_sensor_cameras_add_third_row_in_slot_order(self):
         cam0 = np.full((480, 640, 3), (11, 22, 33), np.uint8)
@@ -88,7 +88,7 @@ class TestSensorCameraPreview(unittest.TestCase):
             arducam_labels=["cam0 usb-A unknown", "cam1 usb-B unknown"],
         )
 
-        self.assertEqual(panel.shape, (720, 1280, 3))
+        self.assertEqual(panel.shape, (720 + STATUS_STRIP_H, 1280, 3))
         np.testing.assert_array_equal(panel[600, 100], [11, 22, 33])
         np.testing.assert_array_equal(panel[600, 420], [44, 55, 66])
         np.testing.assert_array_equal(panel[600, 900], [0, 0, 0])

@@ -327,8 +327,8 @@ def _gui_loop(config, recorder: Recorder, capture: CaptureLoop, rig,
         text, level = health_line(snap.writer, config.writer.warn_fraction,
                                   config.disk.min_free_gb, sensors=snap.sensors)
         color = {"ok": (80, 200, 80), "warn": (0, 200, 255), "fail": (0, 0, 255)}[level]
-        cv2.putText(panel, text, (8, panel.shape[0] - 8), cv2.FONT_HERSHEY_SIMPLEX,
-                    0.5, color, 1, cv2.LINE_AA)
+        cv2.putText(panel, text, (10, panel.shape[0] - 10), cv2.FONT_HERSHEY_SIMPLEX,
+                    0.5, color, 1, cv2.LINE_AA)          # second line of the status strip
 
     def build(snap):
         tick = snap.tick
