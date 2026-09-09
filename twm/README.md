@@ -121,7 +121,17 @@ the overlay is redrawn on every GUI frame from the newest OptiTrack pose
 rather than the pose sampled at the tick, so the dot trails the sensor by
 one GUI frame (about 33 ms plus display) instead of tick + preview delay.
 The overlay is preview-only; nothing recorded depends on it. Press `p` to
-toggle it, or start with `--no_projection`. If the dots sit off the sensors,
+toggle it, or start with `--no_projection`.
+
+**CPU is the rig's scarcest resource.** The PC has 4 physical cores (8 with
+hyperthreading). Idle, the recorder already uses about 3 logical cores (two
+GelSight decoders at ~40 % each, RealSense and Arducam readers, the preview
+thread); recording adds the compressing writer. On 2026-09-09 an episode
+overloaded within 7 s with the same 4.9 MB/tick as passing episodes because
+the desktop (Chrome, VS Code, Remmina, gnome-shell) was using another core
+and the writer's compression slowed by 25 %. Before recording, close what you
+do not need, and watch the `queue` percentage in the `[REC]` log lines: it
+must stay well under 50 %. If the dots sit off the sensors,
 recalibrate (see [Camera Calibration](#camera-calibration)); do not record
 through a stale calibration expecting to fix it later.
 The status bar shows the episode state, and the health line at the bottom

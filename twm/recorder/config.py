@@ -78,7 +78,8 @@ class RecorderConfig:
     warmup_drop_frames: int = 10
     ot_preflight_max_age_s: float = 2.0
     ot_watchdog_timeout_s: float = 10.0
-    preview_fps: int = 30     # base panel rebuild rate; the overlay is redrawn at the GUI's 30 Hz regardless
+    preview_fps: int = 15     # base panel rebuild rate (5 ms each; the CPU is the rig's scarcest
+                              # resource); the overlay is redrawn at the GUI's 30 Hz regardless
     writer: WriterConfig = WriterConfig()
     disk: DiskConfig = DiskConfig()
 

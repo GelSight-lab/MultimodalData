@@ -69,10 +69,12 @@ def _wait(pred, timeout=3.0):
 
 def test_peek_never_blocks_and_reports_capture_time(stream):
     assert _wait(lambda: stream.peek_frame_with_timestamp()[0] is not None)
+    FakeCapture.instances[-1].healthy = False        # camera stalls
+    # An in-flight frame may still land after the stall; take the reference
+    # only once the stream's own clock has been quiet for a while.
+    assert _wait(lambda: time.time() - stream.last_updated > 0.2)
     frame, ts = stream.peek_frame_with_timestamp()
     assert frame.shape == (48, 64, 3) and abs(ts - time.time()) < 1.0
-    FakeCapture.instances[-1].healthy = False        # camera stalls
-    time.sleep(0.3)
     t0 = time.monotonic()
     stale_frame, stale_ts = stream.peek_frame_with_timestamp()
     assert time.monotonic() - t0 < 0.05                # no waiting, no restart

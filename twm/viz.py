@@ -495,6 +495,8 @@ def draw_projection_overlay(panel: np.ndarray,
     """
     sl = optitrack_poses.get("sensor_left") if optitrack_poses else None
     sr = optitrack_poses.get("sensor_right") if optitrack_poses else None
+    if sl is None and sr is None:
+        return          # nothing to draw: skip the supersample round trip
 
     # 2x supersample buffer for sub-integer line widths. Only the camera row
     # is drawn on, so only that region is scaled (a 3-row panel would cost
