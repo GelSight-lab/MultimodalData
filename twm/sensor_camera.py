@@ -354,6 +354,72 @@ def register_wrist_cameras(path, *, devices=None, realsense_serials=None,
     return cams
 
 
+def _connected_wrist_cameras(devices=None, realsense_serials=None,
+                             gelsight_serials=None):
+    """Capture nodes that are neither a RealSense nor a GelSight."""
+    from twm.recorder.config import GELSIGHT_SERIALS
+
+    devices = tuple(enumerate_capture_devices() if devices is None else devices)
+    rs = set(_attached_realsense_serials() if realsense_serials is None
+             else realsense_serials)
+    gel = set(GELSIGHT_SERIALS.values() if gelsight_serials is None else gelsight_serials)
+    out, seen = [], set()
+    for d in devices:
+        if not d.is_capture or d.vendor_id == REALSENSE_VENDOR_ID:
+            continue
+        if d.reported_serial in rs or d.reported_serial in gel:
+            continue
+        if d.id_path in seen:
+            continue
+        seen.add(d.id_path)
+        out.append(d)
+    return sorted(out, key=lambda d: d.id_path)
+
+
+def assign_side_from_connected(path, side: str, *, devices=None,
+                               realsense_serials=None, gelsight_serials=None):
+    """Name the side of the ONE wrist camera currently plugged in.
+
+    Two identical cameras cannot be told apart in a preview: same model, same
+    reported serial, same picture. Unplugging one and naming the other is the
+    procedure that works on the bench, and it is exact — the camera that
+    answers is the one you left connected.
+
+    The other configured camera takes the opposite side, because a pair with
+    one side named and one unknown is a half-finished mapping that reads as
+    complete.
+    """
+    side = str(side).lower()
+    if side not in ("left", "right"):
+        raise ArducamConfigError(f"side must be left or right, got {side!r}")
+
+    path = Path(path)
+    raw = json.loads(path.read_text())
+    validate_config(raw)
+
+    found = _connected_wrist_cameras(devices, realsense_serials, gelsight_serials)
+    if len(found) != 1:
+        names = ", ".join(f"{d.device} at {d.id_path}" for d in found) or "none"
+        raise ArducamConfigError(
+            f"expected exactly one connected wrist camera so there is no doubt "
+            f"which one is being named, found {len(found)}: {names}. Unplug the "
+            f"other one. Nothing was written.")
+
+    port = found[0].id_path
+    entries = raw["cameras"]
+    if not any(e.get("id_path") == port for e in entries):
+        raise ArducamConfigError(
+            f"the connected camera is at {port}, which is not in {path.name}. "
+            f"Run `register` first. Nothing was written.")
+
+    other = "right" if side == "left" else "left"
+    for e in entries:
+        e["position"] = side if e.get("id_path") == port else other
+    validate_config(raw)
+    path.write_text(json.dumps(raw, indent=2) + "\n")
+    return raw["cameras"]
+
+
 def save_position_mapping(path: str | Path, left_slot: str | None) -> None:
     """Atomically assign physical sides, or clear both sides to unknown."""
     path = Path(path)
@@ -672,9 +738,23 @@ def main(argv=None) -> int:
     register_parser.add_argument("--allow-one", action="store_true",
                                  help="register a single camera; the pair is the default")
     subparsers.add_parser("list", help="show every capture device the machine sees")
+    assign_parser = subparsers.add_parser(
+        "assign", help="name the side of the one camera left plugged in")
+    assign_parser.add_argument("side", choices=("left", "right"))
+    assign_parser.add_argument("--config", default=str(DEFAULT_CONFIG_PATH.with_name("wrist_usb.json")))
     args = parser.parse_args(argv)
     if args.command == "list":
         return _cmd_list()
+    if args.command == "assign":
+        import sys
+        try:
+            cams = assign_side_from_connected(args.config, args.side)
+        except ArducamConfigError as exc:
+            print(f"refused: {exc}", file=sys.stderr)
+            return 1
+        for c in cams:
+            print(f"  {c['slot']} {c['id_path']}  position={c['position']}")
+        return 0
     if args.command == "register":
         return _cmd_register(args.out, args.allow_one)
     if args.command == "identify":

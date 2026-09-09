@@ -4,7 +4,7 @@
     {
       "slot": "cam0",
       "id_path": "pci-0000:00:14.0-usb-0:1:1.0",
-      "position": "unknown",
+      "position": "left",
       "width": 640,
       "height": 480,
       "fps": 30,
@@ -25,7 +25,7 @@
     {
       "slot": "cam1",
       "id_path": "pci-0000:00:14.0-usb-0:2:1.0",
-      "position": "unknown",
+      "position": "right",
       "width": 640,
       "height": 480,
       "fps": 30,
