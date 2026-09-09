@@ -69,7 +69,7 @@ def frame_with_timestamp(stream) -> Tuple[np.ndarray, Optional[float]]:
 
 @dataclass(frozen=True)
 class Drivers:
-    realsense: Callable[..., Any]          # (serial=, fps=) -> stream
+    realsense: Callable[..., Any]          # (serial=, fps=, align=) -> stream
     gelsight: Callable[..., Any]           # (serial=, resolution=, name=) -> stream
     optitrack: Callable[[], Any]
     arducam: Callable[..., Any]            # (config, device) -> stream
@@ -220,8 +220,11 @@ class SensorRig:
         try:
             realsense = []
             for i, serial in enumerate(config.realsense_serials):
-                log.info("starting RealSense cam%d %s (%s)", i, serial, realsense_position(serial))
-                realsense.append(start(drivers.realsense(serial=serial, fps=config.fps)))
+                log.info("starting RealSense cam%d %s (%s)%s", i, serial,
+                         realsense_position(serial),
+                         "" if config.align_depth else " [raw depth]")
+                realsense.append(start(drivers.realsense(serial=serial, fps=config.fps,
+                                                        align=config.align_depth)))
                 drivers.sleep(0.5)            # stagger: USB bandwidth contention
 
             arducam, arducam_config = [], ()

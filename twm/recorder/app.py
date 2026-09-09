@@ -120,7 +120,8 @@ class Recorder:
                                      list(self.config.gelsight_serials.values()),
                                      self.config.fps,
                                      arducam_config=self.rig.arducam_config or None,
-                                     n_realsense=len(self.config.realsense_serials))
+                                     n_realsense=len(self.config.realsense_serials),
+                                     depth_aligned=self.config.align_depth)
         self._open = OpenEpisode(num, path, h5)
         self._restarts_at_start = self._sensor_restart_counts()
         self.capture.start_recording(h5)

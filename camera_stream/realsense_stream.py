@@ -7,8 +7,9 @@ import pyrealsense2 as rs
 
 class RealsenseStream:
     """
-    Threaded RealSense D415 stream providing aligned color (BGR uint8) and
-    depth (uint16, millimetres) frames at a fixed fps.
+    Threaded RealSense D415 stream providing color (BGR uint8) and depth
+    (uint16, millimetres) frames at a fixed fps. Depth is reprojected onto
+    the color grid unless `align=False`.
 
     Usage:
         stream = RealsenseStream(serial="123456789012", fps=30)
@@ -18,11 +19,17 @@ class RealsenseStream:
         stream.stop()
     """
 
-    def __init__(self, serial: str, width: int = 640, height: int = 480, fps: int = 30):
+    def __init__(self, serial: str, width: int = 640, height: int = 480, fps: int = 30,
+                 align: bool = True):
         self.serial = serial
         self.width = width
         self.height = height
         self.fps = fps
+        # `align=False` stores depth in the DEPTH camera's frame: the same
+        # pixels rs.align would consume, without paying for the reprojection
+        # on the recording machine (~0.25 of a core per camera). Align it
+        # afterwards with twm.realsense_align, which reproduces rs.align.
+        self.align = align
 
         self._color_frame = None
         self._depth_frame = None
@@ -36,7 +43,7 @@ class RealsenseStream:
         config.enable_device(self.serial)
         config.enable_stream(rs.stream.color, self.width, self.height, rs.format.bgr8, self.fps)
         config.enable_stream(rs.stream.depth, self.width, self.height, rs.format.z16, self.fps)
-        self._align = rs.align(rs.stream.color)
+        self._align = rs.align(rs.stream.color) if self.align else None
         self._pipeline.start(config)
         self._streaming = True
         threading.Thread(target=self._update, daemon=True).start()
@@ -50,9 +57,10 @@ class RealsenseStream:
         while self._streaming:
             try:
                 frames = self._pipeline.wait_for_frames(timeout_ms=1000)
-                aligned = self._align.process(frames)
-                color = aligned.get_color_frame()
-                depth = aligned.get_depth_frame()
+                if self._align is not None:
+                    frames = self._align.process(frames)
+                color = frames.get_color_frame()
+                depth = frames.get_depth_frame()
                 if color and depth:
                     with self._lock:
                         self._color_frame = np.asanyarray(color.get_data()).copy()

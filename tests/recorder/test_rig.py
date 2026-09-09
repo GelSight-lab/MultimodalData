@@ -69,7 +69,7 @@ _ARDUCAM_VALUES = {"/dev/cam0": 21, "/dev/cam1": 37}
 
 def drivers(log, gelsight_fail=(), arducam_fail=False):
     return Drivers(
-        realsense=lambda serial, fps: Stream(log, f"rs {serial}"),
+        realsense=lambda serial, fps, align=True: Stream(log, f"rs {serial}"),
         gelsight=lambda serial, resolution, name: Stream(
             log, f"gs {name}", fail_start=name in gelsight_fail, ts=42.0),
         optitrack=lambda: Optitrack(log),
@@ -163,7 +163,7 @@ def test_wait_ready_failure_closes_rig():
         def get_color_frame(self, **kw):
             raise TimeoutError("no frame")
 
-    d = Drivers(**{**d.__dict__, "realsense": lambda serial, fps: Slow(log, f"rs {serial}")})
+    d = Drivers(**{**d.__dict__, "realsense": lambda serial, fps, align=True: Slow(log, f"rs {serial}")})
     rig = SensorRig.open(config(use_arducam=False), d)
     with pytest.raises(TimeoutError):
         rig.wait_ready(timeout_s=0.01, settle_s=0.0)
@@ -276,3 +276,17 @@ def test_realsense_position_is_unknown_for_a_foreign_serial():
     from twm.recorder.config import realsense_position
     assert realsense_position("143322063538") == "right"
     assert realsense_position("nope") == "unknown"
+
+
+def test_the_alignment_setting_reaches_the_realsense_driver():
+    """Recording raw depth is only cheaper if the flag actually gets to the
+    camera; a driver that quietly keeps aligning costs the CPU either way."""
+    seen = []
+    d = drivers([])
+    d = Drivers(**{**d.__dict__,
+                   "realsense": lambda serial, fps, align: seen.append(align) or Stream([], "rs")})
+    SensorRig.open(config(use_arducam=False, align_depth=False), d).close()
+    assert seen == [False, False]
+    seen.clear()
+    SensorRig.open(config(use_arducam=False), d).close()
+    assert seen == [True, True]

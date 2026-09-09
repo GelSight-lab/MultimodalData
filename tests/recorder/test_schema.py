@@ -116,3 +116,15 @@ def test_frame_datasets_use_lz4_bitshuffle(tmp_path):
     assert cd_values[4] == 5                                   # clevel
     assert cd_values[5] == hdf5plugin.Blosc.BITSHUFFLE          # shuffle mode
     f.close()
+
+
+def test_episode_records_whether_its_depth_is_aligned(tmp_path):
+    """Raw depth and aligned depth look identical in the file; without this
+    flag nothing downstream can tell which reprojection an episode needs."""
+    f, _ = create_episode_file(str(tmp_path), 0, ["A"], ["L", "R"], 30, n_realsense=1)
+    assert f["metadata"].attrs["depth_aligned"] is np.True_ or f["metadata"].attrs["depth_aligned"]
+    f.close()
+    f, _ = create_episode_file(str(tmp_path), 1, ["A"], ["L", "R"], 30, n_realsense=1,
+                               depth_aligned=False)
+    assert not f["metadata"].attrs["depth_aligned"]
+    f.close()

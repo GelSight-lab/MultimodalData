@@ -275,7 +275,7 @@ def test_run_closes_rig_when_startup_fails_after_open(tmp_path, monkeypatch):
     propagating, and must never reach the GUI loop."""
     log = []
     fake_drivers = Drivers(
-        realsense=lambda serial, fps: _Stream(log, f"rs {serial}"),
+        realsense=lambda serial, fps, align=True: _Stream(log, f"rs {serial}"),
         gelsight=lambda serial, resolution, name: _Stream(log, f"gs {name}"),
         optitrack=lambda: _Optitrack(log),
         arducam=lambda config, device: _Stream(log, f"ard {device}"),

@@ -80,7 +80,7 @@ class RealisticStream(Stream):
 
 def fake_drivers(log):
     return Drivers(
-        realsense=lambda serial, fps: RealisticStream(log, f"rs {serial}", value=int(serial[-1])),
+        realsense=lambda serial, fps, align=True: RealisticStream(log, f"rs {serial}", value=int(serial[-1])),
         gelsight=lambda serial, resolution, name: RealisticStream(log, f"gs {name}", value=7),
         optitrack=lambda: Optitrack(log),
         arducam=lambda config, device: RealisticStream(log, f"ard {device}", value=9),

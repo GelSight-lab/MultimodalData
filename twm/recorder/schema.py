@@ -50,7 +50,7 @@ def _scalar_dataset(group, name, width=None):
 def create_episode_file(date_dir, episode_num, realsense_serials,
                         gelsight_serials, fps, task_name="",
                         arducam_config=None, include_legacy=True,
-                        n_realsense=None):
+                        n_realsense=None, depth_aligned=True):
     """Create `episode_NNN.h5` with empty resizable datasets.
 
     `n_realsense` sets how many `realsense/cam{i}` groups are created
@@ -69,6 +69,9 @@ def create_episode_file(date_dir, episode_num, realsense_serials,
     meta.attrs["gelsight_serials"] = list(gelsight_serials)
     meta.attrs["created_at"] = time.strftime("%Y-%m-%dT%H:%M:%S")
     meta.attrs["task"] = task_name
+    # False = depth is in the depth camera's own frame and still needs
+    # twm.realsense_align. The two look identical in the file.
+    meta.attrs["depth_aligned"] = bool(depth_aligned)
     if arducam_config:
         meta.attrs["arducam_config"] = json.dumps([{
             "slot": c.slot, "id_path": c.id_path, "position": c.position,

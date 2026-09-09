@@ -73,6 +73,7 @@ class RecorderConfig:
     use_arducam: bool = True
     arducam_config_path: Optional[Path] = None
     show_projection: bool = True
+    align_depth: bool = True   # False: store depth in the depth camera's own frame
     startup_timeout_s: float = 15.0
     settle_s: float = 1.0
     warmup_drop_frames: int = 10
@@ -108,6 +109,11 @@ def build_parser() -> argparse.ArgumentParser:
                         "monitors.")
     p.add_argument("--no_projection", action="store_true",
                    help="Disable the GelSight→camera projection overlay.")
+    p.add_argument("--raw_depth", action="store_true",
+                   help="Record depth in the depth camera's own frame instead of "
+                        "aligning it to color on the fly (saves ~0.25 CPU core per "
+                        "camera). Align it later with `python -m twm.realsense_align "
+                        "apply`.")
     p.add_argument("--realsense_serials", default=None,
                    help="Comma-separated RealSense serials to record (default: the rig's three).")
     p.add_argument("--no_optitrack", action="store_true",
@@ -152,6 +158,7 @@ def config_from_namespace(a: argparse.Namespace) -> RecorderConfig:
         use_arducam=not a.no_arducam,
         arducam_config_path=Path(a.arducam_config) if a.arducam_config else None,
         show_projection=not a.no_projection,
+        align_depth=not a.raw_depth,
         writer=writer,
         disk=disk,
     )

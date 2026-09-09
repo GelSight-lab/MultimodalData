@@ -66,3 +66,8 @@ def test_post_init_forces_empty_active_sensors_when_optitrack_disabled():
     cfg2 = RecorderConfig(task="t", use_optitrack=True,
                           active_sensors=("sensor_left",))
     assert cfg2.active_sensors == ("sensor_left",)
+
+
+def test_raw_depth_flag_turns_off_the_sdk_alignment():
+    assert parse_args(["--task", "t"]).align_depth is True
+    assert parse_args(["--task", "t", "--raw_depth"]).align_depth is False
