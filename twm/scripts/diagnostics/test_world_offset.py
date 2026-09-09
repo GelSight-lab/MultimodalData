@@ -20,6 +20,7 @@ import h5py
 import hdf5plugin  # noqa
 import numpy as np
 
+from twm.calib_epoch import calib_dir
 from twm.data_collection import REALSENSE_SERIALS
 from twm.viz import (
     build_preview_panel,
@@ -30,8 +31,12 @@ from twm.viz import (
 )
 
 
-CALIB_DIR = Path("/home/yxma/MultimodalData/twm/calibration/result")
 H5_ROOT   = Path("/media/yxma/Disk1/twm/data/motherboard")
+# This script renders a 2026-05-19 episode, so it needs that SESSION's epoch.
+# It used to hard-code a directory holding the June-26 extrinsics -- the
+# 35-73 px error calib_epoch exists to prevent -- which then stopped existing
+# altogether when the epoch directories were renamed.
+CALIB_DIR = calib_dir("motherboard", date="2026-05-19")
 
 PANEL_W, PANEL_H = 1280, 480
 SOURCE_FPS = 30.0

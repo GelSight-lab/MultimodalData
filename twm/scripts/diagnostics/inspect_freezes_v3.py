@@ -23,6 +23,7 @@ import hdf5plugin  # noqa: F401
 import numpy as np
 
 from twm.data_collection import make_preview   # = twm.viz.build_preview_panel
+from twm.calib_epoch import calib_dir
 from twm.viz import (
     CAM_CALIB_NAME, DISPLAY_ORDER,
     cam_aligned_pose,
@@ -34,7 +35,6 @@ from twm.viz import (
 PT_ROOT = Path("/media/yxma/Disk1/twm/processed/mode1_v1/motherboard")
 H5_ROOT = Path("/media/yxma/Disk1/twm/data/motherboard")
 TASKS_JSON = Path("/tmp/tasks_local.json")
-CALIB_DIR = Path("/home/yxma/MultimodalData/twm/calibration/result")
 OUT = Path("/media/yxma/Disk1/twm/figures/dataset_figures/freeze_check")
 
 FPS = 30.0
@@ -115,11 +115,11 @@ def schedule_clips(a, b, T_total):
     return clips
 
 
-def load_cam_calibs():
+def load_cam_calibs(cdir):
     """Return {cam_idx: {T_mocap_to_cam, intrinsics}} keyed by H5 cam idx."""
     out = {}
     for cam_idx, name in CAM_CALIB_NAME.items():
-        d = json.loads((CALIB_DIR / name).read_text())
+        d = json.loads((cdir / name).read_text())
         out[cam_idx] = {
             "T_mocap_to_cam": np.array(d["T_mocap_to_cam"], np.float64),
             "intrinsics": d["intrinsics"],
@@ -211,15 +211,6 @@ def render_clip(date, ep_stem, side, freeze_a, freeze_b,
 
 def main():
     tasks = json.loads(TASKS_JSON.read_text())
-    cam_calibs = load_cam_calibs()
-    gel_L = np.array(
-        json.loads((CALIB_DIR / "T_gel_to_rigid_left.json").read_text())["gel_center_in_rigid_mm"],
-        np.float64,
-    )
-    gel_R = np.array(
-        json.loads((CALIB_DIR / "T_gel_to_rigid_right.json").read_text())["gel_center_in_rigid_mm"],
-        np.float64,
-    )
 
     OUT.mkdir(parents=True, exist_ok=True)
     for old in OUT.glob("*.gif"):
@@ -233,6 +224,14 @@ def main():
         date = date_dir.name
         if date == "2026-03-23" or not date_dir.is_dir():
             continue
+        # Per SESSION, not once for the whole task: this loop spans dates on
+        # either side of a recalibration, and one shared calibration would put
+        # the projected sensor tens of pixels off for every date but one.
+        cdir = calib_dir("motherboard", date=date)
+        cam_calibs = load_cam_calibs(cdir)
+        gel_L, gel_R = (np.array(
+            json.loads((cdir / f"T_gel_to_rigid_{s}.json").read_text())
+            ["gel_center_in_rigid_mm"], np.float64) for s in ("left", "right"))
         for h5 in sorted(date_dir.glob("episode_*.h5")):
             ep_stem = h5.stem
             with h5py.File(h5, "r") as f:
