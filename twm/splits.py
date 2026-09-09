@@ -54,14 +54,30 @@ def _bad_mask(entry: dict, T: int) -> np.ndarray:
 def build_splits(episodes, bad=None, seed: int = 0,
                  test_len: int = TEST_INTERVAL_FRAMES,
                  max_train_window: int = MAX_TRAIN_WINDOW,
-                 target: float = TARGET_TEST_FRACTION) -> dict:
+                 target: float = TARGET_TEST_FRACTION,
+                 hold_out=()) -> dict:
     """Carve held-out intervals. Deterministic given `episodes` and `seed`.
 
     `bad` is the `bad_frames.json` episodes dict, so an interval is never
     placed on a stretch of dropouts — a test window full of tracking loss
     measures the rig, not the model.
+
+    `hold_out` names episodes that are held out WHOLE regardless of length —
+    a session recorded as a validation set, say. Say it here rather than by
+    leaving the episode out of the file: a loader that cannot find a key
+    treats it as training data and reports nothing
+    (`ReactVideoDataset._split_filter`), so an omission is a silent leak
+    while this is a declaration.
     """
     guard = int(max_train_window) - 1
+    hold_out = set(hold_out)
+    known = {e["episode"] for e in episodes}
+    unknown = sorted(hold_out - known)
+    if unknown:
+        raise KeyError(
+            f"hold_out names {unknown}, which are not among the episodes given "
+            f"({len(known)} of them). A held-out key that matches nothing holds "
+            f"nothing out.")
     rng = np.random.default_rng(seed)
     need = 2 * test_len + 2 * guard
     out, n_test, n_guard, n_tot = {}, 0, 0, 0
@@ -69,7 +85,7 @@ def build_splits(episodes, bad=None, seed: int = 0,
     for e in sorted(episodes, key=lambda x: x["episode"]):
         key, N = e["episode"], int(e["n_frames"])
         n_tot += N
-        if N < need:
+        if key in hold_out or N < need:
             out[key] = {"n_frames": N, "whole": "test",
                         "test": [[0, N - 1]], "guard": []}
             n_test += N

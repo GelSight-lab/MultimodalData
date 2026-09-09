@@ -135,3 +135,13 @@ def test_a_corrupt_calibration_json_is_reported_as_corrupt_not_missing(tmp_path)
     msgs = problems(root)
     assert any("unparseable" in m for m in msgs)
     assert not any("missing calibration/calibration.json" in m for m in msgs)
+
+
+def test_an_episode_missing_from_splits_is_a_failure_not_a_warning(tmp_path):
+    """A loader treats an unlisted episode as training data and reports
+    nothing, so this cannot be advisory."""
+    root = make_folder(tmp_path)
+    (root / "splits.json").write_text(json.dumps(
+        {"episodes": {f"{DATE}/{EPS[0]}": {}}}))
+    msgs = problems(root)
+    assert any(EPS[1] in m and "splits.json" in m for m in msgs)

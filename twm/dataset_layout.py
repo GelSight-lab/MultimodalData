@@ -176,7 +176,15 @@ def check_layout(root, date: str, *, require_force: bool = True,
             covered = set((splits or {}).get("episodes") or {})
             for ep in rows_by_ep:
                 if f"{date}/{ep}" not in covered:
-                    rep.warnings.append(f"splits.json does not cover {date}/{ep}")
+                    # Not a warning. A loader that cannot find an episode in
+                    # splits.json treats it as TRAINING data and says nothing
+                    # (ReactVideoDataset._split_filter), so an uncovered
+                    # episode is a leak with no trace in any metric.
+                    rep.fail("splits.json",
+                             f"{date}/{ep} is not in splits.json — a loader "
+                             f"silently treats an unlisted episode as train. "
+                             f"Rebuild with build_splits.py, using --hold-out "
+                             f"if this session is held out whole.")
 
     _check_calibration(root, date, rep)
     return rep

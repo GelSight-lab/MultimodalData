@@ -23,12 +23,17 @@ def main() -> int:
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--test-len", type=int, default=TEST_INTERVAL_FRAMES)
     ap.add_argument("--max-train-window", type=int, default=MAX_TRAIN_WINDOW)
+    ap.add_argument("--hold-out", nargs="*", default=(), metavar="DATE/EPISODE",
+                    help="episodes held out WHOLE, e.g. a validation session. "
+                         "Leaving them out of the file instead makes a loader "
+                         "treat them as training data, silently.")
     ap.add_argument("--target", type=float, default=TARGET_TEST_FRACTION)
     a = ap.parse_args()
     root = Path(a.root)
     eps = [json.loads(l) for l in (root / "episodes.jsonl").read_text().splitlines() if l.strip()]
     bad = json.loads((root / "bad_frames.json").read_text())["episodes"]
     s = build_splits(eps, bad, seed=a.seed, test_len=a.test_len,
+                     hold_out=a.hold_out,
                      max_train_window=a.max_train_window, target=a.target)
     (root / "splits.json").write_text(json.dumps(s, indent=1))
     st = s["stats"]
