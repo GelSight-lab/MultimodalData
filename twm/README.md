@@ -137,7 +137,8 @@ the ~250 MB/s the full rig produces. The window now refreshes at 15 Hz
 about 66 ms. Before recording, close what you do not need, and watch the
 `queue` percentage in the `[REC]` log lines: it must stay well under 50 %.
 Recording without the window (`python -m twm.recorder soak`) removes the
-window's share entirely. If the dots sit off the sensors,
+window's share entirely, and `--raw_depth` removes the SDK's depth
+alignment (see [RealSense depth](#realsense-depth-aligned-now-or-later)). If the dots sit off the sensors,
 recalibrate (see [Camera Calibration](#camera-calibration)); do not record
 through a stale calibration expecting to fix it later.
 A black text strip under the images carries the status bar (episode state)
@@ -570,6 +571,55 @@ projected GelSight surface center. Accuracy is bounded by the calibration RMSE
 
 ---
 
+## RealSense depth: aligned now, or later
+
+A D415's depth comes from its infrared pair and its color from a different
+lens, so the two images do not line up. `rs.align` reprojects each depth
+frame onto the color grid. It is the single most expensive thing the
+recorder does per camera:
+
+| | one D415 reader thread |
+|---|---|
+| default (`rs.align` on) | 39.3 % of a core |
+| `--raw_depth` | 9.0 % of a core |
+
+Three cameras, so about 0.9 of a core is at stake — on a 4-core machine
+whose writer is already short of CPU.
+
+```bash
+python -m twm.data_collection --task <task> --raw_depth   # store depth as the sensor sees it
+python -m twm.realsense_align apply episode_000.h5 episode_000_aligned.h5
+```
+
+Alignment is a deterministic reprojection from the factory calibration, so
+doing it afterwards gives the same pixels. `twm/realsense_align.py`
+reimplements librealsense's `align_z_to_other`; on live frames from all
+three cameras it reproduces `rs.align` for **99.998 %** of pixels (63 to 101
+pixels of 4.6 million per camera, at depth discontinuities). Re-run that
+comparison any time with `python -m twm.realsense_align verify`.
+
+Every episode records `metadata.attrs["depth_aligned"]`. Episodes recorded
+before the flag existed have aligned depth and no attribute, which reads as
+`True`.
+
+### The calibration
+
+`twm/calibration/realsense/<serial>.json` holds each camera's depth and
+color intrinsics, the depth→color extrinsics and the depth scale, read from
+the camera at 640x480:
+
+```bash
+python -m twm.realsense_align export     # rewrite them from the attached cameras
+```
+
+Re-export after swapping a camera or changing the recording resolution:
+intrinsics belong to a stream profile, and aligning with another camera's
+extrinsics produces a depth map that looks plausible and is wrong
+everywhere. These are also the intrinsics `K` that pose estimators such as
+FoundationPose need, which no episode file carries yet.
+
+---
+
 ## HDF5 File Format
 
 Each episode is one `.h5` file. Structure:
@@ -579,7 +629,7 @@ episode_NNN.h5
 ├── metadata/               (attrs: fps, task, created_at, realsense_serials, gelsight_serials, arducam_config,
 │                            and at finalize: valid, invalid_reason, ended_by, frame_count, duration_s,
 │                            max_tick_gap_s, gap_count, queue_peak_fraction, writer_mean_mb_s,
-│                            sensor_restarts (JSON, per stream), ended_at)
+│                            sensor_restarts (JSON, per stream), depth_aligned, ended_at)
 ├── timestamps              float64 [T]           — Unix time per frame
 ├── realsense/
 │   ├── cam0/
@@ -620,7 +670,10 @@ episode_NNN.h5
 - Each `arducam/cam*` group stores `usb_path`, `serial`, `device_at_recording`,
   `reported_serial`, `position`, `width`, `height`, `fps`, and `pixel_format`
   attributes. `position=unknown` is valid until physical mapping is completed.
-- Depth values are in **millimetres** (uint16, range 0–65535).
+- Depth values are in **millimetres** (uint16, range 0–65535). They are on the
+  color camera's grid unless `metadata.attrs["depth_aligned"]` is False, in
+  which case they are still on the depth camera's own grid and need
+  `twm.realsense_align` (see above).
 - GelSight frames are raw; compute contact difference offline: `diff = frame - ref + 128` (clipped to uint8), where `ref` is a no-contact reference frame.
 
 ### Reading an episode
