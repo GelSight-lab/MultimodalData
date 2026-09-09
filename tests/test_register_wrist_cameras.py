@@ -70,8 +70,8 @@ def test_three_candidates_are_refused_rather_than_truncated(tmp_path):
 def test_an_existing_left_right_assignment_survives_a_re_registration(tmp_path):
     out = tmp_path / "wrist.json"
     out.write_text(json.dumps({"cameras": [
-        {"slot": "cam0", "id_path": "old-path", "position": "left"},
-        {"slot": "cam1", "id_path": "other", "position": "right"}]}))
+        {"slot": "cam0", "id_path": "pci-0:1:1.0", "position": "left"},
+        {"slot": "cam1", "id_path": "pci-0:2:1.0", "position": "right"}]}))
     cams = register_wrist_cameras(
         out, devices=rig(dev(12, "pci-0:1:1.0", "X"), dev(10, "pci-0:2:1.0", "Y")),
         realsense_serials=("143523020603", "219523020530"), gelsight_serials=GEL)
@@ -87,3 +87,20 @@ def test_a_realsense_is_excluded_by_vendor_even_with_an_unknown_serial(tmp_path)
                  dev(12, "pci-0:1:1.0", "S1"), dev(10, "pci-0:2:1.0", "S2")],
         realsense_serials=(), gelsight_serials=GEL)
     assert [c["id_path"] for c in cams] == ["pci-0:1:1.0", "pci-0:2:1.0"]
+
+
+def test_a_side_assignment_follows_its_camera_not_its_slot(tmp_path):
+    """Slots are handed out in port order, so adding the second camera can
+    move the first one from cam0 to cam1. Carrying `position` across by slot
+    would then label the new camera with the old one's side."""
+    out = tmp_path / "w.json"
+    out.write_text(json.dumps({"cameras": [
+        {"slot": "cam0", "id_path": "pci-0:2:1.0", "position": "left"}]}))
+    cams = register_wrist_cameras(
+        out, devices=rig(dev(12, "pci-0:1:1.0", "S"), dev(10, "pci-0:2:1.0", "S")),
+        realsense_serials=("143523020603", "219523020530"), gelsight_serials=GEL)
+    by_path = {c["id_path"]: c for c in cams}
+    # Half a mapping is not a mapping: adding the second camera clears both
+    # sides rather than leaving one named and one unknown.
+    assert [c["position"] for c in cams] == ["unknown", "unknown"]
+    assert by_path["pci-0:1:1.0"]["slot"] == "cam0"   # the new one took cam0

@@ -315,10 +315,14 @@ def register_wrist_cameras(path, *, devices=None, realsense_serials=None,
             f"Plug both in (and check they are not a RealSense or a GelSight), "
             f"then run this again. Nothing was written.{hint}")
 
+    # Keyed by PORT, not by slot. Slots are handed out in port order, so
+    # plugging in the second camera can move the first from cam0 to cam1 —
+    # and a side carried across by slot would then name the new camera with
+    # the old one's side.
     prior = {}
     try:
         for entry in json.loads(path.read_text()).get("cameras", []):
-            prior[entry.get("slot")] = entry
+            prior[entry.get("id_path")] = entry
     except (OSError, json.JSONDecodeError):
         pass
 
@@ -329,10 +333,17 @@ def register_wrist_cameras(path, *, devices=None, realsense_serials=None,
             "id_path": d.id_path,
             # No serial: see the docstring. The one it reports is recorded in
             # the episode anyway, as `reported_serial`.
-            "position": prior.get(slot, {}).get("position", "unknown"),
+            "position": prior.get(d.id_path, {}).get("position", "unknown"),
             "width": 640, "height": 480, "fps": 30, "pixel_format": "MJPG",
             "controls": dict(DEFAULT_WRIST_CONTROLS if controls is None else controls),
         })
+    # A side carried over for one camera and not the other is a half-finished
+    # mapping that reads as complete, so a mixed result is cleared rather than
+    # kept: adding the second camera means assigning the sides again.
+    sides = [c["position"] for c in cams]
+    if len(cams) == 2 and sides != ["unknown", "unknown"] and set(sides) != {"left", "right"}:
+        for c in cams:
+            c["position"] = "unknown"
     doc = {"_note": ("Written by `python -m twm.sensor_camera register`. Identity is "
                      "the USB port, not the serial: re-plugging into another port "
                      "means running that command again."),

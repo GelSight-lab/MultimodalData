@@ -1,17 +1,46 @@
 {
-  "_note": "Written by `python -m twm.sensor_camera register`. Identity is the USB port, not the serial: re-plugging into another port means running that command again.",
+  "_note": "Written by `python -m twm.sensor_camera register`, controls tuned by hand. Identity is the USB port, not the serial: re-plugging into another port means running register again. Controls are applied IN ORDER at every open, and the order matters - auto_exposure=1 before exposure_time_absolute, white_balance_automatic=0 before the temperature, because the manual value is read-only while its automatic is on. Everything that can drift is pinned so both cameras produce comparable frames and nothing changes mid-episode. exposure_time_absolute=330 is 33 ms, the ceiling at 30 fps. focus_absolute=68 is the driver default and must be re-checked once the cameras are mounted at their working distance.",
   "cameras": [
     {
       "slot": "cam0",
-      "id_path": "pci-0000:00:14.0-usb-0:2:1.0",
-      "position": "left",
+      "id_path": "pci-0000:00:14.0-usb-0:1:1.0",
+      "position": "unknown",
       "width": 640,
       "height": 480,
       "fps": 30,
       "pixel_format": "MJPG",
       "controls": {
         "exposure_dynamic_framerate": 0,
-        "power_line_frequency": 1
+        "power_line_frequency": 1,
+        "auto_exposure": 1,
+        "exposure_time_absolute": 330,
+        "gamma": 400,
+        "brightness": 40,
+        "white_balance_automatic": 0,
+        "white_balance_temperature": 4600,
+        "focus_automatic_continuous": 0,
+        "focus_absolute": 68
+      }
+    },
+    {
+      "slot": "cam1",
+      "id_path": "pci-0000:00:14.0-usb-0:2:1.0",
+      "position": "unknown",
+      "width": 640,
+      "height": 480,
+      "fps": 30,
+      "pixel_format": "MJPG",
+      "controls": {
+        "exposure_dynamic_framerate": 0,
+        "power_line_frequency": 1,
+        "auto_exposure": 1,
+        "exposure_time_absolute": 330,
+        "gamma": 400,
+        "brightness": 40,
+        "white_balance_automatic": 0,
+        "white_balance_temperature": 4600,
+        "focus_automatic_continuous": 0,
+        "focus_absolute": 68
       }
     }
   ]
