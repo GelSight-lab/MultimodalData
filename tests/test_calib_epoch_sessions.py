@@ -90,3 +90,33 @@ def test_the_status_line_names_the_session_epoch_not_the_task_default():
         assert describe("motherboard", "2026-05-10", "episode_000").startswith("calib 2026-05-12")
     finally:
         sys.path.pop(0)
+
+
+def test_the_viewer_picks_the_epoch_from_the_date_in_the_path():
+    """`python -m twm.visualize .../motherboard/2026-09-09/episode_000.h5`
+    must not silently get the May-12 task default."""
+    from twm.calib_epoch import calib_dir_for_path
+    sept = calib_dir_for_path("/media/yxma/Disk1/twm/data/motherboard/2026-09-09/episode_000.h5")
+    may = calib_dir_for_path("/media/yxma/Disk1/twm/data/motherboard/2026-05-10/episode_000.h5")
+    assert sept == calib_dir("motherboard", date="2026-09-09")
+    assert may == calib_dir("motherboard", date="2026-05-10")
+    assert sept != may
+
+
+def test_a_path_with_no_date_still_falls_back_to_the_task_default():
+    from twm.calib_epoch import calib_dir_for_path
+    assert calib_dir_for_path("/some/where/motherboard/episode_000.h5") == calib_dir("motherboard")
+
+
+def test_a_path_whose_session_is_undeclared_raises():
+    from twm.calib_epoch import calib_dir_for_path
+    with pytest.raises(KeyError, match="2027-03-04"):
+        calib_dir_for_path("/data/motherboard/2027-03-04/episode_000.h5")
+
+
+def test_cam_calib_accepts_an_epoch_name_as_an_escape_hatch():
+    from twm.calib_epoch import resolve_calibration
+    cams, gl, gr = resolve_calibration(["2026-06-26"], None, None,
+                                       "/data/motherboard/2026-09-09/ep.h5")
+    assert all(c.startswith(str(calib_dir("motherboard", date="2026-09-09"))) for c in cams)
+    assert gl.startswith(str(calib_dir("motherboard", date="2026-09-09")))

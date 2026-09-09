@@ -41,6 +41,7 @@ dataset already publishes.
 from __future__ import annotations
 
 import json
+import re
 from functools import lru_cache
 from pathlib import Path
 
@@ -186,6 +187,9 @@ def calib_dir(task: str, *, date: str | None = None,
     return _ok(d)
 
 
+_DATE_PART = re.compile(r"\d{4}-\d{2}-\d{2}")
+
+
 def calib_dir_for_path(p: str | Path, *, up_axis: str = "y") -> Path:
     """Epoch dir inferred from any path containing a task-name component.
 
@@ -199,10 +203,16 @@ def calib_dir_for_path(p: str | Path, *, up_axis: str = "y") -> Path:
     failure: raises, listing the known tasks, so the caller passes explicit
     calibration paths instead of silently viewing through the wrong epoch.
     """
-    parts = set(Path(p).parts) | set(Path(p).resolve().parts)
+    all_parts = list(Path(p).parts) + list(Path(p).resolve().parts)
+    parts = set(all_parts)
     hits = [t for t in CALIB_DIRS if t in parts]
     if len(hits) == 1:
-        return calib_dir(hits[0], up_axis=up_axis)
+        # A recording path carries its session date as a component
+        # (<task>/<YYYY-MM-DD>/episode_NNN.h5). Use it: the epoch is per
+        # session, and the task default is the wrong answer for any session
+        # recorded after the rig was recalibrated.
+        dates = [q for q in all_parts if _DATE_PART.fullmatch(q)]
+        return calib_dir(hits[0], date=dates[0] if dates else None, up_axis=up_axis)
     raise KeyError(
         f"cannot infer task from {str(p)!r} (matches: {hits or 'none'}); pass "
         f"explicit --cam_calib/--gel_* paths. Known tasks: {sorted(CALIB_DIRS)}")
@@ -211,6 +221,19 @@ def calib_dir_for_path(p: str | Path, *, up_axis: str = "y") -> Path:
 CAM_CALIB_FILES = ("T_mocap_to_cam_middle.json", "T_mocap_to_cam_left.json",
                    "T_mocap_to_cam_right.json")
 GEL_CALIB_FILES = ("T_gel_to_rigid_left.json", "T_gel_to_rigid_right.json")
+
+
+def _ok_epoch(d: Path, up_axis: str) -> Path:
+    """An epoch directory, checked for the up-axis convention like calib_dir."""
+    if not d.is_dir():
+        raise FileNotFoundError(f"calibration epoch directory missing: {d}")
+    got = "y"
+    f = d / "T_mocap_to_cam_middle.json"
+    if f.exists():
+        got = json.loads(f.read_text()).get("up_axis") or "y"
+    if got != up_axis:
+        raise ValueError(f"{d} is a {got}-up calibration but the caller needs {up_axis}-up.")
+    return d
 
 
 def resolve_calibration(cam_calib, gel_left, gel_right, path, *, up_axis: str = "y"):
@@ -230,11 +253,15 @@ def resolve_calibration(cam_calib, gel_left, gel_right, path, *, up_axis: str = 
     epoch = None
     if cam_calib and len(cam_calib) == 1 and not Path(cam_calib[0]).is_file():
         name = cam_calib[0]
-        if name not in CALIB_DIRS:
+        if name in EPOCH_DIRS:                    # an epoch, named by its date
+            epoch = _ok_epoch(EPOCH_DIRS[name], up_axis)
+        elif name in CALIB_DIRS:                  # a task: its default epoch
+            epoch = calib_dir(name, up_axis=up_axis)
+        else:
             raise KeyError(
-                f"--cam_calib {name!r} is neither a calibration file nor a known "
-                f"task. Known tasks: {sorted(CALIB_DIRS)}")
-        epoch = calib_dir(name, up_axis=up_axis)
+                f"--cam_calib {name!r} is neither a calibration file, a known "
+                f"task {sorted(CALIB_DIRS)}, nor a known epoch "
+                f"{sorted(EPOCH_DIRS)}.")
         cam_calib = None
     need_epoch = cam_calib is None or gel_left is None or gel_right is None
     if epoch is None and need_epoch:

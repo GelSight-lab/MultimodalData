@@ -61,14 +61,14 @@ class TestResolveCalibration(unittest.TestCase):
 
     def test_explicit_cam_paths_pass_through_and_gels_come_from_the_path_epoch(self):
         cams, gl, gr = resolve_calibration(
-            ["/a.json", "/b.json"], None, None, "/data/pushT/2026-06-26/e.h5")
+            ["/a.json", "/b.json"], None, None, "/data/pushT/e.h5")
         self.assertEqual(cams, ["/a.json", "/b.json"])
         self.assertEqual(gl, str(self.pt / GEL_FILES[0]))
         self.assertEqual(gr, str(self.pt / GEL_FILES[1]))
 
     def test_nothing_given_infers_the_epoch_from_the_path(self):
         cams, gl, gr = resolve_calibration(
-            None, None, None, "/data/motherboard/2026-05-12/e.h5")
+            None, None, None, "/data/motherboard/e.h5")
         self.assertEqual(cams, [str(self.mb / f) for f in CAM_FILES])
         self.assertEqual(gl, str(self.mb / GEL_FILES[0]))
 

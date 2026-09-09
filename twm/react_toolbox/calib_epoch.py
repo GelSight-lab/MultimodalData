@@ -41,6 +41,7 @@ dataset already publishes.
 from __future__ import annotations
 
 import json
+import re
 from functools import lru_cache
 from pathlib import Path
 
@@ -186,6 +187,9 @@ def calib_dir(task: str, *, date: str | None = None,
     return _ok(d)
 
 
+_DATE_PART = re.compile(r"\d{4}-\d{2}-\d{2}")
+
+
 def calib_dir_for_path(p: str | Path, *, up_axis: str = "y") -> Path:
     """Epoch dir inferred from any path containing a task-name component.
 
@@ -199,10 +203,16 @@ def calib_dir_for_path(p: str | Path, *, up_axis: str = "y") -> Path:
     failure: raises, listing the known tasks, so the caller passes explicit
     calibration paths instead of silently viewing through the wrong epoch.
     """
-    parts = set(Path(p).parts) | set(Path(p).resolve().parts)
+    all_parts = list(Path(p).parts) + list(Path(p).resolve().parts)
+    parts = set(all_parts)
     hits = [t for t in CALIB_DIRS if t in parts]
     if len(hits) == 1:
-        return calib_dir(hits[0], up_axis=up_axis)
+        # A recording path carries its session date as a component
+        # (<task>/<YYYY-MM-DD>/episode_NNN.h5). Use it: the epoch is per
+        # session, and the task default is the wrong answer for any session
+        # recorded after the rig was recalibrated.
+        dates = [q for q in all_parts if _DATE_PART.fullmatch(q)]
+        return calib_dir(hits[0], date=dates[0] if dates else None, up_axis=up_axis)
     raise KeyError(
         f"cannot infer task from {str(p)!r} (matches: {hits or 'none'}); pass "
         f"explicit --cam_calib/--gel_* paths. Known tasks: {sorted(CALIB_DIRS)}")
