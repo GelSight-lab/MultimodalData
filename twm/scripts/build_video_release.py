@@ -226,7 +226,13 @@ def main():
     if args.date: h5s = [p for p in h5s if p.parent.name == args.date]
     if args.episodes: h5s = [p for p in h5s if p.stem in set(args.episodes)]
     if not h5s:
-        print("no episodes", file=sys.stderr); sys.exit(1)
+        # "no episodes" alone reads as "nothing to do". For a session whose
+        # source recordings were deleted it is the opposite — the work is
+        # impossible, not finished — so say which it is.
+        from twm.react_preprocess.config import deleted_note
+        note = deleted_note(args.task, args.date)
+        print(note or f"no episodes under {root}", file=sys.stderr)
+        sys.exit(1)
     print(f"[release] {args.task}: {len(h5s)} episodes, {args.workers} workers", flush=True)
 
     work = [(args.task, str(p), args.force) for p in h5s]

@@ -46,6 +46,49 @@ H5_ROOTS = {
 # Sessions that predate the multi-camera rig and are not published.
 EXCLUDE_DATES = {"2026-03-23"}
 
+# ── sessions whose SOURCE recordings no longer exist ─────────────────────────
+# Deleted 2026-09-09 to make room for re-collection: 1.19 TB of raw HDF5 across
+# 38 episodes, by the operator's decision, knowing there was no other copy.
+#
+# What survives is the DERIVED release (`STAGE_ROOT`, and yxma/React on the
+# Hub): H.264/H.265 video, parquet and previews. That is a lossy re-encode, so
+# these sessions can still be READ and still be published, but they can never
+# be re-processed -- no new encoding, no new overlay after a recalibration, and
+# nothing that needs the original pixels.
+#
+# Declared here, not discovered from an empty directory, because "the files are
+# gone" and "you asked for the wrong path" produce the same empty glob and want
+# opposite responses from the caller.
+# 2026-05-15 is deliberately absent: that directory was removed too, but it
+# held no episodes, so it never shipped and there is nothing to explain.
+RAW_DELETED = {
+    ("motherboard", "2026-05-10"), ("motherboard", "2026-05-11"),
+    ("motherboard", "2026-05-19"),
+    ("pushT", "2026-06-18"),
+}
+RAW_DELETED_ON = "2026-09-09"
+
+
+def deleted_note(task: str, date: str | None = None) -> str | None:
+    """Why a source recording is missing, or None if it is not a deleted one.
+
+    Only consulted once a lookup has already come back empty, so it answers
+    "is this one of the deleted sessions", not "does this task have data" -- a
+    task that lost one session and later gained another still resolves the new
+    one normally and never reaches this. With no `date` it names every deleted
+    session of the task.
+    """
+    dates = sorted(d for t, d in RAW_DELETED if t == task)
+    if not dates:
+        return None
+    if date is not None and date not in dates:
+        return None
+    which = f"{task}/{date}" if date else f"{task} ({', '.join(dates)})"
+    return (f"the source HDF5 for {which} was deleted on {RAW_DELETED_ON} to "
+            f"make room for re-collection. The derived release survives in "
+            f"{STAGE_ROOT} and in {HF_REPO}, but it is a lossy re-encode: it "
+            f"can be read and republished, never re-processed.")
+
 HF_REPO = "yxma/React"
 
 

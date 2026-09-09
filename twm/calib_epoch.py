@@ -129,12 +129,26 @@ def current_epoch_dir() -> Path:
 # identical gel-to-rigid transform, so the two disagree only about where the
 # cameras were. Re-check with the projection comparison if the previews ever
 # look off.
+#
+# Every entry but 2026-09-09 now describes data whose SOURCE RECORDINGS ARE
+# GONE -- 1.19 TB of raw HDF5 deleted 2026-09-09 to make room for
+# re-collection (`react_preprocess.config.RAW_DELETED` is the declaration).
+# They stay because the derived release still ships for those sessions and
+# still has to name the extrinsics it was rendered through; deleting the
+# entries would leave the published previews unexplained. Their epoch
+# directories (epoch_2026-05-12, epoch_2026-06-26) stay for the same reason.
 CALIB_SESSIONS = {
-    ("motherboard", "2026-05-10"): "2026-05-12",
-    ("motherboard", "2026-05-11"): "2026-05-12",
-    ("motherboard", "2026-05-19"): "2026-05-12",
+    ("motherboard", "2026-05-10"): "2026-05-12",   # raw deleted; release only
+    ("motherboard", "2026-05-11"): "2026-05-12",   # raw deleted; release only
+    ("motherboard", "2026-05-19"): "2026-05-12",   # raw deleted; release only
     ("motherboard", "2026-09-09"): "2026-09-09",
-    ("pushT",       "2026-06-18"): "2026-06-26",
+    ("pushT",       "2026-06-18"): "2026-06-26",   # raw deleted; release only
+    # Re-collection, recorded from 17:11 on 2026-09-09 -- after the 07:41
+    # recalibration, so the recorder's own overlay ran on the 2026-09-09 epoch
+    # (the live recorder resolves through `current_epoch()`, and CURRENT_EPOCH
+    # has been 2026-09-09 since the solve). Not an inference from the date:
+    # what the rig was on is what the recording was made through.
+    ("pushT",       "2026-09-09"): "2026-09-09",
 }
 
 

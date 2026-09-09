@@ -29,7 +29,7 @@ import h5py
 import numpy as np
 
 from . import repair
-from .config import EXCLUDE_DATES, SIDES, WORLD_OFFSET
+from .config import EXCLUDE_DATES, SIDES, WORLD_OFFSET, deleted_note
 
 
 # ── pose alignment (unchanged from the validated build_episodes_from_h5) ─────
@@ -185,4 +185,12 @@ def discover(task: str, root: Path, date=None, episodes=None) -> list[Path]:
     if episodes:
         want = set(episodes)
         paths = [p for p in paths if p.stem in want]
+    if not paths:
+        # An empty result is the same shape whether the recordings were never
+        # there, the path is wrong, or they were deleted — and only the last
+        # one has an answer worth printing. Returning [] here let every caller
+        # "succeed" by doing nothing.
+        note = deleted_note(task, date)
+        if note:
+            raise FileNotFoundError(f"discover({task!r}, date={date!r}): {note}")
     return paths
