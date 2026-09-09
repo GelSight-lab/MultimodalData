@@ -36,6 +36,7 @@ class FakeRecorder:
 
 
 class FakeRig:
+    arducam_encoding = "bgr8"
     calls = 0
 
     def latest_poses(self):

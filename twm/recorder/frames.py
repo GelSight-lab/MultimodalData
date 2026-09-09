@@ -53,6 +53,27 @@ def full_rig_tick_nbytes(n_realsense: int = 3, n_gelsight: int = 2,
     return n_realsense * (color + depth) + (n_gelsight + n_arducam) * color
 
 
+def decode_arducam(frame) -> "np.ndarray":
+    """A wrist-camera frame as pixels, whichever way it was stored.
+
+    Episodes recorded with `arducam_encoding="mjpeg"` hold the bytes the
+    camera sent; older ones hold decoded BGR. Readers call this on both and
+    do not branch. A buffer that will not decode raises: cv2.imdecode
+    answers None, and passing that on turns a corrupt frame into a crash
+    three call sites away from the file that caused it.
+    """
+    import numpy as _np
+    a = _np.asarray(frame)
+    if a.ndim == 3:
+        return frame
+    import cv2 as _cv2
+    img = _cv2.imdecode(a.reshape(-1).astype(_np.uint8), _cv2.IMREAD_COLOR)
+    if img is None:
+        raise ValueError(
+            f"could not decode a {a.size}-byte wrist-camera buffer as JPEG")
+    return img
+
+
 def synthetic_tick(timestamp: float, seed: int = 0, n_realsense: int = 3,
                    n_gelsight: int = 2, n_arducam: int = 0) -> Tick:
     """A realistic-looking tick (gradient + noise) for benchmarks and tests.

@@ -73,7 +73,7 @@ def drivers(log, gelsight_fail=(), arducam_fail=False):
         gelsight=lambda serial, resolution, name: Stream(
             log, f"gs {name}", fail_start=name in gelsight_fail, ts=42.0),
         optitrack=lambda: Optitrack(log),
-        arducam=lambda config, device: Stream(
+        arducam=lambda config, device, encoding="bgr8": Stream(
             log, f"ard {device}", fail_start=arducam_fail,
             value=_ARDUCAM_VALUES.get(device, 1), ts=7.0),
         resolve_arducams=lambda path: [Cam("cam0"), Cam("cam1")],

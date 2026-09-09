@@ -74,6 +74,7 @@ class RecorderConfig:
     arducam_config_path: Optional[Path] = None
     show_projection: bool = True
     align_depth: bool = True   # False: store depth in the depth camera's own frame
+    arducam_encoding: str = "mjpeg"   # the camera's own JPEG; "bgr8" decodes at record time
     startup_timeout_s: float = 15.0
     settle_s: float = 1.0
     warmup_drop_frames: int = 10
@@ -109,6 +110,10 @@ def build_parser() -> argparse.ArgumentParser:
                         "monitors.")
     p.add_argument("--no_projection", action="store_true",
                    help="Disable the GelSight→camera projection overlay.")
+    p.add_argument("--arducam_raw", action="store_true",
+                   help="Decode the wrist cameras at record time and store raw BGR "
+                        "(the pre-2026-09 format). The default stores the camera's "
+                        "own MJPEG, which is ~28 MB/s and 0.3 of a core cheaper.")
     p.add_argument("--raw_depth", action="store_true",
                    help="Record depth in the depth camera's own frame instead of "
                         "aligning it to color on the fly (saves ~0.25 CPU core per "
@@ -159,6 +164,7 @@ def config_from_namespace(a: argparse.Namespace) -> RecorderConfig:
         arducam_config_path=Path(a.arducam_config) if a.arducam_config else None,
         show_projection=not a.no_projection,
         align_depth=not a.raw_depth,
+        arducam_encoding="bgr8" if a.arducam_raw else "mjpeg",
         writer=writer,
         disk=disk,
     )

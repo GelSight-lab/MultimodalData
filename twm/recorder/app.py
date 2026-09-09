@@ -121,7 +121,8 @@ class Recorder:
                                      self.config.fps,
                                      arducam_config=self.rig.arducam_config or None,
                                      n_realsense=len(self.config.realsense_serials),
-                                     depth_aligned=self.config.align_depth)
+                                     depth_aligned=self.config.align_depth,
+                                     arducam_encoding=self.rig.arducam_encoding)
         self._open = OpenEpisode(num, path, h5)
         self._restarts_at_start = self._sensor_restart_counts()
         self.capture.start_recording(h5)
@@ -329,6 +330,7 @@ class PreviewRenderer:
 def _gui_loop(config, recorder: Recorder, capture: CaptureLoop, rig,
               projection: Optional[Dict[str, Any]]) -> int:
     import cv2
+    from twm.recorder.frames import decode_arducam
     from twm.viz import build_preview_panel, draw_projection_overlay
 
     log.info("controls: s start | e end | r reset diff ref | p projection | q quit")
@@ -349,7 +351,10 @@ def _gui_loop(config, recorder: Recorder, capture: CaptureLoop, rig,
             list(tick.color), list(tick.gelsight), list(snap.gs_ref), snap.ot_poses,
             snap.recording, snap.frame_count, snap.elapsed,
             snap.writer.queue_items, snap.fps_meas, task_name=config.task,
-            arducam_frames=list(tick.arducam) or None,
+            # Decoded here, at the preview's own rate, rather than on the
+            # 30 Hz capture thread: the wrist frames are stored as the camera
+            # sent them and only the operator's screen needs pixels.
+            arducam_frames=[decode_arducam(a) for a in tick.arducam] or None,
             arducam_labels=arducam_labels)
 
     def overlay(panel, ot_poses):

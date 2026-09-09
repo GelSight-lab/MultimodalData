@@ -44,8 +44,12 @@ class RealisticStream(Stream):
     # pair landing on the same variant by aliasing is very unlikely.
     _N_VARIANTS = 16
 
-    def __init__(self, *a, **kw):
+    def __init__(self, *a, encoding="bgr8", **kw):
         super().__init__(*a, **kw)
+        # A fake that ignores the encoding it was asked for would have the
+        # rig declare MJPEG over raw pixels — which the rig now refuses, so
+        # honour it here the way the real driver does.
+        self.encoding = encoding
         rng = np.random.default_rng()
         self._color_variants = [self._make_variant(self.color, rng)
                                 for _ in range(self._N_VARIANTS)]
@@ -62,7 +66,13 @@ class RealisticStream(Stream):
 
     def _next_color(self):
         self._color_k += 1
-        return self._color_variants[self._color_k % self._N_VARIANTS]
+        frame = self._color_variants[self._color_k % self._N_VARIANTS]
+        if self.encoding == "mjpeg":
+            import cv2
+            ok, buf = cv2.imencode(".jpg", frame)
+            assert ok
+            return buf.reshape(-1)
+        return frame
 
     def get_color_frame(self, **kw):
         return self._next_color()
@@ -83,7 +93,8 @@ def fake_drivers(log):
         realsense=lambda serial, fps, align=True: RealisticStream(log, f"rs {serial}", value=int(serial[-1])),
         gelsight=lambda serial, resolution, name: RealisticStream(log, f"gs {name}", value=7),
         optitrack=lambda: Optitrack(log),
-        arducam=lambda config, device: RealisticStream(log, f"ard {device}", value=9),
+        arducam=lambda config, device, encoding="bgr8": RealisticStream(
+            log, f"ard {device}", value=9, encoding=encoding),
         resolve_arducams=lambda path: [_arducam_slot("cam0"), _arducam_slot("cam1")],
         sleep=lambda s: None)
 

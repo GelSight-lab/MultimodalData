@@ -18,6 +18,7 @@ from twm.recorder.writer import EpisodeWriter
 
 
 class FakeRig:
+    arducam_encoding = "bgr8"
     arducam_config = ()
 
     def __init__(self):
@@ -278,7 +279,7 @@ def test_run_closes_rig_when_startup_fails_after_open(tmp_path, monkeypatch):
         realsense=lambda serial, fps, align=True: _Stream(log, f"rs {serial}"),
         gelsight=lambda serial, resolution, name: _Stream(log, f"gs {name}"),
         optitrack=lambda: _Optitrack(log),
-        arducam=lambda config, device: _Stream(log, f"ard {device}"),
+        arducam=lambda config, device, encoding="bgr8": _Stream(log, f"ard {device}"),
         resolve_arducams=lambda path: [],
         sleep=lambda s: None,
     )

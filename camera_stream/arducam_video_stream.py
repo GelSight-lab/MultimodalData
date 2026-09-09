@@ -7,6 +7,7 @@ import time
 from typing import Callable
 
 import cv2
+import numpy as np
 
 from twm.sensor_camera import CameraSlot
 
@@ -20,9 +21,17 @@ class ArducamVideoStream:
         device: str,
         *,
         capture_factory: Callable = cv2.VideoCapture,
+        encoding: str = "bgr8",
     ):
+        if encoding not in ("bgr8", "mjpeg"):
+            raise ValueError(f"encoding must be 'bgr8' or 'mjpeg', got {encoding!r}")
         self.config = config
         self.device = device
+        # "mjpeg" hands back the camera's own JPEG, undecoded. The rig
+        # produces MJPEG either way; decoding it on the capture thread cost
+        # 0.3 of a core and turned 1.1 MB of JPEG into 1.8 MB/tick of raw
+        # pixels that BLOSC cannot compress.
+        self.encoding = encoding
         self._capture_factory = capture_factory
         self._capture = None
         self._frame = None
@@ -53,6 +62,10 @@ class ArducamVideoStream:
             ("fps", cv2.CAP_PROP_FPS, self.config.fps),
             ("buffer_size", cv2.CAP_PROP_BUFFERSIZE, 1),
         )
+        if self.encoding == "mjpeg":
+            # Ask for the raw stream. Set before the format probe below so the
+            # observed values describe the mode we will actually read in.
+            capture.set(cv2.CAP_PROP_CONVERT_RGB, 0)
         rejected = [name for name, prop, value in requested
                     if not capture.set(prop, value)]
         if rejected:
@@ -106,15 +119,42 @@ class ArducamVideoStream:
         if capture is not None:
             capture.release()
 
+    def _read_raw(self):
+        """One MJPEG buffer, flat, or (False, None) when none is ready."""
+        if not self._capture.grab():
+            return False, None
+        ok, buf = self._capture.retrieve()
+        if not ok or buf is None:
+            return False, None
+        return True, np.asarray(buf, np.uint8).reshape(-1)
+
     def _update(self):
         expected = (self.config.height, self.config.width, 3)
+        mjpeg = self.encoding == "mjpeg"
         try:
             while self._running.is_set():
-                ok, frame = self._capture.read()
+                ok, frame = self._read_raw() if mjpeg else self._capture.read()
                 if not ok or frame is None:
                     time.sleep(0.002)
                     continue
                 timestamp = time.time()
+                if mjpeg:
+                    # Two bytes of validation, not a decode: a stream that has
+                    # silently fallen out of MJPEG must not reach the writer as
+                    # a file nothing can open.
+                    if not (frame.size > 2 and frame[0] == 0xFF and frame[1] == 0xD8):
+                        with self._condition:
+                            self._error = RuntimeError(
+                                f"{self._tag()} returned {frame.size} bytes that do "
+                                f"not start with a JPEG marker")
+                            self._running.clear()
+                            self._condition.notify_all()
+                        return
+                    with self._condition:
+                        self._frame = frame.copy()
+                        self._frame_ts = timestamp
+                        self._condition.notify_all()
+                    continue
                 if frame.shape != expected:
                     with self._condition:
                         self._error = RuntimeError(

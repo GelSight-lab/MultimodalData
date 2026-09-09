@@ -40,6 +40,16 @@ def _frame_dataset(group, name, frame_shape, dtype):
                                 chunks=(1, *frame_shape), **_BLOSC)
 
 
+def _jpeg_dataset(group, name):
+    """Ragged uint8: one JPEG per tick, as the camera sent it.
+
+    No BLOSC — the bytes are already compressed, and a second pass over them
+    costs CPU the writer does not have to spare.
+    """
+    return group.create_dataset(name, shape=(0,), maxshape=(None,),
+                                dtype=h5py.vlen_dtype(np.uint8), chunks=(64,))
+
+
 def _scalar_dataset(group, name, width=None):
     shape = (0,) if width is None else (0, width)
     maxshape = (None,) if width is None else (None, width)
@@ -50,7 +60,8 @@ def _scalar_dataset(group, name, width=None):
 def create_episode_file(date_dir, episode_num, realsense_serials,
                         gelsight_serials, fps, task_name="",
                         arducam_config=None, include_legacy=True,
-                        n_realsense=None, depth_aligned=True):
+                        n_realsense=None, depth_aligned=True,
+                        arducam_encoding="bgr8"):
     """Create `episode_NNN.h5` with empty resizable datasets.
 
     `n_realsense` sets how many `realsense/cam{i}` groups are created
@@ -101,7 +112,13 @@ def create_episode_file(date_dir, episode_num, realsense_serials,
     if arducam_config:
         for c in arducam_config:
             g = f.create_group(f"arducam/{c.slot}")
-            _frame_dataset(g, "frames", (c.height, c.width, 3), np.uint8)
+            if arducam_encoding == "mjpeg":
+                _jpeg_dataset(g, "frames")
+            else:
+                _frame_dataset(g, "frames", (c.height, c.width, 3), np.uint8)
+            # How to read `frames`. Without it the two layouts are told apart
+            # by dataset shape, which is a guess dressed as a check.
+            g.attrs["encoding"] = arducam_encoding
             _scalar_dataset(g, "timestamps")
             g.attrs["usb_path"] = c.id_path
             g.attrs["serial"] = getattr(c, "serial", "")
@@ -157,8 +174,12 @@ def append_ticks(f: h5py.File, ticks: Sequence[Tick]) -> None:
         # because sensor_camera.validate_config sorts the two slots by name
         # before resolve_slots ever builds a Tick; nothing here re-checks it.
         for j, slot in enumerate(ARDUCAM_SLOTS):
-            _write_frames(_grow(f[f"arducam/{slot}/frames"], end), n,
-                          (t.arducam[j] for t in ticks))
+            ds = _grow(f[f"arducam/{slot}/frames"], end)
+            if ds.ndim == 1:                       # ragged: one JPEG per tick
+                for k, t in enumerate(ticks):
+                    ds[n + k] = np.asarray(t.arducam[j], np.uint8).reshape(-1)
+            else:
+                _write_frames(ds, n, (t.arducam[j] for t in ticks))
             _grow(f[f"arducam/{slot}/timestamps"], end)[n:] = [
                 t.arducam_ts[j] for t in ticks]
     if "optitrack" in f:

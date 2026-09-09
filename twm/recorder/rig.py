@@ -72,7 +72,7 @@ class Drivers:
     realsense: Callable[..., Any]          # (serial=, fps=, align=) -> stream
     gelsight: Callable[..., Any]           # (serial=, resolution=, name=) -> stream
     optitrack: Callable[[], Any]
-    arducam: Callable[..., Any]            # (config, device) -> stream
+    arducam: Callable[..., Any]            # (config, device, encoding=) -> stream
     resolve_arducams: Callable[[Optional[Path]], Sequence[Any]]
     sleep: Callable[[float], None] = time.sleep
 
@@ -190,13 +190,16 @@ class SensorRig:
                  optitrack, arducam: Sequence[Any] = (),
                  arducam_config: Sequence[Any] = (),
                  trackers: Sequence[str] = OT_TRACKERS,
-                 clock: Callable[[], float] = time.time):
+                 clock: Callable[[], float] = time.time, arducam_encoding: str = "bgr8"):
         self.realsense = list(realsense)
         self.gelsight_left = gelsight_left
         self.gelsight_right = gelsight_right
         self.optitrack = optitrack
         self.arducam = list(arducam)
         self.arducam_config = tuple(arducam_config)
+        # How the wrist frames in each Tick are encoded; the episode file
+        # records it so a reader never has to guess from dataset shape.
+        self._arducam_encoding = arducam_encoding
         self.trackers = tuple(trackers)
         self._clock = clock
         self._started: List[Any] = [*self.realsense, *self.arducam,
@@ -234,7 +237,8 @@ class SensorRig:
                     log.info("starting Arducam %s%s (%s) at %s", cam.slot,
                              f" {cam.serial}" if getattr(cam, "serial", "") else "",
                              cam.position, cam.device)
-                    arducam.append(start(drivers.arducam(cam.config, cam.device),
+                    arducam.append(start(drivers.arducam(cam.config, cam.device,
+                                                        encoding=config.arducam_encoding),
                                          timeout=config.startup_timeout_s))
 
             gelsight: Dict[str, Any] = {}
@@ -265,7 +269,8 @@ class SensorRig:
             raise
 
         rig = cls(realsense, gelsight["left"], gelsight["right"], optitrack,
-                  arducam, arducam_config)
+                  arducam, arducam_config,
+                  arducam_encoding=config.arducam_encoding)
         rig._started = started
         return rig
 
@@ -277,8 +282,9 @@ class SensorRig:
         try:
             for s in self.realsense:
                 s.get_color_frame(timeout=timeout_s)
-            for s in self.arducam:
-                s.get_frame_with_timestamp(timeout=timeout_s)
+            for i, s in enumerate(self.arducam):
+                frame, _ = s.get_frame_with_timestamp(timeout=timeout_s)
+                self._check_arducam_encoding(i, frame)
             self.gelsight_left.get_frame()
             self.gelsight_right.get_frame()
             end = self._clock() + settle_s
@@ -367,6 +373,28 @@ class SensorRig:
 
     def latest_poses(self) -> Dict[str, Any]:
         return {name: self.optitrack.get_latest_pose(name) for name in self.trackers}
+
+    def _check_arducam_encoding(self, index: int, frame) -> None:
+        """The frames must be shaped the way the episode file says they are.
+
+        The encoding is declared once, in the config, and reaches both the
+        driver and the file header. A driver that ignores it writes raw pixels
+        into a dataset labelled MJPEG, and nothing downstream can read them —
+        so compare what actually arrived, once, at startup.
+        """
+        want = self._arducam_encoding
+        got = "bgr8" if getattr(frame, "ndim", 0) == 3 else "mjpeg"
+        if got != want:
+            slot = (self.arducam_config[index].slot
+                    if index < len(self.arducam_config) else f"#{index}")
+            raise RuntimeError(
+                f"arducam {slot}: the recorder is configured for {want} but the "
+                f"driver produced {got} (shape {getattr(frame, 'shape', '?')}). "
+                f"An episode would claim an encoding its frames do not have.")
+
+    @property
+    def arducam_encoding(self) -> str:
+        return self._arducam_encoding
 
     def arducam_labels(self) -> List[str]:
         return [f"{c.slot} {getattr(c, 'serial', '') or c.id_path} {c.position}"

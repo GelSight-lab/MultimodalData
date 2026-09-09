@@ -202,3 +202,61 @@ def test_peek_frame_with_timestamp_never_waits():
     frame, ts = stream2.peek_frame_with_timestamp()
     assert frame is not None and frame[0, 0, 0] == 9 and ts is not None
     stream2.stop()
+
+
+class RawCapture(FakeCapture):
+    """A capture in CONVERT_RGB=0 mode: retrieve() hands back the MJPEG
+    buffer the camera sent, shaped (1, N) as OpenCV returns it."""
+
+    def grab(self):
+        return bool(self.frames)
+
+    def retrieve(self):
+        return (True, self.frames.pop(0).reshape(1, -1)) if self.frames else (False, None)
+
+
+def _jpeg(value):
+    ok, buf = cv2.imencode(".jpg", np.full((480, 640, 3), value, np.uint8))
+    assert ok
+    return buf.reshape(-1)
+
+
+def test_mjpeg_mode_hands_back_the_bytes_without_decoding_them():
+    """The whole point: no imdecode on the capture thread."""
+    payload = _jpeg(90)
+    cap = RawCapture([payload.copy() for _ in range(3)])
+    s = ArducamVideoStream(_slot(), "/dev/video0", capture_factory=lambda *a: cap,
+                           encoding="mjpeg")
+    s.start()
+    try:
+        frame, ts = s.get_frame_with_timestamp(timeout=2.0)
+    finally:
+        s.stop()
+    assert frame.ndim == 1 and frame.dtype == np.uint8
+    np.testing.assert_array_equal(frame, payload)
+    assert (cv2.CAP_PROP_CONVERT_RGB, 0) in cap.settings
+
+
+def test_mjpeg_mode_refuses_a_buffer_that_is_not_a_jpeg():
+    """A driver that hands on rubbish makes the writer store rubbish. The
+    refusal lands on start(), which waits for the first frame — a camera that
+    is not in MJPEG must not get as far as a recording."""
+    cap = RawCapture([np.frombuffer(b"nope-not-jpeg", np.uint8)])
+    s = ArducamVideoStream(_slot(), "/dev/video0", capture_factory=lambda *a: cap,
+                           encoding="mjpeg")
+    with pytest.raises(RuntimeError, match="JPEG"):
+        s.start()
+    s.stop()
+
+
+def test_the_default_still_decodes_to_bgr():
+    frame = np.full((480, 640, 3), 5, np.uint8)
+    cap = FakeCapture([frame.copy()])
+    s = ArducamVideoStream(_slot(), "/dev/video0", capture_factory=lambda *a: cap)
+    s.start()
+    try:
+        got, _ = s.get_frame_with_timestamp(timeout=2.0)
+    finally:
+        s.stop()
+    assert got.shape == (480, 640, 3)
+    assert (cv2.CAP_PROP_CONVERT_RGB, 0) not in cap.settings

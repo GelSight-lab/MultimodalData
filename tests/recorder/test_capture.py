@@ -10,6 +10,7 @@ from twm.recorder.writer import EpisodeWriter
 
 
 class FakeRig:
+    arducam_encoding = "bgr8"
     """Ticks at wall-clock time; `jump` adds an artificial gap once.
 
     `arducam_frames` defaults to empty so existing tests' capacity math

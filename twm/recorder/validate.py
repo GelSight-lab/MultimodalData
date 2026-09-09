@@ -20,7 +20,7 @@ import h5py
 import numpy as np
 
 from twm.recorder.episode import VALID_ENDINGS
-from twm.recorder.frames import COLOR_SHAPE, DEPTH_SHAPE
+from twm.recorder.frames import decode_arducam, COLOR_SHAPE, DEPTH_SHAPE
 from twm.recorder.schema import ARDUCAM_SLOTS, GELSIGHT_SIDES, count_optitrack_samples
 
 logger = logging.getLogger(__name__)
@@ -124,6 +124,11 @@ def _frame_streams(f: h5py.File):
             ds_path = f"arducam/{slot}/frames"
             if ds_path in f:
                 g = f[f"arducam/{slot}"]
+                if str(g.attrs.get("encoding", "bgr8")) == "mjpeg":
+                    # Ragged: one JPEG per tick, so there is no per-frame
+                    # shape to check. `None` means "length only".
+                    yield ds_path, f[ds_path], False, None, None
+                    continue
                 height = int(g.attrs.get("height", COLOR_SHAPE[0]))
                 width = int(g.attrs.get("width", COLOR_SHAPE[1]))
                 yield ds_path, f[ds_path], False, (height, width, 3), np.uint8
@@ -211,6 +216,10 @@ def check_shapes(f: h5py.File, stats: Dict[str, Any]) -> Check:
 
     for label, ds, is_depth, frame_shape, dtype in _frame_streams(f):
         checked += 1
+        if frame_shape is None:                 # ragged: one JPEG per tick
+            if ds.shape != (T,):
+                problems.append(f"{label}: {ds.shape[0]} JPEG frame(s) for {T} tick(s)")
+            continue
         expected_shape = (T, *frame_shape)
         if ds.shape != expected_shape:
             problems.append(f"{label}: shape {ds.shape} != {expected_shape}")
@@ -434,7 +443,10 @@ def check_content(f: h5py.File, stats: Dict[str, Any], sample_frames: int) -> Ch
     problems = []
     checked = []
     for label, ds, is_depth, _frame_shape, _dtype in _frame_streams(f):
-        frames = [np.asarray(ds[int(i)]) for i in idx]
+        # decode_arducam is a no-op on already-decoded frames, so the content
+        # check reads both encodings without branching on which it has.
+        frames = [decode_arducam(np.asarray(ds[int(i)])) if _frame_shape is None
+                  else np.asarray(ds[int(i)]) for i in idx]
         stds = [float(np.std(fr)) for fr in frames]
         low_std = [i for i, s in zip(idx, stds) if s <= 1.0]
         if low_std:

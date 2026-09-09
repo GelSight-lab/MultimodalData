@@ -121,13 +121,14 @@ class EpisodeStore:
     def create(self, episode_num: int, realsense_serials: Sequence[str],
                gelsight_serials: Sequence[str], fps: int,
                arducam_config=None, n_realsense=None,
-               depth_aligned=True) -> Tuple[Any, Path]:
+               depth_aligned=True, arducam_encoding="bgr8") -> Tuple[Any, Path]:
         f, path = create_episode_file(str(self.date_dir), episode_num,
                                       list(realsense_serials), list(gelsight_serials),
                                       fps, task_name=self.task,
                                       arducam_config=arducam_config,
                                       n_realsense=n_realsense,
-                                      depth_aligned=depth_aligned)
+                                      depth_aligned=depth_aligned,
+                                      arducam_encoding=arducam_encoding)
         return f, Path(path)
 
     def log(self, s: EpisodeSummary) -> Path:
