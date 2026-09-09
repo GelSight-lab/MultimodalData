@@ -53,6 +53,11 @@ class VideoDevice:
     id_path: str
     reported_serial: str
     is_capture: bool
+    # USB identity. The RealSense cameras report a DIFFERENT serial at the USB
+    # layer than librealsense does, so a serial cannot exclude them; the vendor
+    # id can.
+    vendor_id: str = ""
+    model: str = ""
 
 
 @dataclass(frozen=True)
@@ -181,6 +186,8 @@ def enumerate_capture_devices(context=None) -> list[VideoDevice]:
             id_path=str(device.get("ID_PATH") or ""),
             reported_serial=str(device.get("ID_SERIAL_SHORT") or ""),
             is_capture=":capture:" in capabilities,
+            vendor_id=str(device.get("ID_VENDOR_ID") or "").lower(),
+            model=str(device.get("ID_MODEL") or ""),
         ))
     return sorted(devices, key=lambda item: item.device)
 
@@ -221,6 +228,103 @@ def resolve_slots(
     if len({camera.device for camera in resolved}) != len(resolved):
         raise ArducamConfigError("configured slots resolved to the same capture device")
     return tuple(resolved)  # type: ignore[return-value]
+
+
+DEFAULT_WRIST_CONTROLS = {
+    # Lets the camera trade frame rate for exposure. Measured at 7.6 fps in
+    # room light on the generic USB pair, against the 30 they advertise.
+    "exposure_dynamic_framerate": 0,
+    # 50 Hz mains. 60 Hz anti-flicker over 50 Hz lighting beats at 10 Hz.
+    "power_line_frequency": 1,
+}
+
+
+# Intel. Its cameras are capture nodes too, and their USB-layer serial differs
+# from the one librealsense reports, so the vendor id is what excludes them.
+REALSENSE_VENDOR_ID = "8086"
+
+
+def _attached_realsense_serials() -> tuple:
+    """Serials of the RealSense cameras librealsense can see, or () if the
+    SDK is unavailable. They are capture nodes too and must not be mistaken
+    for wrist cameras."""
+    try:
+        import pyrealsense2 as rs
+    except ImportError:
+        return ()
+    return tuple(d.get_info(rs.camera_info.serial_number)
+                 for d in rs.context().query_devices())
+
+
+def register_wrist_cameras(path, *, devices=None, realsense_serials=None,
+                           gelsight_serials=None, controls=None):
+    """Write the wrist-camera config from whatever is plugged in right now.
+
+    A wrist camera is a capture node that is not a RealSense and not a
+    GelSight. Identity is the USB PORT, never the serial: the generic pair
+    both report 200901010001, so a serial would match both and resolving
+    would refuse. The port changes whenever someone re-plugs, which is why
+    this is a command rather than a file you edit.
+
+    Refuses unless exactly two are left, naming what it found. Anything else
+    is a rig that is not ready, and a config written from it would record one
+    camera twice or the wrong camera once.
+    """
+    from twm.recorder.config import GELSIGHT_SERIALS
+
+    path = Path(path)
+    devices = tuple(enumerate_capture_devices() if devices is None else devices)
+    rs_serials = set(_attached_realsense_serials() if realsense_serials is None
+                     else realsense_serials)
+    gel = set(GELSIGHT_SERIALS.values() if gelsight_serials is None else gelsight_serials)
+
+    candidates, seen = [], set()
+    for d in devices:
+        if not d.is_capture:
+            continue
+        if d.vendor_id == REALSENSE_VENDOR_ID or d.reported_serial in rs_serials:
+            continue
+        if d.reported_serial in gel:
+            continue
+        if d.id_path in seen:          # a device's second capture node
+            continue
+        seen.add(d.id_path)
+        candidates.append(d)
+    candidates.sort(key=lambda d: d.id_path)
+
+    if len(candidates) != 2:
+        found = ", ".join(f"{d.device} at {d.id_path}" for d in candidates) or "none"
+        raise ArducamConfigError(
+            f"expected exactly two wrist cameras, found {len(candidates)}: {found}. "
+            f"Plug both in (and check they are not a RealSense or a GelSight), "
+            f"then run this again. Nothing was written.")
+
+    prior = {}
+    try:
+        for entry in json.loads(path.read_text()).get("cameras", []):
+            prior[entry.get("slot")] = entry
+    except (OSError, json.JSONDecodeError):
+        pass
+
+    cams = []
+    for slot, d in zip(("cam0", "cam1"), candidates):
+        cams.append({
+            "slot": slot,
+            "id_path": d.id_path,
+            # No serial: see the docstring. The one it reports is recorded in
+            # the episode anyway, as `reported_serial`.
+            "position": prior.get(slot, {}).get("position", "unknown"),
+            "width": 640, "height": 480, "fps": 30, "pixel_format": "MJPG",
+            "controls": dict(DEFAULT_WRIST_CONTROLS if controls is None else controls),
+        })
+    doc = {"_note": ("Written by `python -m twm.sensor_camera register`. Identity is "
+                     "the USB port, not the serial: re-plugging into another port "
+                     "means running that command again."),
+           "cameras": cams}
+    validate_config(doc)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(doc, indent=2) + "\n")
+    return cams
 
 
 def save_position_mapping(path: str | Path, left_slot: str | None) -> None:
@@ -495,6 +599,34 @@ def identify(config_path: str | Path = DEFAULT_CONFIG_PATH) -> None:
         cv2.destroyAllWindows()
 
 
+def _cmd_list() -> int:
+    from twm.recorder.config import GELSIGHT_SERIALS
+    rs = set(_attached_realsense_serials())
+    gel = set(GELSIGHT_SERIALS.values())
+    for d in sorted(enumerate_capture_devices(), key=lambda x: x.id_path):
+        if not d.is_capture:
+            continue
+        kind = ("RealSense" if d.vendor_id == REALSENSE_VENDOR_ID
+                or d.reported_serial in rs else
+                "GelSight" if d.reported_serial in gel else "wrist candidate")
+        print(f"  {d.device:14s} {d.id_path:34s} serial={d.reported_serial:14s} {kind}")
+    return 0
+
+
+def _cmd_register(out: str) -> int:
+    import sys
+    try:
+        cams = register_wrist_cameras(out)
+    except ArducamConfigError as exc:
+        print(f"refused: {exc}", file=sys.stderr)
+        return 1
+    print(f"wrote {out}")
+    for c in cams:
+        print(f"  {c['slot']}: {c['id_path']}  position={c['position']}")
+    print("Assign left/right once mounted: twm.sensor_camera identify")
+    return 0
+
+
 def main(argv=None) -> int:
     import argparse
 
@@ -507,7 +639,15 @@ def main(argv=None) -> int:
     verify_parser.add_argument("--duration", type=float, default=5.0)
     verify_parser.add_argument("--output", default="/tmp/twm_arducam_verification.h5")
     verify_parser.add_argument("--force", action="store_true")
+    register_parser = subparsers.add_parser(
+        "register", help="write the wrist-camera config from what is plugged in")
+    register_parser.add_argument("--out", default=str(DEFAULT_CONFIG_PATH.with_name("wrist_usb.json")))
+    subparsers.add_parser("list", help="show every capture device the machine sees")
     args = parser.parse_args(argv)
+    if args.command == "list":
+        return _cmd_list()
+    if args.command == "register":
+        return _cmd_register(args.out)
     if args.command == "identify":
         identify(args.config)
         return 0
