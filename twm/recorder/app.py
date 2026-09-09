@@ -321,7 +321,7 @@ def _gui_loop(config, recorder: Recorder, capture: CaptureLoop, rig,
     log.info("controls: s start | e end | r reset diff ref | p projection | q quit")
     arducam_labels = rig.arducam_labels() or None
     show_projection = projection is not None
-    gui_dt = 1.0 / 30.0
+    gui_dt = 1.0 / float(getattr(config, 'gui_fps', 15))
 
     def draw_health(panel, snap):
         text, level = health_line(snap.writer, config.writer.warn_fraction,

@@ -25,6 +25,7 @@ from pathlib import Path
 from typing import Iterable, Optional
 
 import cv2
+import functools
 import numpy as np
 from PIL import Image
 from scipy.spatial.transform import Rotation
@@ -124,8 +125,17 @@ def pose7_to_T(pose_7) -> Optional[np.ndarray]:
     """7-vec (x,y,z in meters, qx,qy,qz,qw) → 4×4 pose matrix in millimeters.
 
     Returns None if the quaternion has zero norm (= no valid pose, e.g. an
-    OptiTrack frame where the body was never tracked).
+    OptiTrack frame where the body was never tracked). The same pose is
+    projected into every calibrated camera each frame, so the conversion is
+    memoised on the pose values (the live preview runs it at 30 Hz on a CPU
+    the writer needs).
     """
+    T = _pose7_to_T_cached(tuple(float(v) for v in pose_7))
+    return None if T is None else T.copy()
+
+
+@functools.lru_cache(maxsize=16)
+def _pose7_to_T_cached(pose_7: tuple) -> Optional[np.ndarray]:
     p = np.asarray(pose_7, np.float64)
     pos_mm = p[:3] * 1000.0
     q = p[3:]

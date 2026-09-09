@@ -124,14 +124,20 @@ The overlay is preview-only; nothing recorded depends on it. Press `p` to
 toggle it, or start with `--no_projection`.
 
 **CPU is the rig's scarcest resource.** The PC has 4 physical cores (8 with
-hyperthreading). Idle, the recorder already uses about 3 logical cores (two
-GelSight decoders at ~40 % each, RealSense and Arducam readers, the preview
-thread); recording adds the compressing writer. On 2026-09-09 an episode
-overloaded within 7 s with the same 4.9 MB/tick as passing episodes because
-the desktop (Chrome, VS Code, Remmina, gnome-shell) was using another core
-and the writer's compression slowed by 25 %. Before recording, close what you
-do not need, and watch the `queue` percentage in the `[REC]` log lines: it
-must stay well under 50 %. If the dots sit off the sensors,
+hyperthreading). A py-spy profile of a full-rig recording on 2026-09-09
+(motherboard episode 003, overloaded at 13.7 s) puts the demand at roughly:
+RealSense readers ~1 core (depth-to-color alignment plus copies, three
+cameras), GelSight decoders ~0.9 (8 MP MJPEG each at 18.75 fps), Arducam
+readers ~0.3, the writer's compression ~1, the window ~0.6 (`imshow` of a
+1280x768 panel is a third of it), capture ~0.2; the desktop (Chrome, VS
+Code, Remmina, gnome-shell) added ~1.2. That is more than the machine has,
+and the writer is what loses: its compression ran at 183 MB/s raw against
+the ~250 MB/s the full rig produces. The window now refreshes at 15 Hz
+(`gui_fps`), which halves its cost; the overlay then trails the sensor by
+about 66 ms. Before recording, close what you do not need, and watch the
+`queue` percentage in the `[REC]` log lines: it must stay well under 50 %.
+Recording without the window (`python -m twm.recorder soak`) removes the
+window's share entirely. If the dots sit off the sensors,
 recalibrate (see [Camera Calibration](#camera-calibration)); do not record
 through a stale calibration expecting to fix it later.
 A black text strip under the images carries the status bar (episode state)
