@@ -1,8 +1,9 @@
 # TWM Data Collection
 
 Tools for collecting and reviewing multimodal data for the Tactile World Model
-(TWM) project: a 30 Hz recorder for the full rig, an unattended soak test, an
-episode validator, calibration tools, and a viewer.
+(TWM) project: a 30 Hz recorder for the full rig (3 RealSense, 2 GelSight,
+2 Arducam wrist cameras, OptiTrack), an unattended soak test, an episode
+validator, a per-stream integrity check, calibration tools, and a viewer.
 
 ## Quick start
 
@@ -17,7 +18,11 @@ python -m twm.data_collection --task <task_name>
 #   p = toggle projection overlay   q = quit (saves an in-progress episode)
 
 # afterwards — check any episode
-python -m twm.recorder validate /media/yxma/Disk1/twm/data/<task>/<date>/episode_000.h5 --expected-duration <seconds>
+python -m twm.recorder validate  /media/yxma/Disk1/twm/data/<task>/<date>/episode_000.h5 --expected-duration <seconds>
+python -m twm.recorder integrity /media/yxma/Disk1/twm/data/<task>/<date>/episode_000.h5   # frame rate + lost frames per stream
+
+# replay it (add --cam_calib motherboard|pushT when the task has no calibration of its own)
+python -m twm.visualize /media/yxma/Disk1/twm/data/<task>/<date>/episode_000.h5 --check
 ```
 
 If you ever see black GelSight images or no wrist cameras in the preview, you
@@ -311,7 +316,7 @@ production writer and validates the file.
 `twm/recorder/`: `config` → `rig` (hardware, ordered start/stop) → `capture`
 (strict-rate thread) → `writer` (byte-bounded HDF5 thread) with `schema`
 (the only place that names a dataset), `preflight`, `monitor`, `episode`
-(paths + CSV log), `validate`, and `app` (episode state machine, window,
+(paths + CSV log), `validate`, `integrity`, and `app` (episode state machine, window,
 headless soak). `twm/data_collection.py` is a thin compatibility facade.
 
 Before merging any change under `twm/`, run `python -m twm.pipeline_guard`
@@ -381,10 +386,13 @@ choices:
 | Key | Action |
 |-----|--------|
 | `space` | Pause / resume |
-| `→` / `d` | Next frame (while paused) |
-| `←` / `a` | Previous frame (while paused) |
+| `→` / `d` | Next frame (pauses) |
+| `←` / `a` | Previous frame (pauses) |
+| `1` … `6` | Playback speed 1x, 2x, 5x, 10x, 25x, 50x |
+| `l` | Toggle looping at the end of the episode |
 | `r` | Reset GelSight diff reference to current frame |
 | `q` | Quit |
+| Frame slider | Seek anywhere in the episode |
 
 ---
 
@@ -517,7 +525,12 @@ Once calibrated, the projection overlay is **on by default**:
 ```bash
 python -m twm.data_collection --task <task_name>   # press 'p' to toggle; --no_projection to start off
 python -m twm.visualize path/to/episode_000.h5     # --no_projection to disable
+python -m twm.visualize path/to/episode_000.h5 --cam_calib pushT   # pick the epoch when the path names no known task
 ```
+
+The live recorder always uses `twm/calibration/result/` (the current rig);
+the viewer picks the epoch the episode was recorded in, see
+[Visualizing Episodes](#visualizing-episodes).
 
 A colored dot + XYZ axes is drawn on each calibrated camera view at the
 projected GelSight surface center. Accuracy is bounded by the calibration RMSE
@@ -533,7 +546,8 @@ Each episode is one `.h5` file. Structure:
 episode_NNN.h5
 ├── metadata/               (attrs: fps, task, created_at, realsense_serials, gelsight_serials, arducam_config,
 │                            and at finalize: valid, invalid_reason, ended_by, frame_count, duration_s,
-│                            max_tick_gap_s, gap_count, queue_peak_fraction, writer_mean_mb_s, ended_at)
+│                            max_tick_gap_s, gap_count, queue_peak_fraction, writer_mean_mb_s,
+│                            sensor_restarts (JSON, per stream), ended_at)
 ├── timestamps              float64 [T]           — Unix time per frame
 ├── realsense/
 │   ├── cam0/
@@ -562,6 +576,11 @@ episode_NNN.h5
 **Notes:**
 - `T` = number of recorder ticks (same across all camera streams within an episode). GelSight and
   Arducam frames each carry their own capture `timestamps`; align by nearest time, not by index.
+- A tick stores the sensor's newest frame. When a GelSight (~17 Hz) or a stalled
+  sensor had no new frame, the previous frame is stored again with its previous
+  timestamp, so a repeated `timestamps` value marks a held frame; use
+  `np.unique` on that stream's timestamps to get the sensor's own frames.
+  `python -m twm.recorder integrity` reports held and lost frames per stream.
 - `N` = number of OptiTrack samples, recorded at the motion capture system rate (typically higher than camera FPS). Use `timestamps` to align with camera frames.
 - Camera image data is BLOSC-LZ4 (bitshuffle) compressed and chunked per frame for fast
   random access. Import `hdf5plugin` before reading with h5py so the filter is
