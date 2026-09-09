@@ -42,6 +42,7 @@ import numpy as np
 sys.path.insert(0, "/home/yxma/MultimodalData")
 
 from twm.data_collection import REALSENSE_SERIALS    # noqa
+from twm.recorder.frames import decode_arducam  # noqa: E402
 from twm.viz import (
     DISPLAY_ORDER,
     GS_THUMB_W,
@@ -426,9 +427,17 @@ def build_one_preview(h5_path: Path, out_mp4: Path,
 
             opt_poses = optitrack_at(ot_lookup, float(cam_ts[f_idx_int]))
 
+            wrist = None
+            if "arducam" in f:
+                # Same tick index as everything else, so the wrist row is in
+                # step with the views and the tactile beside it.
+                wrist = [decode_arducam(f[f"arducam/{slot}/frames"][f_idx_int])
+                         for slot in sorted(f["arducam"])][:2]
             panel = build_preview_panel(
                 color_frames=color_frames,
                 gs_frames=[gs_L, gs_R],
+                arducam_frames=wrist,
+                arducam_labels=(["wrist left", "wrist right"] if wrist else None),
                 gs_ref=[gs_ref_L, gs_ref_R],
                 optitrack_poses=opt_poses,
                 recording=False,

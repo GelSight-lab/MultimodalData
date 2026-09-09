@@ -59,6 +59,7 @@ import cv2
 # a constant here defaulted every task to June-26.
 
 from twm.data_collection import make_preview, REALSENSE_SERIALS
+from twm.recorder.frames import decode_arducam
 from twm.viz import (
     project_gel_pose,
     load_calibrations,
@@ -96,7 +97,10 @@ class FramePrefetcher:
         color = [f[f"realsense/cam{i}/color"][idx] for i in range(3)]
         arducam = None
         if "arducam" in f:
-            arducam = [f[f"arducam/{slot}/frames"][idx] for slot in sorted(f["arducam"])][:2]
+            # Episodes from 2026-09 onward store the camera's own JPEG;
+            # decode_arducam is a no-op on the older raw-BGR ones.
+            arducam = [decode_arducam(f[f"arducam/{slot}/frames"][idx])
+                       for slot in sorted(f["arducam"])][:2]
             while len(arducam) < 2:
                 arducam.append(_blank.copy())
         # Tactile-latency compensation: pull gelsight from idx+lat so that

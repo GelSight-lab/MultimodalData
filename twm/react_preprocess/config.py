@@ -24,6 +24,10 @@ P01_SMOOTH_WIN = 30         # smoothing window when picking the p01 reference
 #   cam2 = 217222066989 -> middle)
 CAM_STREAM = {0: "view_right", 1: "view_left", 2: "view_middle"}
 GEL_STREAM = {"left": "tactile_left", "right": "tactile_right"}
+# The Arducam wrist cameras, by their H5 slot. Named by the side they are
+# mounted on, like every other stream, so a reader never has to know that
+# cam0 happens to be the left one.
+WRIST_STREAM = {"cam0": "wrist_left", "cam1": "wrist_right"}
 SIDES = ("left", "right")
 
 # ── world-frame corrections already baked into published poses ───────────────

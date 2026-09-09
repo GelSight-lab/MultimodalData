@@ -25,6 +25,9 @@ from typing import Dict, List, Optional, Sequence
 VIDEO_FILES = ("view_left.mp4", "view_middle.mp4", "view_right.mp4",
                "tactile_left.mp4", "tactile_right.mp4")
 DEPTH_FILES = ("depth_left.mkv", "depth_middle.mkv", "depth_right.mkv")
+# Present only for sessions recorded after the wrist cameras were wired in
+# (2026-09), so their absence is reported but does not fail a folder.
+WRIST_FILES = ("wrist_left.mp4", "wrist_right.mp4")
 CAM_CALIB = ("T_mocap_to_cam_left", "T_mocap_to_cam_middle", "T_mocap_to_cam_right")
 GEL_CALIB = ("T_gel_to_rigid_left.json", "T_gel_to_rigid_right.json")
 FORCE_COLUMNS = ("force_left_normal_n", "force_left_penetration_mm",
@@ -135,6 +138,13 @@ def check_layout(root, date: str, *, require_force: bool = True,
             for f in files:
                 if not (d / f).is_file():
                     rep.fail(name, f"{ep}: missing {name}/{date}/{ep}/{f}")
+        missing_wrist = [w for w in WRIST_FILES
+                         if not (root / "videos" / date / ep / w).is_file()]
+        if len(missing_wrist) == len(WRIST_FILES):
+            rep.warnings.append(f"{ep}: no wrist-camera videos (recorded before the "
+                                f"Arducams were wired in, or the build predates them)")
+        elif missing_wrist:
+            rep.fail("videos", f"{ep}: has one wrist video but not {missing_wrist[0]}")
         if require_previews and not (root / "previews" / date / f"{ep}.mp4").is_file():
             rep.fail("previews", f"{ep}: missing preview previews/{date}/{ep}.mp4")
 

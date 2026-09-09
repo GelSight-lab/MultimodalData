@@ -145,3 +145,16 @@ def test_an_episode_missing_from_splits_is_a_failure_not_a_warning(tmp_path):
         {"episodes": {f"{DATE}/{EPS[0]}": {}}}))
     msgs = problems(root)
     assert any(EPS[1] in m and "splits.json" in m for m in msgs)
+
+
+def test_one_wrist_video_without_the_other_is_a_failure(tmp_path):
+    """Half a pair means the build broke, not that the rig lacked cameras."""
+    root = make_folder(tmp_path)
+    (root / "videos" / DATE / EPS[0] / "wrist_left.mp4").write_bytes(b"x")
+    assert any("wrist_right.mp4" in m for m in problems(root))
+
+
+def test_no_wrist_videos_at_all_is_only_a_warning(tmp_path):
+    r = check_layout(make_folder(tmp_path), DATE)
+    assert r.ok
+    assert any("wrist" in w for w in r.warnings)

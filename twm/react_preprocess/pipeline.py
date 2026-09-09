@@ -22,7 +22,9 @@ import numpy as np
 
 from . import meta as meta_mod
 from . import repair
-from .config import CAM_STREAM, CHUNK, GEL_STREAM, SIDES, stage_dirs
+from .config import CAM_STREAM, CHUNK, GEL_STREAM, SIDES, WRIST_STREAM, stage_dirs
+from twm.recorder.frames import decode_arducam
+
 from .encode import depth_writer, rgb_writer
 from .h5io import open_episode
 from .tactile import process_side
@@ -50,6 +52,32 @@ def _encode_cameras(f, source, video_dir: Path) -> None:
             for s in range(0, source.T, CHUNK):
                 e = min(s + CHUNK, source.T)
                 w.write(ds[source.trim + s:source.trim + e])
+
+
+def _encode_wrist(f, source, video_dir: Path) -> int:
+    """The two Arducam wrist streams, decoded here rather than at record time.
+
+    Cut at `source.trim` like every other stream: a wrist video that starts
+    at frame 0 while the tactile beside it starts at the trim plays ahead of
+    it, and nothing in the file says so.
+    """
+    if "arducam" not in f:
+        return 0
+    written = 0
+    for slot, name in WRIST_STREAM.items():
+        key = f"arducam/{slot}/frames"
+        if key not in f:
+            continue
+        ds = f[key]
+        with rgb_writer(video_dir / f"{name}.mp4") as w:
+            for s in range(0, source.T, CHUNK):
+                e = min(s + CHUNK, source.T)
+                block = ds[source.trim + s:source.trim + e]
+                # decode_arducam is a no-op on the raw-BGR episodes recorded
+                # before 2026-09, so both layouts take this one path.
+                w.write(np.stack([decode_arducam(fr) for fr in block]))
+        written += 1
+    return written
 
 
 def _encode_depth(f, source, depth_dir: Path) -> int:
@@ -143,6 +171,7 @@ def build_episode(h5_path: Path, task: str, force: bool = False,
     with h5py.File(str(h5_path), "r") as f:
         if encode_video:
             _encode_cameras(f, source, video_dir)
+            _encode_wrist(f, source, video_dir)
         tactile = {
             side: process_side(f, side, source.align[side],
                                video_dir / f"{GEL_STREAM[side]}.mp4",
