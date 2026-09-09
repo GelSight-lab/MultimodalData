@@ -21,6 +21,9 @@ from .config import FPS, STAGE_ROOT
 
 MIN_SEGMENT_FRAMES = 16
 
+# react_preprocess copies poses straight from the HDF5, which is Y-up.
+UP_AXIS_BUILT = "y"
+
 
 def _sidecar_arrays(path: Path) -> tuple[dict, dict]:
     import torch
@@ -148,8 +151,12 @@ def build_task(task: str, stage_root: Path = STAGE_ROOT,
             "n_segments": n_seg,
             "total_bad_frames": report["total_bad_frames"],
         })
-        if "up_axis" in prior.get(key, {}):
-            rows[-1]["up_axis"] = prior[key]["up_axis"]
+        # Declared, always. react_preprocess copies poses straight out of the
+        # HDF5, which is Y-up as recorded; an existing row's value wins because
+        # a later stage may have rotated that episode. A row with no up_axis at
+        # all makes every consumer guess, and the guess put the DexForce target
+        # hundreds of mm off for 2026-09-09.
+        rows[-1]["up_axis"] = prior.get(key, {}).get("up_axis", UP_AXIS_BUILT)
 
     total = sum(e["n_frames"] for e in episodes.values())
     bad = sum(e["total_bad_frames"] for e in episodes.values())

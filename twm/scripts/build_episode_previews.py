@@ -336,11 +336,21 @@ def _release_poses(task: str, date: str, ep: str) -> dict:
                 if r.get("episode", "").endswith(ep):
                     got = r.get("up_axis")
                     break
+    # NOT the calibration file. Its `up_axis` describes the EXTRINSICS, not
+    # these poses, and reading it as a proxy is what shipped for 2026-09-09:
+    # curate wrote those rows without `up_axis`, the calibration said "z", and
+    # a Y-up parquet was rotated as if it were Z-up. The sensor axes stayed
+    # right (they come from the H5) and only the force-induced target moved,
+    # which reads as a calibration error rather than a frame bug. There is no
+    # third place this is written, so there is nothing left to fall back to.
     if got is None:
-        cj = _SR / task / "calibration" / "T_mocap_to_cam_middle.json"
-        if cj.exists():
-            got = json.loads(cj.read_text()).get("up_axis")
-    got = got or "y"
+        raise ValueError(
+            f"{task}/{date}/{ep}: nothing declares which up_axis the release "
+            f"poses are in — neither the parquet's twm.world_frame metadata nor "
+            f"the episodes.jsonl row. Guessing puts the DexForce target "
+            f"hundreds of mm away while every other overlay stays correct. Add "
+            f"up_axis to the episodes.jsonl row (react_preprocess writes poses "
+            f"straight from the H5, so a freshly built episode is 'y').")
     if got == "y":
         return out                      # already the frame this renderer uses
     return {k: _cp(v, to_zup=False) for k, v in out.items()}

@@ -71,3 +71,13 @@ def test_post_init_forces_empty_active_sensors_when_optitrack_disabled():
 def test_raw_depth_flag_turns_off_the_sdk_alignment():
     assert parse_args(["--task", "t"]).align_depth is True
     assert parse_args(["--task", "t", "--raw_depth"]).align_depth is False
+
+
+def test_the_wrist_config_flag_keeps_its_old_name_working():
+    """--arducam_config was the name while the wrist cameras were Arducams.
+    Both spellings must reach the same field, or a working command line
+    silently records the default pair."""
+    a = parse_args(["--task", "t", "--wrist_config", "/tmp/w.json"])
+    b = parse_args(["--task", "t", "--arducam_config", "/tmp/w.json"])
+    assert a.arducam_config_path == b.arducam_config_path == Path("/tmp/w.json")
+    assert parse_args(["--task", "t"]).arducam_config_path is None

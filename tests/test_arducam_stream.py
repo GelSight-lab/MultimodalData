@@ -67,7 +67,7 @@ def test_stream_configures_v4l2_and_publishes_copied_timestamped_frame():
     assert (cv2.CAP_PROP_FRAME_WIDTH, 640) in capture.settings
     assert (cv2.CAP_PROP_FRAME_HEIGHT, 480) in capture.settings
     assert (cv2.CAP_PROP_FPS, 30) in capture.settings
-    assert (cv2.CAP_PROP_BUFFERSIZE, 1) in capture.settings
+    assert (cv2.CAP_PROP_BUFFERSIZE, 2) in capture.settings
     assert np.all(second == 17)
     assert np.isfinite(timestamp)
     assert second_timestamp == timestamp
@@ -260,3 +260,59 @@ def test_the_default_still_decodes_to_bgr():
         s.stop()
     assert got.shape == (480, 640, 3)
     assert (cv2.CAP_PROP_CONVERT_RGB, 0) not in cap.settings
+
+
+def test_the_driver_requests_the_configured_buffer_depth():
+    """A single V4L2 buffer leaves the driver nowhere to put the next frame
+    while the app holds the current one. Measured on the generic USB wrist
+    cameras: 17.8 fps at depth 1, 30.0 at depth 2, against 30.02 from
+    v4l2-ctl driving the same camera directly."""
+    from twm.sensor_camera import CameraSlot
+    cap = FakeCapture([np.zeros((480, 640, 3), np.uint8)])
+    slot = CameraSlot("cam0", "usb-A", "unknown", 640, 480, 30, "MJPG")
+    assert slot.buffer_size == 2                      # the default, not 1
+    s = ArducamVideoStream(slot, "/dev/video0", capture_factory=lambda *a: cap)
+    s.start()
+    s.stop()
+    assert (cv2.CAP_PROP_BUFFERSIZE, 2) in cap.settings
+
+
+def test_a_slot_may_ask_for_a_deeper_buffer():
+    from twm.sensor_camera import CameraSlot
+    cap = FakeCapture([np.zeros((480, 640, 3), np.uint8)])
+    slot = CameraSlot("cam0", "usb-A", "unknown", 640, 480, 30, "MJPG", buffer_size=4)
+    s = ArducamVideoStream(slot, "/dev/video0", capture_factory=lambda *a: cap)
+    s.start()
+    s.stop()
+    assert (cv2.CAP_PROP_BUFFERSIZE, 4) in cap.settings
+
+
+def test_configured_v4l2_controls_are_applied_when_the_camera_opens():
+    """`exposure_dynamic_framerate=1` lets a camera drop to 7.6 fps in dim
+    light to buy exposure time. OpenCV cannot set it, so the slot declares it
+    and the driver applies it — otherwise a wrist camera silently records at
+    a quarter rate and only the integrity check notices, afterwards."""
+    from twm.sensor_camera import CameraSlot
+    calls = []
+    cap = FakeCapture([np.zeros((480, 640, 3), np.uint8)])
+    slot = CameraSlot("cam0", "usb-A", "unknown", 640, 480, 30, "MJPG",
+                      controls=(("exposure_dynamic_framerate", 0),
+                                ("power_line_frequency", 1)))
+    s = ArducamVideoStream(slot, "/dev/video7", capture_factory=lambda *a: cap,
+                           set_control=lambda dev, name, value: calls.append((dev, name, value)))
+    s.start()
+    s.stop()
+    assert calls == [("/dev/video7", "exposure_dynamic_framerate", 0),
+                     ("/dev/video7", "power_line_frequency", 1)]
+
+
+def test_a_camera_with_no_controls_declared_calls_nothing():
+    from twm.sensor_camera import CameraSlot
+    calls = []
+    cap = FakeCapture([np.zeros((480, 640, 3), np.uint8)])
+    s = ArducamVideoStream(CameraSlot("cam0", "usb-A"), "/dev/video7",
+                           capture_factory=lambda *a: cap,
+                           set_control=lambda *a: calls.append(a))
+    s.start()
+    s.stop()
+    assert calls == []

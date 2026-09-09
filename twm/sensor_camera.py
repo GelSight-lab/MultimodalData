@@ -32,6 +32,19 @@ class CameraSlot:
     fps: int = 30
     pixel_format: str = "MJPG"
     serial: str = ""          # preferred identity; id_path is the fallback
+    # V4L2 buffer depth. NOT 1: with a single buffer the driver has nowhere to
+    # put the next frame while the reader holds the current one, and drops it.
+    # Measured on the generic USB wrist cameras — 17.8 fps at depth 1, 30.0 at
+    # depth 2, against 30.02 fps from v4l2-ctl driving the same camera. The
+    # extra frame of staleness it can cost is recorded, not assumed: every
+    # frame carries the timestamp of its own grab.
+    buffer_size: int = 2
+    # V4L2 controls to apply on open, as (name, value) pairs. OpenCV can
+    # set only a handful of properties; the ones that silently cost frames
+    # live here. `exposure_dynamic_framerate=1` lets a camera trade frame
+    # rate for exposure — measured at 7.6 fps in dim light on the generic
+    # USB wrist cameras, against the 30 they advertise.
+    controls: tuple = ()
 
 
 @dataclass(frozen=True)
@@ -124,6 +137,9 @@ def validate_config(raw: Mapping) -> tuple[CameraSlot, CameraSlot]:
             fps=_positive_int(entry, "fps", 30),
             pixel_format=pixel_format,
             serial=serial,
+            buffer_size=_positive_int(entry, "buffer_size", 2),
+            controls=tuple((str(k), int(v)) for k, v in
+                           (entry.get("controls") or {}).items()),
         ))
 
     if {slot.slot for slot in slots} != {"cam0", "cam1"}:

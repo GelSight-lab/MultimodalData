@@ -125,8 +125,13 @@ def build_parser() -> argparse.ArgumentParser:
                    help="Record without OptiTrack (no ROS needed); pose datasets stay empty.")
     p.add_argument("--no_arducam", action="store_true",
                    help="Run without the two sensor-mounted Arducams.")
-    p.add_argument("--arducam_config", default=None,
-                   help="Arducam JSON config (default twm/config/arducam.json).")
+    p.add_argument("--wrist_config", "--arducam_config", default=None,
+                   dest="wrist_config",
+                   help="Wrist-camera JSON config: which two capture devices to "
+                        "record, how to identify them, and any V4L2 controls they "
+                        "need. Default twm/config/arducam.json (the Arducams); "
+                        "twm/config/wrist_usb.json is the generic USB pair. "
+                        "--arducam_config is the old name for this flag.")
     p.add_argument("--data_dir", default=None,
                    help=f"Episode root (default {DATA_DIR}).")
     p.add_argument("--queue_seconds", type=float, default=None,
@@ -161,7 +166,7 @@ def config_from_namespace(a: argparse.Namespace) -> RecorderConfig:
         active_sensors=() if a.no_optitrack else ACTIVE_SENSOR_CHOICES[a.active_sensors],
         use_optitrack=not a.no_optitrack,
         use_arducam=not a.no_arducam,
-        arducam_config_path=Path(a.arducam_config) if a.arducam_config else None,
+        arducam_config_path=Path(a.wrist_config) if a.wrist_config else None,
         show_projection=not a.no_projection,
         align_depth=not a.raw_depth,
         arducam_encoding="bgr8" if a.arducam_raw else "mjpeg",

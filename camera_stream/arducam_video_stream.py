@@ -12,6 +12,18 @@ import numpy as np
 from twm.sensor_camera import CameraSlot
 
 
+def _v4l2_set_control(device: str, name: str, value) -> None:
+    """One V4L2 control, through v4l2-ctl. Refuses quietly-failing controls:
+    a camera that ignores `exposure_dynamic_framerate` records at a quarter
+    rate and nothing says so until the integrity check, afterwards."""
+    import subprocess
+    r = subprocess.run(["v4l2-ctl", "-d", str(device), "--set-ctrl",
+                        f"{name}={value}"], capture_output=True, text=True, timeout=10)
+    if r.returncode != 0:
+        raise RuntimeError(
+            f"{device}: could not set {name}={value} ({r.stderr.strip() or r.stdout.strip()})")
+
+
 class ArducamVideoStream:
     """Continuously publish the freshest frame from one resolved Arducam."""
 
@@ -22,6 +34,7 @@ class ArducamVideoStream:
         *,
         capture_factory: Callable = cv2.VideoCapture,
         encoding: str = "bgr8",
+        set_control: Callable | None = None,
     ):
         if encoding not in ("bgr8", "mjpeg"):
             raise ValueError(f"encoding must be 'bgr8' or 'mjpeg', got {encoding!r}")
@@ -33,6 +46,7 @@ class ArducamVideoStream:
         # pixels that BLOSC cannot compress.
         self.encoding = encoding
         self._capture_factory = capture_factory
+        self._set_control = set_control or _v4l2_set_control
         self._capture = None
         self._frame = None
         self._frame_ts = None
@@ -60,8 +74,10 @@ class ArducamVideoStream:
             ("width", cv2.CAP_PROP_FRAME_WIDTH, self.config.width),
             ("height", cv2.CAP_PROP_FRAME_HEIGHT, self.config.height),
             ("fps", cv2.CAP_PROP_FPS, self.config.fps),
-            ("buffer_size", cv2.CAP_PROP_BUFFERSIZE, 1),
+            ("buffer_size", cv2.CAP_PROP_BUFFERSIZE, self.config.buffer_size),
         )
+        for name, value in getattr(self.config, "controls", ()):
+            self._set_control(self.device, name, value)
         if self.encoding == "mjpeg":
             # Ask for the raw stream. Set before the format probe below so the
             # observed values describe the mode we will actually read in.
