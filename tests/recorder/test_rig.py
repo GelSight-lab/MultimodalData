@@ -254,3 +254,25 @@ def test_streams_without_a_capture_clock_are_never_restarted():
     assert tick.gelsight_ts == (tick.timestamp, tick.timestamp)
     assert rig.sensor_status()["gelsight_left"]["restarts"] == 0
     assert "restart" not in " ".join(log)
+
+
+def test_startup_log_names_the_side_of_every_camera(caplog):
+    import logging
+    from twm.recorder.config import REALSENSE_SERIALS
+    log = []
+    cams = drivers(log)
+    with caplog.at_level(logging.INFO, logger="twm.recorder"):
+        rig = SensorRig.open(config(realsense_serials=REALSENSE_SERIALS[:2]), cams)
+    rig.close()
+    text = "\n".join(caplog.messages)
+    assert f"starting RealSense cam0 {REALSENSE_SERIALS[0]} (right)" in text
+    assert f"starting RealSense cam1 {REALSENSE_SERIALS[1]} (left)" in text
+    assert "starting Arducam cam0 (unknown) at /dev/cam0" in text
+    assert "starting GelSight left L" in text
+    assert "starting GelSight right R" in text
+
+
+def test_realsense_position_is_unknown_for_a_foreign_serial():
+    from twm.recorder.config import realsense_position
+    assert realsense_position("143322063538") == "right"
+    assert realsense_position("nope") == "unknown"

@@ -36,12 +36,11 @@ from twm.force_overlay import draw_force_halo
 # Display configuration
 # ──────────────────────────────────────────────────────────────────────────────
 
-# H5 stores cameras in REALSENSE_SERIALS order:
-#   cam0 = serial 143...538 (right)
-#   cam1 = serial 104...574 (left)
-#   cam2 = serial 217...989 (middle)
-# We display them in spatial left → right order, which means cam1, cam2, cam0.
-DISPLAY_ORDER: list[int] = [1, 2, 0]
+# H5 stores cameras in REALSENSE_SERIALS order (cam0 right, cam1 left, cam2
+# middle: `twm.recorder.config.REALSENSE_POSITIONS`). We display them in
+# spatial left → right order, i.e. cam1, cam2, cam0.
+from twm.recorder.config import REALSENSE_POSITIONS as _POSITIONS
+DISPLAY_ORDER: list[int] = [_POSITIONS.index(p) for p in ("left", "middle", "right")]
 DISPLAY_LABELS: list[str] = ["left cam", "middle cam", "right cam"]
 # Inverse mapping: H5 cam_idx → its slot (0, 1, or 2) on the displayed panel.
 DISPLAY_POSITION: dict[int, int] = {cam_idx: pos for pos, cam_idx in enumerate(DISPLAY_ORDER)}
@@ -50,9 +49,7 @@ DISPLAY_POSITION: dict[int, int] = {cam_idx: pos for pos, cam_idx in enumerate(D
 # task's epoch, from `calib_epoch`). Kept here so visualization tools don't have to
 # repeat the mapping.
 CAM_CALIB_NAME: dict[int, str] = {
-    0: "T_mocap_to_cam_right.json",
-    1: "T_mocap_to_cam_left.json",
-    2: "T_mocap_to_cam_middle.json",
+    i: f"T_mocap_to_cam_{p}.json" for i, p in enumerate(_POSITIONS)
 }
 
 # Layout constants — match what the live recording UI used historically.

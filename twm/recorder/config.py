@@ -11,6 +11,20 @@ REALSENSE_SERIALS: Tuple[str, ...] = (
     "104122062574",
     "217222066989",
 )
+# Where each RealSense stands, in REALSENSE_SERIALS order (cam0, cam1, cam2).
+# The single source for "which camera is this": logs, the preview labels and
+# the calibration file names all derive from it.
+REALSENSE_POSITIONS: Tuple[str, ...] = ("right", "left", "middle")
+
+
+def realsense_position(serial: str) -> str:
+    """'right' / 'left' / 'middle' for a rig camera, 'unknown' otherwise."""
+    try:
+        return REALSENSE_POSITIONS[REALSENSE_SERIALS.index(serial)]
+    except ValueError:
+        return "unknown"
+
+
 GELSIGHT_SERIALS: Dict[str, str] = {
     # The units on the rig as of 2026-09-06 (confirmed by the operator).
     # 28YGZL6K / 2BGLKZNT were the 2026-08-07 replacements; not attached now.

@@ -14,7 +14,7 @@ from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 
-from twm.recorder.config import OT_TRACKERS, RecorderConfig
+from twm.recorder.config import OT_TRACKERS, RecorderConfig, realsense_position
 from twm.recorder.frames import COLOR_SHAPE, Tick
 
 log = logging.getLogger("twm.recorder")
@@ -219,8 +219,8 @@ class SensorRig:
 
         try:
             realsense = []
-            for serial in config.realsense_serials:
-                log.info("starting RealSense %s", serial)
+            for i, serial in enumerate(config.realsense_serials):
+                log.info("starting RealSense cam%d %s (%s)", i, serial, realsense_position(serial))
                 realsense.append(start(drivers.realsense(serial=serial, fps=config.fps)))
                 drivers.sleep(0.5)            # stagger: USB bandwidth contention
 
@@ -228,12 +228,15 @@ class SensorRig:
             if config.use_arducam:
                 arducam_config = tuple(drivers.resolve_arducams(config.arducam_config_path))
                 for cam in arducam_config:
-                    log.info("starting Arducam %s at %s", cam.slot, cam.device)
+                    log.info("starting Arducam %s%s (%s) at %s", cam.slot,
+                             f" {cam.serial}" if getattr(cam, "serial", "") else "",
+                             cam.position, cam.device)
                     arducam.append(start(drivers.arducam(cam.config, cam.device),
                                          timeout=config.startup_timeout_s))
 
             gelsight: Dict[str, Any] = {}
             for side, serial in config.gelsight_serials.items():
+                log.info("starting GelSight %s %s", side, serial)
                 stream = drivers.gelsight(serial=serial, resolution=(640, 480), name=side)
                 try:
                     start(stream)
