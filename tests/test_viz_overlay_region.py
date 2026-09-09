@@ -37,3 +37,18 @@ def test_status_text_lives_in_a_strip_below_the_images():
     assert (wrist[40:] == 90).all()                       # no status text on the wrist image (label at top only)
     strip = panel[3 * RS_THUMB_H:]
     assert strip.max() > 0                                # the status bar is drawn in the strip
+
+
+def test_panel_constants_match_what_build_preview_panel_returns():
+    """PANEL_H is fed straight to ffmpeg as the raw-frame size by several
+    builders. When the status strip was added and the constant was not,
+    every preview encoded 990 frames of garbage out of 900 good panels and
+    the decode check refused to publish them."""
+    from twm import viz
+    color = [np.zeros((480, 640, 3), np.uint8) for _ in range(3)]
+    gs = [np.zeros((480, 640, 3), np.uint8) for _ in range(2)]
+    two_row = viz.build_preview_panel(color, gs, gs, {}, False, 0, 0.0)
+    assert two_row.shape == (viz.PANEL_H, viz.PANEL_W, 3)
+    three_row = viz.build_preview_panel(color, gs, gs, {}, False, 0, 0.0,
+                                        arducam_frames=gs, arducam_labels=["a", "b"])
+    assert three_row.shape == (viz.PANEL_H + viz.RS_THUMB_H, viz.PANEL_W, 3)

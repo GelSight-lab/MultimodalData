@@ -152,11 +152,16 @@ def draw_world_gizmo_on_panel(panel, project_cams, up_axis_of_source):
     return panel
 
 
-def _load_proj_calibs(task: str):
-    """Extrinsics for THIS task's calibration epoch, verified on load."""
-    check_epoch(task)                       # refuses the wrong epoch loudly
-    cdir = calib_dir(task)
-    print(f"  calibration epoch {epoch_of(task)}  ({cdir.name})")
+def _load_proj_calibs(task: str, date: str | None = None):
+    """Extrinsics for the epoch THIS SESSION declares, verified on load.
+
+    Keyed by (task, date), not by task: the rig was recalibrated between
+    sessions, so two dates of the same task can need different extrinsics —
+    2026-09-09 motherboard is the June-26 epoch, the May dates are May-12.
+    """
+    check_epoch(task, date)                 # refuses the wrong epoch loudly
+    cdir = calib_dir(task, date=date)
+    print(f"  calibration epoch {epoch_of(task, date)}  ({cdir.name})")
     up_axis = (json.loads((cdir / "T_mocap_to_cam_middle.json").read_text())
                .get("up_axis") or "y")
     cam_calib = [
@@ -454,7 +459,7 @@ def build_one_preview(h5_path: Path, out_mp4: Path,
             ep_f = f_idx_int - trim_offset
             tags = sorted({k for a, b, k in flagged if a <= ep_f <= b})
             if tags:
-                cv2.rectangle(panel, (0, 0), (PANEL_W - 1, PANEL_H - 1),
+                cv2.rectangle(panel, (0, 0), (panel.shape[1] - 1, panel.shape[0] - 1),
                               (0, 0, 255), 2)
                 cv2.putText(panel, "FLAGGED " + ",".join(tags)
                             + "  (excluded from training segments)",
@@ -531,7 +536,7 @@ def build_one_preview(h5_path: Path, out_mp4: Path,
     cmd = [
         "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
         "-f", "rawvideo", "-pix_fmt", "bgr24",
-        "-s", f"{PANEL_W}x{PANEL_H}",
+        "-s", f"{panels[0].shape[1]}x{panels[0].shape[0]}",   # from the panel, not a constant
         "-r", f"{output_fps}",
         "-i", "-",
         "-c:v", "libx264",
@@ -618,7 +623,7 @@ def main():
           f"(first {args.clip_s:.0f}s of post-trim data @ {args.speed:.1f}x speed -> "
           f"{args.clip_s / args.speed:.0f}s output)", flush=True)
 
-    project_cams, glc, grc, proj_up_axis = _load_proj_calibs(args.task)
+    project_cams, glc, grc, proj_up_axis = _load_proj_calibs(args.task, args.date)
     # The direction GelSight Mini's normal force acts along, in the SENSOR's
     # own frame. Task-specific because each rig has its own gel calibration.
     from force_recovery.dexforce import gel_axis as _gax

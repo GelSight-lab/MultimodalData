@@ -54,13 +54,62 @@ RELEASE = Path("/media/yxma/Disk1/twm/release")
 # Verified equal to the published `data/<task>/calibration/` for both tasks.
 CALIB_DIRS = {
     "motherboard": REPO / "calibration" / "result backup",   # May-12 epoch
-    "pushT":       REPO / "calibration" / "result",          # June-26 epoch
+    "pushT":       REPO / "calibration" / "result_pushT_2026-06-26",  # June-26 epoch
 }
 EXPECTED_EPOCH = {"motherboard": "2026-05-12", "pushT": "2026-06-26"}
 
+# The epochs themselves, named by the date each was MEASURED.
+EPOCH_DIRS = {
+    "2026-05-12": REPO / "calibration" / "result backup",
+    "2026-06-26": REPO / "calibration" / "result_pushT_2026-06-26",
+    "2026-09-09": REPO / "calibration" / "result",
+}
 
-def calib_dir(task: str, *, up_axis: str | None = None) -> Path:
-    """Directory of camera extrinsics valid for `task`.
+# Which epoch each RECORDING SESSION belongs to. `task -> epoch` cannot answer
+# this. The cameras were recalibrated between sessions, and a calibration is
+# measured near its sessions rather than before them: the May recordings are
+# covered by the May-12 measurement, pushT's 2026-06-18 by the June-26 one.
+# Date order therefore does not determine the answer, so a session declares
+# its epoch and nothing infers it.
+#
+# The 2026-09-09 motherboard session was recorded through the June-26 epoch
+# (the recorder's live overlay was running on it) and is declared as such even
+# though a newer epoch exists: the rig was recalibrated at 07:41 that day,
+# AFTER the recordings. Both claims were checked the same way, by projecting
+# each GelSight centre into all three views on a mid-episode frame — June-26
+# lands on the sensors, May-12 is 30-60 px off and the new 2026-09-09 epoch
+# 20-40 px off, onto empty table.
+CALIB_SESSIONS = {
+    ("motherboard", "2026-05-10"): "2026-05-12",
+    ("motherboard", "2026-05-11"): "2026-05-12",
+    ("motherboard", "2026-05-19"): "2026-05-12",
+    ("motherboard", "2026-09-09"): "2026-06-26",
+    ("pushT",       "2026-06-18"): "2026-06-26",
+}
+
+
+def session_epoch(task: str, date: str) -> str:
+    """The epoch a recording session declares.
+
+    Raises for an undeclared session rather than falling back to the task
+    default: the fallback is exactly how a session ships through another
+    session's extrinsics with nobody noticing.
+    """
+    try:
+        return CALIB_SESSIONS[(task, date)]
+    except KeyError:
+        known = sorted(d for t, d in CALIB_SESSIONS if t == task)
+        raise KeyError(
+            f"{task}: session {date!r} does not declare a calibration epoch. "
+            f"Declared sessions: {known}. Add it to calib_epoch.CALIB_SESSIONS "
+            f"— do not fall back to another session's extrinsics.") from None
+
+
+
+def calib_dir(task: str, *, date: str | None = None,
+              up_axis: str | None = None) -> Path:
+    """Directory of camera extrinsics valid for `task` — and for `date`,
+    when the caller knows which session it is reading (`CALIB_SESSIONS`).
 
     Looked up in this order, so the module works outside the repository it
     lives in:
@@ -115,6 +164,13 @@ def calib_dir(task: str, *, up_axis: str | None = None) -> Path:
         cand = Path(rel) / task / "calibration"
         if cand.is_dir():
             return _ok(cand)
+    if date is not None:
+        d = EPOCH_DIRS[session_epoch(task, date)]
+        if not d.is_dir():
+            raise FileNotFoundError(
+                f"calibration dir for the {session_epoch(task, date)} epoch "
+                f"({task}/{date}) is missing: {d}")
+        return _ok(d)
     try:
         d = CALIB_DIRS[task]
     except KeyError:
@@ -152,21 +208,27 @@ def calib_dir_for_path(p: str | Path, *, up_axis: str = "y") -> Path:
         f"explicit --cam_calib/--gel_* paths. Known tasks: {sorted(CALIB_DIRS)}")
 
 
-def epoch_of(task: str) -> str:
+def epoch_of(task: str, date: str | None = None) -> str:
     """The calibration date actually on disk for `task` (from the files)."""
-    p = calib_dir(task) / "T_mocap_to_cam_middle.json"
+    p = calib_dir(task, date=date) / "T_mocap_to_cam_middle.json"
     created = json.loads(p.read_text()).get("created_at") or ""
     return created[:10]
 
 
-def check_epoch(task: str) -> None:
-    """Fail loudly if the directory does not hold the epoch it should."""
-    got, want = epoch_of(task), EXPECTED_EPOCH.get(task)
+def check_epoch(task: str, date: str | None = None) -> None:
+    """Fail loudly if the directory does not hold the epoch it should.
+
+    With a `date` it is the SESSION's declared epoch that must be there;
+    without one, the task default.
+    """
+    got = epoch_of(task, date=date)
+    want = session_epoch(task, date) if date is not None else EXPECTED_EPOCH.get(task)
     if want and got != want:
+        where = f"{task}/{date}" if date is not None else task
         raise ValueError(
-            f"{task}: calibration dir holds the {got} epoch, expected {want} "
-            f"({calib_dir(task)}). Using another epoch's extrinsics puts the "
-            f"projected sensor off the sensor.")
+            f"{where}: calibration dir holds the {got} epoch, expected {want} "
+            f"({calib_dir(task, date=date)}). Using another epoch's extrinsics "
+            f"puts the projected sensor off the sensor.")
 
 
 @lru_cache(maxsize=None)
@@ -234,7 +296,11 @@ def describe(task: str, date: str, episode: str) -> str:
     """One line for a status bar, so the applied correction is visible."""
     # a status line for the raw-H5 render paths, so: the Y-up convention
     dx, dy, dz = world_offset_m(task, date, episode, up_axis="y")
-    s = f"calib {epoch_of(task)}"
+    # The session's epoch, not the task default: this line exists so a viewer
+    # can catch a wrong epoch without trusting the pipeline, and a label that
+    # names a different epoch than the one that drew the axes is worse than
+    # no label at all.
+    s = f"calib {epoch_of(task, date)}"
     if any((dx, dy, dz)):
         s += f" world+({dx:g},{dy:g},{dz:g})m"
     return s

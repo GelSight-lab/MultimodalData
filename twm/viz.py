@@ -58,7 +58,12 @@ RS_THUMB_W, RS_THUMB_H = 320, 240   # one RealSense thumbnail
 STATUS_STRIP_H = 48                 # text strip under the image rows: status bar + health line
 GS_THUMB_W, GS_THUMB_H = 240, 240   # one GelSight thumbnail (raw or diff)
 ROW2_Y = RS_THUMB_H                 # top of row 2 (the tactile strip)
-PANEL_W, PANEL_H = 1280, 480
+# Derived, never typed: several builders feed PANEL_H to ffmpeg as the raw
+# frame height, so a layout change that leaves the constant behind encodes
+# garbage. PANEL_H is the two-row panel; a three-row one (wrist cameras)
+# is RS_THUMB_H taller.
+PANEL_W = 4 * RS_THUMB_W
+PANEL_H = 2 * RS_THUMB_H + STATUS_STRIP_H
 
 # OptiTrack tracker colors (BGR, drawn into the BGR panel).
 TRACKER_COLORS: dict[str, tuple[int, int, int]] = {

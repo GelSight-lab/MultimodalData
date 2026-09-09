@@ -100,7 +100,7 @@ def render_clip(task, date, ep_stem, start, project_cams, glc, grc):
         gs_ref_R = f["gelsight/right/frames"][trim + start]
         proc = subprocess.Popen(
             ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "rawvideo",
-             "-pix_fmt", "bgr24", "-s", f"{PANEL_W}x{PANEL_H}", "-r", str(FPS), "-i", "-",
+             "-pix_fmt", "bgr24", "-s", f"{frames[0].shape[1]}x{frames[0].shape[0]}", "-r", str(FPS), "-i", "-",
              "-c:v", "libx264", "-profile:v", "high444", "-preset", "medium", "-crf", "18",
              "-pix_fmt", "yuv444p", "-movflags", "+faststart", "-an", str(out_mp4)],
             stdin=subprocess.PIPE)
