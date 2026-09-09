@@ -279,6 +279,40 @@ def run(config: RecorderConfig, drivers: Optional[Drivers] = None) -> int:
         recorder.close()
 
 
+class PreviewRenderer:
+    """Two-rate preview: the base panel (thumbnails of the tick's frames,
+    ~5 ms) is rebuilt only when a new tick arrives, at most `preview_fps`
+    times a second; the projection overlay is redrawn on EVERY render onto a
+    copy of that base, with the OptiTrack pose fetched *now* rather than the
+    one sampled at the tick. The dot therefore tracks the sensor with the
+    GUI's own latency (one 30 Hz frame) instead of tick + preview latency.
+
+    `build(snap) -> panel`, `overlay(panel, ot_poses)`, `poses_now() -> dict`.
+    The returned panel is always a fresh copy: callers may draw on it.
+    """
+
+    def __init__(self, build, overlay, poses_now, preview_fps: float,
+                 clock: Callable[[], float] = time.time):
+        self._build, self._overlay, self._poses_now = build, overlay, poses_now
+        self._preview_dt = 1.0 / float(preview_fps)
+        self._clock = clock
+        self._base = None
+        self._base_tick_ts = None
+        self._base_t = -1e9
+
+    def render(self, snap, show_overlay: bool):
+        now = self._clock()
+        tick_ts = snap.tick.timestamp
+        if (self._base is None
+                or (tick_ts != self._base_tick_ts and now - self._base_t >= self._preview_dt)):
+            self._base = self._build(snap)
+            self._base_tick_ts, self._base_t = tick_ts, now
+        panel = self._base.copy()
+        if show_overlay:
+            self._overlay(panel, self._poses_now())
+        return panel
+
+
 def _gui_loop(config, recorder: Recorder, capture: CaptureLoop, rig,
               projection: Optional[Dict[str, Any]]) -> int:
     import cv2
@@ -287,8 +321,7 @@ def _gui_loop(config, recorder: Recorder, capture: CaptureLoop, rig,
     log.info("controls: s start | e end | r reset diff ref | p projection | q quit")
     arducam_labels = rig.arducam_labels() or None
     show_projection = projection is not None
-    preview_dt, gui_dt = 1.0 / config.preview_fps, 1.0 / 30.0
-    last_preview_t, panel = 0.0, None
+    gui_dt = 1.0 / 30.0
 
     def draw_health(panel, snap):
         text, level = health_line(snap.writer, config.writer.warn_fraction,
@@ -296,6 +329,30 @@ def _gui_loop(config, recorder: Recorder, capture: CaptureLoop, rig,
         color = {"ok": (80, 200, 80), "warn": (0, 200, 255), "fail": (0, 0, 255)}[level]
         cv2.putText(panel, text, (8, panel.shape[0] - 8), cv2.FONT_HERSHEY_SIMPLEX,
                     0.5, color, 1, cv2.LINE_AA)
+
+    def build(snap):
+        tick = snap.tick
+        return build_preview_panel(
+            list(tick.color), list(tick.gelsight), list(snap.gs_ref), snap.ot_poses,
+            snap.recording, snap.frame_count, snap.elapsed,
+            snap.writer.queue_items, snap.fps_meas, task_name=config.task,
+            arducam_frames=list(tick.arducam) or None,
+            arducam_labels=arducam_labels)
+
+    def overlay(panel, ot_poses):
+        draw_projection_overlay(panel, ot_poses, projection["cams"],
+                                projection["gel_left"], projection["gel_right"])
+
+    latest_snap = {"snap": None}
+
+    def poses_now():
+        try:
+            return rig.latest_poses()
+        except Exception as exc:  # fallback-ok: preview only; the tick's pose is at most one tick old
+            log.debug("latest_poses failed (%s); using the tick's pose", exc)
+            return latest_snap["snap"].ot_poses
+
+    renderer = PreviewRenderer(build, overlay, poses_now, config.preview_fps)
 
     while True:
         t0 = time.time()
@@ -308,19 +365,9 @@ def _gui_loop(config, recorder: Recorder, capture: CaptureLoop, rig,
             log.error("capture stopped: %s", snap.fatal_error)
             return 1
 
-        if panel is None or t0 - last_preview_t >= preview_dt:
-            tick = snap.tick
-            panel = build_preview_panel(
-                list(tick.color), list(tick.gelsight), list(snap.gs_ref), snap.ot_poses,
-                snap.recording, snap.frame_count, snap.elapsed,
-                snap.writer.queue_items, snap.fps_meas, task_name=config.task,
-                arducam_frames=list(tick.arducam) or None,
-                arducam_labels=arducam_labels)
-            if show_projection and projection:
-                draw_projection_overlay(panel, snap.ot_poses, projection["cams"],
-                                        projection["gel_left"], projection["gel_right"])
-            draw_health(panel, snap)
-            last_preview_t = t0
+        latest_snap["snap"] = snap
+        panel = renderer.render(snap, show_overlay=bool(show_projection and projection))
+        draw_health(panel, snap)
         cv2.imshow("TWM Data Collection", panel)
 
         key = cv2.waitKey(1) & 0xFF
@@ -336,7 +383,6 @@ def _gui_loop(config, recorder: Recorder, capture: CaptureLoop, rig,
         elif key == ord("p"):
             if projection:
                 show_projection = not show_projection
-                panel = None
                 log.info("projection overlay %s", "ON" if show_projection else "OFF")
             else:
                 log.info("projection overlay unavailable (no calibration loaded)")

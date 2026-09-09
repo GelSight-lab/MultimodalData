@@ -499,10 +499,14 @@ def draw_projection_overlay(panel: np.ndarray,
     sl = optitrack_poses.get("sensor_left") if optitrack_poses else None
     sr = optitrack_poses.get("sensor_right") if optitrack_poses else None
 
-    # 2x supersample buffer for sub-integer line widths.
+    # 2x supersample buffer for sub-integer line widths. Only the camera row
+    # is drawn on, so only that region is scaled (a 3-row panel would cost
+    # 3.75x more for pixels the overlay never touches; the live preview
+    # redraws this every GUI frame).
     SCALE = 2
-    H, W = panel.shape[:2]
-    big = cv2.resize(panel, (W * SCALE, H * SCALE), interpolation=cv2.INTER_NEAREST)
+    H, W = min(panel.shape[0], RS_THUMB_H), min(panel.shape[1], 3 * RS_THUMB_W)
+    region = panel[:H, :W]
+    big = cv2.resize(region, (W * SCALE, H * SCALE), interpolation=cv2.INTER_NEAREST)
 
     for pc in project_cams:
         cam_idx = pc["index"]
@@ -627,7 +631,7 @@ def draw_projection_overlay(panel: np.ndarray,
             if frozen_side is not None and side == frozen_side:
                 cv2.circle(big, (cx_b, cy_b), 12, FROZEN_BGR, 3, cv2.LINE_AA)
 
-    panel[:] = cv2.resize(big, (W, H), interpolation=cv2.INTER_AREA)
+    region[:] = cv2.resize(big, (W, H), interpolation=cv2.INTER_AREA)
 
 
 # ──────────────────────────────────────────────────────────────────────────────

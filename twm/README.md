@@ -109,9 +109,21 @@ A row is appended to `<data_dir>/dataset_log.csv` after every episode.
 
 ### The preview window
 
-Three rows: the RealSense color views (with the GelSight projection overlay
-when calibrated), the two GelSight images with their contact-difference
-thumbnails, and the two wrist cameras labelled by slot, serial and side.
+Three rows: the RealSense color views with the GelSight projection overlay,
+the two GelSight images with their contact-difference thumbnails, and the
+two wrist cameras labelled by slot, serial and side.
+
+The overlay marks each GelSight's surface centre and body axes on every
+calibrated RealSense view, using the current rig calibration in
+`twm/calibration/result/` (the pushT epoch, 2026-06-26). It is built for
+low latency: the thumbnails are rebuilt when a new tick arrives (30 Hz), and
+the overlay is redrawn on every GUI frame from the newest OptiTrack pose
+rather than the pose sampled at the tick, so the dot trails the sensor by
+one GUI frame (about 33 ms plus display) instead of tick + preview delay.
+The overlay is preview-only; nothing recorded depends on it. Press `p` to
+toggle it, or start with `--no_projection`. If the dots sit off the sensors,
+recalibrate (see [Camera Calibration](#camera-calibration)); do not record
+through a stale calibration expecting to fix it later.
 The status bar shows the episode state, and the health line at the bottom
 shows `writer <queue %> | <MB/s> | disk <GB free> (~min left) | OK/WARN/FAIL`.
 Watch the queue percentage: it is the one number that says whether the disk
