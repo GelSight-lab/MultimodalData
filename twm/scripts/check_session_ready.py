@@ -48,10 +48,10 @@ def main() -> int:
     # 1 — a calibration epoch is declared for the task, and it is the right one
     try:
         from twm.calib_epoch import calib_dir, check_epoch, epoch_of
-        d = calib_dir(a.task)
+        d = calib_dir(a.task, date=a.date)
         try:
-            check_epoch(a.task)
-            note(True, "calibration epoch declared", f"{epoch_of(a.task)} at {d.name}")
+            check_epoch(a.task, a.date)
+            note(True, "calibration epoch declared", f"{epoch_of(a.task, a.date)} at {d.name}")
         except ValueError as e:
             note(False, "calibration epoch declared", str(e)[:90])
     except Exception as e:

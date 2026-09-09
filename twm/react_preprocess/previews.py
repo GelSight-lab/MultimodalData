@@ -31,7 +31,7 @@ from .config import H5_ROOTS, STAGE_ROOT, WORLD_OFFSET
 # preview shipped with pushT's extrinsics.
 import sys as _sys
 _sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-from twm.calib_epoch import CALIB_DIRS  # noqa: E402,F401  (re-export)
+from twm.calib_epoch import CALIB_DIRS, calib_dir  # noqa: E402,F401  (CALIB_DIRS re-exported)
 
 CLIP_SECONDS = 30.0
 SPEED = 2.0
@@ -73,7 +73,7 @@ def plan(task: str, stage_root: Path = STAGE_ROOT) -> Iterator[dict]:
                 "task": task, "date": date, "episode": episode,
                 "h5": h5,
                 "out": stage_root / task / "previews" / date / f"{episode}.mp4",
-                "calib_dir": CALIB_DIRS[task],
+                "calib_dir": calib_dir(task, date=date),   # per session, not per task
                 "trim_offset": trim_offset(task, date, episode, stage_root),
                 "world_offset": (dx, dy, dz),
             }

@@ -50,6 +50,28 @@ def _filter_index(doc, key: str, session: str):
     return out
 
 
+TASK_INDEX = {"motherboard": 0, "pushT": 1}
+
+
+def _stamp_index_columns(pq_path: Path, task: str, date: str, episode: str,
+                         episode_index: int) -> None:
+    """The LeRobot-style keys every published parquet carries.
+
+    `react_preprocess.meta.add_index_columns` exists and is called from
+    nowhere, so a freshly built parquet has 14 columns where a published one
+    has 19. They are stamped here, at publication, rather than at build time:
+    `episode_index` numbers an episode within the folder it ships in, and a
+    per-episode build cannot know that.
+    """
+    import pyarrow.parquet as pq_mod
+
+    from twm.react_preprocess.meta import add_index_columns
+    table = pq_mod.read_table(pq_path)
+    table = add_index_columns(table, task, TASK_INDEX.get(task, 0),
+                              f"{date}/{episode}", episode_index)
+    pq_mod.write_table(table, pq_path)
+
+
 def assemble_session(stage, task: str, date: str, episodes: Sequence[str], *,
                      release: Path = None, release_force: Path = None,
                      calib_dir: Path = None) -> Path:
@@ -68,6 +90,8 @@ def assemble_session(stage, task: str, date: str, episodes: Sequence[str], *,
                 f"{ep}: no force-exported parquet at {pq}. Run the force export "
                 f"first — a session published without it has no newtons.")
         shutil.copy2(pq, stage / "meta" / date / pq.name)
+        _stamp_index_columns(stage / "meta" / date / pq.name, task, date, ep,
+                             episode_index=list(episodes).index(ep))
         side = pq.with_suffix("").with_suffix(".force.json")
         if side.is_file():
             shutil.copy2(side, stage / "meta" / date / side.name)

@@ -44,7 +44,7 @@ PAD_S = 1.0
 CLIP_S = 5.0
 LONG_THRESHOLD_S = 15.0
 MAX_MID_CLIPS = 6
-MAX_KB = 8192   # native 1280x480 with 30 fps; ~6-8 MB at 256-color palette
+MAX_KB = 8192   # native panel size at 30 fps; ~6-8 MB at 256-color palette
 
 PAD_FR = int(round(PAD_S * FPS))
 CLIP_FR = int(round(CLIP_S * FPS))

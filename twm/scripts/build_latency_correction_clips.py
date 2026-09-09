@@ -42,7 +42,6 @@ FPS = 30
 LEN = 600          # 20 s
 from twm.tactile_align import LEGACY_SHIFT as SHIFT
 POSITIONS = [0.10, 0.50, 0.85]
-PW, PH = 1280, 480
 
 
 def label(img, text, color=(0, 255, 180)):
@@ -68,7 +67,7 @@ def render(task, date, ep, start, pc, glc, grc, out):
         ref_cor = [f["gelsight/left/frames"][trim+start+SHIFT], f["gelsight/right/frames"][trim+start+SHIFT]]
         proc = subprocess.Popen(
             ["ffmpeg","-y","-hide_banner","-loglevel","error","-f","rawvideo","-pix_fmt","bgr24",
-             "-s",f"{PW}x{PH*2}","-r",str(FPS),"-i","-","-c:v","libx264","-profile:v","high",
+             "-s",f"{_stack_w}x{_stack_h}","-r",str(FPS),"-i","-","-c:v","libx264","-profile:v","high",
              "-pix_fmt","yuv420p","-crf","20","-movflags","+faststart","-an",str(out)],
             stdin=subprocess.PIPE)
         for k in range(LEN):
@@ -99,9 +98,8 @@ def render(task, date, ep, start, pc, glc, grc, out):
 
 def main():
     task = sys.argv[1]
-    pc, glc, grc = BEP._load_proj_calibs(task)
-    print(f"[lat-check] {task} calib={TASK_CFG[task]['calib_dir'].name} cams={len(pc)}", flush=True)
     for date, ep in TASK_CFG[task]["eps"]:
+        pc, glc, grc, _ = BEP._load_proj_calibs(task, date)   # per session
         T = int(torch.load(str(REL/task/'meta'/date/f'{ep}._detect.pt'),
                            weights_only=False)["timestamps"].shape[0])
         usable = T - LEN - SHIFT

@@ -3,7 +3,7 @@ directory of segments / episodes, concatenates same-episode segments
 into one continuous timeline, and lets you switch between source
 episodes with N / P.
 
-The viewer reuses `twm.viz.build_preview_panel`'s 1280x480 grid:
+The viewer builds its own 1280x480 grid (no status strip):
 
     Row 1 (y=0..240):    [left cam | middle cam | right cam | OptiTrack]
     Row 2 (y=240..480):  [gs_L_raw | gs_L_diff | gs_R_raw | gs_R_diff | Controls]
@@ -96,7 +96,7 @@ except Exception:
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Layout constants (matches twm.viz.build_preview_panel)
+# Layout constants for this viewer's own panel
 # ──────────────────────────────────────────────────────────────────────────────
 PANEL_W, PANEL_H = 1280, 480
 RS_THUMB_W, RS_THUMB_H = 320, 240     # RealSense cam cell
@@ -466,7 +466,7 @@ class LoadedEpisode:
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Panel renderer (visualize.py-style 1280x480 grid)
+# Panel renderer (this viewer's own 1280x480 grid)
 # ──────────────────────────────────────────────────────────────────────────────
 
 def _make_ot_panel(ot_poses, t_idx, t_sec, w, h):

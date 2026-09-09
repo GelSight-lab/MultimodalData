@@ -92,7 +92,7 @@ TARGET_BGR = (255, 0, 220)
 # motherboard/2026-05-10/episode_004 the projected gap over 199 contact frames
 # measures p50 0.00 px, p90 1.00 px, max 1.41 px. The force disc at the same
 # force has radius 16.9 px, so the target ring sat entirely inside it: 112
-# magenta pixels in a 1280x480 frame.
+# magenta pixels in a full panel.
 #
 # I FIRST WROTE 20x AND JUSTIFIED IT WRONGLY. The note here said "20x puts the
 # p90 gap at about 20 px, just outside that disc", extrapolated from an earlier

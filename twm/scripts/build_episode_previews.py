@@ -77,7 +77,6 @@ OUT_ROOT = _preview_root(TASK)
 # them, publishing 36 motherboard previews with pushT's June-26 calibration.
 # calib_epoch owns the mapping; see its docstring.
 
-PANEL_W, PANEL_H = 1280, 480
 SOURCE_FPS       = 30.0       # recording frame rate
 CLIP_S_DEFAULT   = 30.0       # seconds of usable data to sample (real time)
 SPEED_DEFAULT    = 2.0        # playback speed (output_fps = SOURCE_FPS * speed)
@@ -105,7 +104,7 @@ def _apply_world_offset(ot_lookup, dx, dy, dz):
             poses[:, 2] += dz
 
 
-# The world gizmo sits in the MIDDLE camera tile: the 1280x480 panel is four
+# The world gizmo sits in the MIDDLE camera tile: the camera row is four
 # tiles wide and the middle camera is the second, x in [320, 640). At the
 # frame's own top-left it would sit on the LEFT camera and still look
 # deliberate. Sized for a 320x240 tile, not for the 640x480 probe overlays.

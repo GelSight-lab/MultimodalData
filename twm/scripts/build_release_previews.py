@@ -30,9 +30,19 @@ def make_renderer(task: str, clip_s: float, speed: float):
     `CALIB_DIR` — the exact global whose one-value-for-all-tasks default put
     pushT's extrinsics under every motherboard preview.
     """
-    project_cams, glc, grc = BEP._load_proj_calibs(task)
+    # Per SESSION, not per task. Binding one calibration to the whole task is
+    # the same defect the docstring above describes, one level down: motherboard
+    # spans the 2026-05-12 and 2026-09-09 epochs, so a task-wide binding renders
+    # one of them through the other's extrinsics.
+    _by_date: dict = {}
+
+    def _calibs(date: str):
+        if date not in _by_date:
+            _by_date[date] = BEP._load_proj_calibs(task, date)
+        return _by_date[date]
 
     def render(job: dict) -> None:
+        project_cams, glc, grc, _ = _calibs(job["date"])
         dx, dy, dz = job["world_offset"]
         # The builder reads the trim from the release parquet itself, so this
         # used to monkeypatch the sidecar reader it consulted instead. That
@@ -49,7 +59,7 @@ def make_renderer(task: str, clip_s: float, speed: float):
         BEP.build_one_preview(job["h5"], job["out"], clip_s, speed,
                               project_cams, glc, grc, dx=dx, dy=dy, dz=dz)
 
-    return render, len(project_cams)
+    return render, len(BEP._load_proj_calibs(task)[0])
 
 
 def main() -> int:

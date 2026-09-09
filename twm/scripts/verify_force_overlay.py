@@ -56,7 +56,7 @@ def main(h5_path: str, n: int = 4):
     if not forces:
         raise SystemExit(f"no force npz for {task}/{date}/{ep}")
     trim_pq, n_rows = _parquet_trim_and_rows(task, date, ep)
-    cams, gel_L, gel_R = _load_proj_calibs(task)   # this task's epoch, verified
+    cams, gel_L, gel_R, _ = _load_proj_calibs(task, date)   # this SESSION's epoch, verified
     OUT.mkdir(parents=True, exist_ok=True)
 
     with h5py.File(str(h5), "r") as f:

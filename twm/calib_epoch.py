@@ -400,7 +400,7 @@ def world_offset_m(task: str, date: str, episode: str, *,
     stored = eps[key].get("up_axis") or "y"
     off = np.asarray([float(off[0]), float(off[1]), float(off[2])], float)
     if stored != up_axis:
-        from react_toolbox.frames import YUP_TO_ZUP
+        from .react_toolbox.frames import YUP_TO_ZUP
         M = np.asarray(YUP_TO_ZUP, float)
         off = (M if up_axis == "z" else M.T) @ off
     return (float(off[0]), float(off[1]), float(off[2]))

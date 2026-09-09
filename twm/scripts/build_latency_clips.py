@@ -38,7 +38,6 @@ WORLD_OFFSET = {("motherboard", "2026-05-19"): (0.23, 0.0, 0.175)}
 FPS = 30
 CLIP = 300          # 10 s
 PRE = 60            # 2 s before onset
-PANEL_W, PANEL_H = 1280, 480
 
 
 def find_onsets(task):
@@ -126,11 +125,12 @@ def render_clip(task, date, ep_stem, start, project_cams, glc, grc):
 
 def main():
     task = sys.argv[1]
-    pc, glc, grc = BEP._load_proj_calibs(task)
-    print(f"[latency] {task}: calib={TASK_CFG[task]['calib_dir'].name} cams={len(pc)}", flush=True)
     onsets = find_onsets(task)
     print(f"[latency] {task}: {len(onsets)} onset clips: {[(d,e,s) for d,e,s in onsets]}", flush=True)
     for date, ep, start in onsets:
+        # Resolved per session: the onsets span dates and, for motherboard,
+        # two calibration epochs.
+        pc, glc, grc, _ = BEP._load_proj_calibs(task, date)
         p = render_clip(task, date, ep, start, pc, glc, grc)
         print(f"  -> {p.name} ({p.stat().st_size/1024:.0f} KB)", flush=True)
     print("[latency] done", flush=True)

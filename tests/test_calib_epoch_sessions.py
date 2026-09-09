@@ -137,3 +137,14 @@ def test_current_epoch_is_declared_and_present():
     assert d.is_dir()
     created = json.loads((d / "T_mocap_to_cam_middle.json").read_text())["created_at"]
     assert created[:10] == CURRENT_EPOCH
+
+
+def test_the_world_frame_fingerprint_uses_the_session_epoch():
+    """`fingerprint` resolved the task default, so every fingerprint stamped
+    into a 2026-09-09 parquet was computed with May-12 extrinsics."""
+    import inspect
+
+    from twm import world_frame
+    for fn in (world_frame.fingerprint, world_frame.verify_fingerprint,
+               world_frame._calib):
+        assert "date" in inspect.signature(fn).parameters, fn.__name__

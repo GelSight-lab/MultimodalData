@@ -38,7 +38,6 @@ H5_ROOT   = Path("/media/yxma/Disk1/twm/data/motherboard")
 # altogether when the epoch directories were renamed.
 CALIB_DIR = calib_dir("motherboard", date="2026-05-19")
 
-PANEL_W, PANEL_H = 1280, 480
 SOURCE_FPS = 30.0
 
 
@@ -154,7 +153,7 @@ def render(episode: str, dx: float, dy: float, dz: float,
     cmd = [
         "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
         "-f", "rawvideo", "-pix_fmt", "bgr24",
-        "-s", f"{PANEL_W}x{PANEL_H}",
+        "-s", f"{panels[0].shape[1]}x{panels[0].shape[0]}",   # from the panel, not a constant
         "-r", f"{output_fps}",
         "-i", "-",
         "-c:v", "libx264",

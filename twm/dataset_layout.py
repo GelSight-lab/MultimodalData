@@ -119,6 +119,11 @@ def check_layout(root, date: str, *, require_force: bool = True,
             rep.fail("meta", f"{ep}: parquet unreadable ({type(exc).__name__}: {exc})")
             continue
         rows_by_ep[ep] = n
+        for c in ("task", "task_index", "episode", "episode_index", "frame_index"):
+            if c not in cols:
+                rep.warnings.append(f"{ep}: parquet has no {c} — every published "
+                                    f"folder carries the LeRobot index columns")
+                break
         if require_force:
             missing = [c for c in FORCE_COLUMNS if c not in cols]
             if missing:

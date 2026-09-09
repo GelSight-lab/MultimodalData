@@ -82,9 +82,41 @@ def build_task(task: str, stage_root: Path = STAGE_ROOT,
                write: bool = True) -> dict:
     """Build the three curation files for one task."""
     out_dir = Path(stage_root) / task
-    sidecars = sorted((out_dir / "meta").rglob("*._detect.pt"))
-    if not sidecars:
-        raise FileNotFoundError(f"no _detect.pt sidecars under {out_dir/'meta'}")
+    # Discovery is by PARQUET, not by sidecar. Sidecars only exist for
+    # episodes built by the current pipeline, so discovering by sidecar
+    # quietly rebuilds the indices from whatever subset happens to have one:
+    # on the real motherboard tree that was 3 of 35, and the 32 dropped rows
+    # were not noticed until the force export refused an episode two steps
+    # later. Refuse instead, naming what is missing.
+    parquets = sorted((out_dir / "meta").rglob("episode_*.parquet"))
+    if not parquets:
+        raise FileNotFoundError(f"no episode parquet under {out_dir/'meta'}")
+    sidecars, missing = [], []
+    for pq in parquets:
+        det = pq.with_suffix("")
+        det = det.with_name(det.name + "._detect.pt")
+        (sidecars if det.is_file() else missing).append(det if det.is_file() else pq)
+    if missing:
+        names = ", ".join(f"{m.parent.name}/{m.stem}" for m in missing[:8])
+        more = "" if len(missing) <= 8 else f", and {len(missing) - 8} more"
+        raise FileNotFoundError(
+            f"{task}: {len(missing)} of {len(parquets)} episodes have a parquet but "
+            f"no _detect.pt sidecar ({names}{more}). Rebuilding the indices from "
+            f"the rest would drop them from episodes.jsonl, segments.json and "
+            f"bad_frames.json. Re-run `react_preprocess build` for them, or curate "
+            f"a staging tree that holds only the episodes you mean to index.")
+
+    # An existing row's up_axis is preserved: react_preprocess itself writes
+    # no axis convention, the published rows carry "z" from the Z-up staging
+    # step, and dropping the field makes calib_epoch read every Z-up world
+    # offset as Y-up.
+    prior = {}
+    jsonl = out_dir / "episodes.jsonl"
+    if jsonl.is_file():
+        for line in jsonl.read_text().splitlines():
+            if line.strip():
+                r = json.loads(line)
+                prior[r.get("episode")] = r
 
     episodes, segments, rows = {}, [], []
     for det in sidecars:
@@ -116,6 +148,8 @@ def build_task(task: str, stage_root: Path = STAGE_ROOT,
             "n_segments": n_seg,
             "total_bad_frames": report["total_bad_frames"],
         })
+        if "up_axis" in prior.get(key, {}):
+            rows[-1]["up_axis"] = prior[key]["up_axis"]
 
     total = sum(e["n_frames"] for e in episodes.values())
     bad = sum(e["total_bad_frames"] for e in episodes.values())

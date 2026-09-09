@@ -76,3 +76,23 @@ def test_a_requested_episode_with_no_parquet_is_refused(tmp_path):
         assert "episode_009" in str(exc)
     else:
         raise AssertionError("expected a refusal")
+
+
+def test_the_staged_parquet_carries_the_published_index_columns(tmp_path):
+    """Published parquets have task/task_index/episode/episode_index/
+    frame_index; freshly built ones do not, because the only function that
+    adds them is called from nowhere. A folder that ships without them has a
+    different schema from every other folder in the dataset."""
+    rel, force, cal = _release(tmp_path)
+    out = assemble_session(tmp_path / "stage", "motherboard", DATE,
+                           ["episode_000", "episode_001"],
+                           release=rel, release_force=force, calib_dir=cal)
+    a = pd.read_parquet(out / "meta" / DATE / "episode_000.parquet")
+    b = pd.read_parquet(out / "meta" / DATE / "episode_001.parquet")
+    for col in ("task", "task_index", "episode", "episode_index", "frame_index"):
+        assert col in a.columns, col
+    assert a["task"].iloc[0] == "motherboard"
+    assert a["episode"].iloc[0] == f"{DATE}/episode_000"
+    assert list(a["episode_index"].unique()) == [0]
+    assert list(b["episode_index"].unique()) == [1]
+    assert list(a["frame_index"]) == list(range(len(a)))
