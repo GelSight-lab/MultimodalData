@@ -209,14 +209,25 @@ def load_projection(config: RecorderConfig) -> Optional[Dict[str, Any]]:
     if not config.show_projection:
         return None
     from twm.viz import CAM_CALIB_NAME, load_calibrations
-    calib_dir = Path(__file__).resolve().parent.parent / "calibration" / "result"  # tactile-lag-exempt: the LIVE recorder always uses the current calibration; epochs only exist for replaying the past
+    # The LIVE recorder always uses the current calibration; epochs only exist
+    # for replaying the past. Resolved through calib_epoch rather than named
+    # here, so renaming an epoch directory cannot leave this pointing at a path
+    # that no longer exists -- which is what happened when the epoch
+    # directories were renamed under a hard-coded path here, and the overlay
+    # turned itself off with one warning line.
+    from twm.calib_epoch import current_epoch
+    epoch = "?"
     try:
+        epoch, calib_dir = current_epoch()
         cam_calibs, gel_left, gel_right = load_calibrations(
             [calib_dir / CAM_CALIB_NAME[i] for i in range(3)],
             calib_dir / "T_gel_to_rigid_left.json",
             calib_dir / "T_gel_to_rigid_right.json")
     except Exception as exc:
-        log.warning("projection overlay disabled (%s)", exc)
+        # ERROR, not warning: the overlay is how the operator confirms the rig
+        # is calibrated before recording, so losing it silently costs a whole
+        # session. Still not fatal -- nothing recorded depends on it.
+        log.error("projection overlay disabled -- epoch %s: %s", epoch, exc)
         return None  # fallback-ok: the overlay is preview-only cosmetics; no calibration means no overlay, and nothing recorded depends on it
     cams = []
     for calib in cam_calibs:
@@ -227,7 +238,8 @@ def load_projection(config: RecorderConfig) -> Optional[Dict[str, Any]]:
         cams.append({"index": config.realsense_serials.index(serial),
                      "T_mocap_to_cam": calib["T_mocap_to_cam"],
                      "intrinsics": calib["intrinsics"]})
-    log.info("projection overlay: %d cameras calibrated (press p to toggle)", len(cams))
+    log.info("projection overlay: epoch %s, %d cameras calibrated (press p to toggle)",
+             epoch, len(cams))
     return {"cams": cams, "gel_left": gel_left, "gel_right": gel_right} if cams else None
 
 

@@ -54,16 +54,16 @@ RELEASE = Path("/media/yxma/Disk1/twm/release")
 # worth naming; the directory names themselves are historical accidents.
 # Verified equal to the published `data/<task>/calibration/` for both tasks.
 CALIB_DIRS = {
-    "motherboard": REPO / "calibration" / "result backup",   # May-12 epoch
-    "pushT":       REPO / "calibration" / "result_pushT_2026-06-26",  # June-26 epoch
+    "motherboard": REPO / "calibration" / "epoch_2026-05-12",
+    "pushT":       REPO / "calibration" / "epoch_2026-06-26",
 }
 EXPECTED_EPOCH = {"motherboard": "2026-05-12", "pushT": "2026-06-26"}
 
 # The epochs themselves, named by the date each was MEASURED.
 EPOCH_DIRS = {
-    "2026-05-12": REPO / "calibration" / "result backup",
-    "2026-06-26": REPO / "calibration" / "result_pushT_2026-06-26",
-    "2026-09-09": REPO / "calibration" / "result",
+    "2026-05-12": REPO / "calibration" / "epoch_2026-05-12",
+    "2026-06-26": REPO / "calibration" / "epoch_2026-06-26",
+    "2026-09-09": REPO / "calibration" / "epoch_2026-09-09",
 }
 
 # Which epoch each RECORDING SESSION belongs to. `task -> epoch` cannot answer
@@ -73,18 +73,20 @@ EPOCH_DIRS = {
 # Date order therefore does not determine the answer, so a session declares
 # its epoch and nothing infers it.
 #
-# The 2026-09-09 motherboard session was recorded through the June-26 epoch
-# (the recorder's live overlay was running on it) and is declared as such even
-# though a newer epoch exists: the rig was recalibrated at 07:41 that day,
-# AFTER the recordings. Both claims were checked the same way, by projecting
-# each GelSight centre into all three views on a mid-episode frame — June-26
-# lands on the sensors, May-12 is 30-60 px off and the new 2026-09-09 epoch
-# 20-40 px off, onto empty table.
+# The 2026-09-09 motherboard session declares the epoch measured that same
+# day at 07:41, by the operator's decision. Recorded on: the recorder's live
+# overlay ran on the June-26 epoch during collection, and projecting each
+# GelSight centre into all three views on a mid-episode frame puts June-26 on
+# the sensors while 2026-09-09 sits 20-40 px away and May-12 30-60 px away.
+# Both solves fit their own points equally well (0.5-0.7 px RMSE) and share an
+# identical gel-to-rigid transform, so the two disagree only about where the
+# cameras were. Re-check with the projection comparison if the previews ever
+# look off.
 CALIB_SESSIONS = {
     ("motherboard", "2026-05-10"): "2026-05-12",
     ("motherboard", "2026-05-11"): "2026-05-12",
     ("motherboard", "2026-05-19"): "2026-05-12",
-    ("motherboard", "2026-09-09"): "2026-06-26",
+    ("motherboard", "2026-09-09"): "2026-09-09",
     ("pushT",       "2026-06-18"): "2026-06-26",
 }
 

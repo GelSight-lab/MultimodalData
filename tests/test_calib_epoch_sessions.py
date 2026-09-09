@@ -25,20 +25,21 @@ def test_a_declared_session_selects_its_own_epoch():
     # Asserted on the epoch the files carry, not on directory names: the
     # epoch directories get renamed as new ones are measured.
     assert epoch_of("motherboard", date="2026-05-10") == "2026-05-12"
-    assert epoch_of("motherboard", date="2026-09-09") == "2026-06-26"
+    assert epoch_of("motherboard", date="2026-09-09") == "2026-09-09"
     assert epoch_of("pushT", date="2026-06-18") == "2026-06-26"
-    assert calib_dir("motherboard", date="2026-09-09") == calib_dir("pushT", date="2026-06-18")
+    # two sessions on one epoch resolve to the same directory
+    assert calib_dir("motherboard", date="2026-05-11") == calib_dir("motherboard", date="2026-05-19")
 
 
-def test_the_september_session_does_not_take_the_epoch_measured_that_same_day():
-    """The rig was recalibrated on 2026-09-09 at 07:41, after the recordings.
-    Newer is not the same as applicable."""
-    assert epoch_of("motherboard", date="2026-09-09") == "2026-06-26"
+def test_the_september_session_declares_its_own_epoch_not_the_task_default():
+    """Whatever a session declares must beat the task default; the default is
+    May-12 and this session is not on it."""
+    assert epoch_of("motherboard", date="2026-09-09") == "2026-09-09"
     assert calib_dir("motherboard", date="2026-09-09").name != "result"
 
 
 def test_epoch_and_check_follow_the_session_too():
-    assert epoch_of("motherboard", date="2026-09-09") == "2026-06-26"
+    assert epoch_of("motherboard", date="2026-09-09") == "2026-09-09"
     assert epoch_of("motherboard", date="2026-05-19") == "2026-05-12"
     check_epoch("motherboard", date="2026-09-09")     # must not raise
 
@@ -86,7 +87,7 @@ def test_the_status_line_names_the_session_epoch_not_the_task_default():
     # of what this test is about.
     sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "twm"))
     try:
-        assert describe("motherboard", "2026-09-09", "episode_000").startswith("calib 2026-06-26")
+        assert describe("motherboard", "2026-09-09", "episode_000").startswith("calib 2026-09-09")
         assert describe("motherboard", "2026-05-10", "episode_000").startswith("calib 2026-05-12")
     finally:
         sys.path.pop(0)
@@ -116,7 +117,23 @@ def test_a_path_whose_session_is_undeclared_raises():
 
 def test_cam_calib_accepts_an_epoch_name_as_an_escape_hatch():
     from twm.calib_epoch import resolve_calibration
+    from twm.calib_epoch import EPOCH_DIRS
     cams, gl, gr = resolve_calibration(["2026-06-26"], None, None,
                                        "/data/motherboard/2026-09-09/ep.h5")
-    assert all(c.startswith(str(calib_dir("motherboard", date="2026-09-09"))) for c in cams)
-    assert gl.startswith(str(calib_dir("motherboard", date="2026-09-09")))
+    # The named epoch wins over the one the path's session declares.
+    assert all(c.startswith(str(EPOCH_DIRS["2026-06-26"])) for c in cams)
+    assert gl.startswith(str(EPOCH_DIRS["2026-06-26"]))
+
+
+def test_current_epoch_is_declared_and_present():
+    """The LIVE recorder's overlay resolves through this. Renaming an epoch
+    directory used to turn the overlay off with only a warning, so the
+    declaration and the directory must be checked together."""
+    import json
+
+    from twm.calib_epoch import CURRENT_EPOCH, EPOCH_DIRS, current_epoch_dir
+    assert CURRENT_EPOCH in EPOCH_DIRS
+    d = current_epoch_dir()
+    assert d.is_dir()
+    created = json.loads((d / "T_mocap_to_cam_middle.json").read_text())["created_at"]
+    assert created[:10] == CURRENT_EPOCH

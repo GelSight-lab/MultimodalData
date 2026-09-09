@@ -336,3 +336,18 @@ def test_episode_metadata_records_sensor_restarts_during_the_episode(parts):
     assert "restarts" in s.describe()
     with h5py.File(s.path, "r") as f:
         assert json.loads(f["metadata"].attrs["sensor_restarts"]) == {"gelsight_left": 2, "gelsight_right": 0}
+
+
+def test_live_projection_loads_the_newest_calibration_epoch(caplog):
+    """The overlay is preview-only and degrades to None on any failure, so a
+    calibration directory it can no longer find disables it in silence."""
+    import logging
+
+    from twm.calib_epoch import CURRENT_EPOCH
+    from twm.recorder.app import load_projection
+    from twm.recorder.config import RecorderConfig
+
+    with caplog.at_level(logging.INFO, logger="twm.recorder"):
+        proj = load_projection(RecorderConfig(task="t"))
+    assert proj is not None and len(proj["cams"]) == 3
+    assert CURRENT_EPOCH in "\n".join(caplog.messages)

@@ -54,17 +54,64 @@ RELEASE = Path("/media/yxma/Disk1/twm/release")
 # worth naming; the directory names themselves are historical accidents.
 # Verified equal to the published `data/<task>/calibration/` for both tasks.
 CALIB_DIRS = {
-    "motherboard": REPO / "calibration" / "result backup",   # May-12 epoch
-    "pushT":       REPO / "calibration" / "result_pushT_2026-06-26",  # June-26 epoch
+    "motherboard": REPO / "calibration" / "epoch_2026-05-12",
+    "pushT":       REPO / "calibration" / "epoch_2026-06-26",
 }
 EXPECTED_EPOCH = {"motherboard": "2026-05-12", "pushT": "2026-06-26"}
 
 # The epochs themselves, named by the date each was MEASURED.
 EPOCH_DIRS = {
-    "2026-05-12": REPO / "calibration" / "result backup",
-    "2026-06-26": REPO / "calibration" / "result_pushT_2026-06-26",
-    "2026-09-09": REPO / "calibration" / "result",
+    "2026-05-12": REPO / "calibration" / "epoch_2026-05-12",
+    "2026-06-26": REPO / "calibration" / "epoch_2026-06-26",
+    "2026-09-09": REPO / "calibration" / "epoch_2026-09-09",
 }
+
+# The epoch the LIVE rig is on -- what a recording being made right now is
+# being made through. Only the live recorder wants this. Every reader of an
+# existing recording wants that recording's own session epoch
+# (`calib_dir(task, date=...)`): "what the rig is on now" and "what this file
+# was recorded through" are different questions, and answering the second with
+# the first is how a session ships through the wrong extrinsics.
+#
+# Declared, not inferred from the newest directory. `max(EPOCH_DIRS)` would be
+# wrong twice over: an epoch can be measured and not yet adopted (2026-09-09
+# sat on disk from 07:41 while that morning's recordings had already been made
+# through June-26), and rolling back to an older epoch after a bad solve must
+# not require deleting or renaming a directory.
+#
+# Update it when the rig is recalibrated -- `test_current_epoch_is_declared_
+# and_present` checks the declaration against the files, so a stale value that
+# names a vanished epoch fails the suite instead of the session.
+CURRENT_EPOCH = "2026-09-09"
+
+
+def current_epoch() -> tuple[str, Path]:
+    """The epoch the live rig is on, as (name, directory).
+
+    Raises rather than returning a path that is not there. The caller is the
+    live overlay, which degrades to None on any failure, so a missing epoch
+    has to arrive as a message naming THIS directory rather than as a
+    projection that quietly stops being drawn -- the exact failure that
+    renaming `calibration/result` to `calibration/epoch_2026-09-09` caused.
+    """
+    try:
+        d = EPOCH_DIRS[CURRENT_EPOCH]
+    except KeyError:
+        raise KeyError(
+            f"calib_epoch.CURRENT_EPOCH is {CURRENT_EPOCH!r}, which is not an "
+            f"epoch (known: {sorted(EPOCH_DIRS)})") from None
+    if not d.is_dir():
+        raise FileNotFoundError(
+            f"the current calibration epoch {CURRENT_EPOCH} is missing: {d}. "
+            f"Recalibrate into it, or point calib_epoch.CURRENT_EPOCH at an "
+            f"epoch that exists.")
+    return CURRENT_EPOCH, d
+
+
+def current_epoch_dir() -> Path:
+    """Directory of the calibration the rig is running on now."""
+    return current_epoch()[1]
+
 
 # Which epoch each RECORDING SESSION belongs to. `task -> epoch` cannot answer
 # this. The cameras were recalibrated between sessions, and a calibration is
@@ -73,18 +120,20 @@ EPOCH_DIRS = {
 # Date order therefore does not determine the answer, so a session declares
 # its epoch and nothing infers it.
 #
-# The 2026-09-09 motherboard session was recorded through the June-26 epoch
-# (the recorder's live overlay was running on it) and is declared as such even
-# though a newer epoch exists: the rig was recalibrated at 07:41 that day,
-# AFTER the recordings. Both claims were checked the same way, by projecting
-# each GelSight centre into all three views on a mid-episode frame — June-26
-# lands on the sensors, May-12 is 30-60 px off and the new 2026-09-09 epoch
-# 20-40 px off, onto empty table.
+# The 2026-09-09 motherboard session declares the epoch measured that same
+# day at 07:41, by the operator's decision. Recorded on: the recorder's live
+# overlay ran on the June-26 epoch during collection, and projecting each
+# GelSight centre into all three views on a mid-episode frame puts June-26 on
+# the sensors while 2026-09-09 sits 20-40 px away and May-12 30-60 px away.
+# Both solves fit their own points equally well (0.5-0.7 px RMSE) and share an
+# identical gel-to-rigid transform, so the two disagree only about where the
+# cameras were. Re-check with the projection comparison if the previews ever
+# look off.
 CALIB_SESSIONS = {
     ("motherboard", "2026-05-10"): "2026-05-12",
     ("motherboard", "2026-05-11"): "2026-05-12",
     ("motherboard", "2026-05-19"): "2026-05-12",
-    ("motherboard", "2026-09-09"): "2026-06-26",
+    ("motherboard", "2026-09-09"): "2026-09-09",
     ("pushT",       "2026-06-18"): "2026-06-26",
 }
 
