@@ -404,15 +404,19 @@ def build_preview_panel(color_frames, gs_frames, gs_ref, optitrack_poses,
     panel = np.vstack([row1, row2])
 
     if arducam_frames is not None:
-        if len(arducam_frames) != 2:
-            raise ValueError("arducam_frames must contain exactly two frames")
+        if not 1 <= len(arducam_frames) <= 2:
+            raise ValueError("arducam_frames must hold one or two frames")
         sensor_thumbs = [_rs_thumb(frame) for frame in arducam_frames]
-        sensor_row = np.hstack(sensor_thumbs + [blank.copy(), blank.copy()])
+        # The row is always four tiles wide; a single camera leaves the rest
+        # blank rather than stretching to fill, so the layout does not change
+        # shape when a camera is unplugged.
+        pad = [blank.copy() for _ in range(4 - len(sensor_thumbs))]
+        sensor_row = np.hstack(sensor_thumbs + pad)
         panel = np.vstack([panel, sensor_row])
 
-        labels = arducam_labels or ["cam0", "cam1"]
-        if len(labels) != 2:
-            raise ValueError("arducam_labels must contain exactly two labels")
+        labels = arducam_labels or ["cam0", "cam1"][:len(arducam_frames)]
+        if len(labels) != len(arducam_frames):
+            raise ValueError("arducam_labels must match arducam_frames")
         for slot, label in enumerate(labels):
             cv2.putText(
                 panel, str(label), (slot * RS_THUMB_W + 8, 2 * RS_THUMB_H + 16),

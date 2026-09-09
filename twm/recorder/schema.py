@@ -173,7 +173,7 @@ def append_ticks(f: h5py.File, ticks: Sequence[Tick]) -> None:
         # t.arducam[j] is trusted to be cam0-then-cam1 (matching ARDUCAM_SLOTS)
         # because sensor_camera.validate_config sorts the two slots by name
         # before resolve_slots ever builds a Tick; nothing here re-checks it.
-        for j, slot in enumerate(ARDUCAM_SLOTS):
+        for j, slot in enumerate(ARDUCAM_SLOTS[:len(f["arducam"])]):
             ds = _grow(f[f"arducam/{slot}/frames"], end)
             if ds.ndim == 1:                       # ragged: one JPEG per tick
                 for k, t in enumerate(ticks):

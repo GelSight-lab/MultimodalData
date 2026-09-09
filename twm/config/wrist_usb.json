@@ -1,23 +1,10 @@
 {
-  "_note": "Two generic USB wrist cameras. They report the SAME serial (200901010001), so identity is the USB port path: a serial here would match both and resolve_slots would refuse. Re-plug into a different port and this file must be updated. exposure_dynamic_framerate=0 pins the frame rate: with it on, these cameras drop to 7.6 fps in dim light to buy exposure. power_line_frequency=1 is 50 Hz mains.",
+  "_note": "Written by `python -m twm.sensor_camera register`. Identity is the USB port, not the serial: re-plugging into another port means running that command again.",
   "cameras": [
     {
       "slot": "cam0",
-      "id_path": "pci-0000:00:14.0-usb-0:1:1.0",
-      "position": "unknown",
-      "width": 640,
-      "height": 480,
-      "fps": 30,
-      "pixel_format": "MJPG",
-      "controls": {
-        "exposure_dynamic_framerate": 0,
-        "power_line_frequency": 1
-      }
-    },
-    {
-      "slot": "cam1",
       "id_path": "pci-0000:00:14.0-usb-0:2:1.0",
-      "position": "unknown",
+      "position": "left",
       "width": 640,
       "height": 480,
       "fps": 30,

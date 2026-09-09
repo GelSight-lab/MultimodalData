@@ -110,11 +110,15 @@ def _positive_int(entry: Mapping, key: str, default: int) -> int:
     return value
 
 
-def validate_config(raw: Mapping) -> tuple[CameraSlot, CameraSlot]:
-    """Validate and normalize the two-slot JSON representation."""
+def validate_config(raw: Mapping) -> tuple:
+    """Validate and normalize the one- or two-slot JSON representation."""
     entries = raw.get("cameras") if isinstance(raw, Mapping) else None
-    if not isinstance(entries, list) or len(entries) != 2:
-        raise ArducamConfigError("configuration must contain exactly two cameras")
+    # One OR two. The pair is the normal rig, but a single wrist camera is a
+    # real configuration — testing one before the mount exists, or carrying on
+    # after one comes off — and every layer below handles the count it is
+    # given rather than assuming two.
+    if not isinstance(entries, list) or not 1 <= len(entries) <= 2:
+        raise ArducamConfigError("configuration must contain one or two cameras")
 
     slots = []
     for entry in entries:
@@ -147,8 +151,11 @@ def validate_config(raw: Mapping) -> tuple[CameraSlot, CameraSlot]:
                            (entry.get("controls") or {}).items()),
         ))
 
-    if {slot.slot for slot in slots} != {"cam0", "cam1"}:
-        raise ArducamConfigError("camera slots must be exactly cam0 and cam1")
+    expected = {"cam0"} if len(slots) == 1 else {"cam0", "cam1"}
+    if {slot.slot for slot in slots} != expected:
+        raise ArducamConfigError(
+            "camera slots must be exactly "
+            + ("cam0" if len(slots) == 1 else "cam0 and cam1"))
     slots.sort(key=lambda item: item.slot)
     serials = [s.serial for s in slots if s.serial]
     if len(serials) != len(set(serials)):
@@ -157,11 +164,16 @@ def validate_config(raw: Mapping) -> tuple[CameraSlot, CameraSlot]:
     if len(paths) != len(set(paths)):
         raise ArducamConfigError("camera id_path values must be unique")
     positions = [slot.position for slot in slots]
-    if positions != ["unknown", "unknown"] and set(positions) != {"left", "right"}:
+    # With two cameras the sides must be assigned together or not at all: one
+    # named and one unknown is a half-finished mapping that reads as complete.
+    # With one, any single value is a complete statement about it.
+    ok = (len(slots) == 1 or positions == ["unknown", "unknown"]
+          or set(positions) == {"left", "right"})
+    if not ok:
         raise ArducamConfigError(
             "camera positions must be both unknown or exactly one left and one right"
         )
-    return slots[0], slots[1]
+    return tuple(slots)
 
 
 def load_config(path: str | Path = DEFAULT_CONFIG_PATH) -> tuple[CameraSlot, CameraSlot]:
@@ -202,7 +214,7 @@ def _inventory(devices: Sequence[VideoDevice]) -> str:
 
 def resolve_slots(
     slots: Iterable[CameraSlot], devices: Sequence[VideoDevice] | None = None
-) -> tuple[ResolvedCamera, ResolvedCamera]:
+) -> tuple:
     """Resolve each logical slot to exactly one capture node by udev serial
     (ID_SERIAL_SHORT), falling back to ID_PATH when the slot has no serial."""
     slots = tuple(slots)
@@ -257,7 +269,7 @@ def _attached_realsense_serials() -> tuple:
 
 
 def register_wrist_cameras(path, *, devices=None, realsense_serials=None,
-                           gelsight_serials=None, controls=None):
+                           gelsight_serials=None, controls=None, allow_one=False):
     """Write the wrist-camera config from whatever is plugged in right now.
 
     A wrist camera is a capture node that is not a RealSense and not a
@@ -292,12 +304,16 @@ def register_wrist_cameras(path, *, devices=None, realsense_serials=None,
         candidates.append(d)
     candidates.sort(key=lambda d: d.id_path)
 
-    if len(candidates) != 2:
+    want = "one or two" if allow_one else "exactly two"
+    ok = (1 <= len(candidates) <= 2) if allow_one else (len(candidates) == 2)
+    if not ok:
         found = ", ".join(f"{d.device} at {d.id_path}" for d in candidates) or "none"
+        hint = ("" if allow_one else
+                " Pass --allow-one to register a single camera on purpose.")
         raise ArducamConfigError(
-            f"expected exactly two wrist cameras, found {len(candidates)}: {found}. "
+            f"expected {want} wrist cameras, found {len(candidates)}: {found}. "
             f"Plug both in (and check they are not a RealSense or a GelSight), "
-            f"then run this again. Nothing was written.")
+            f"then run this again. Nothing was written.{hint}")
 
     prior = {}
     try:
@@ -307,7 +323,7 @@ def register_wrist_cameras(path, *, devices=None, realsense_serials=None,
         pass
 
     cams = []
-    for slot, d in zip(("cam0", "cam1"), candidates):
+    for slot, d in zip(("cam0", "cam1")[:len(candidates)], candidates):
         cams.append({
             "slot": slot,
             "id_path": d.id_path,
@@ -613,10 +629,10 @@ def _cmd_list() -> int:
     return 0
 
 
-def _cmd_register(out: str) -> int:
+def _cmd_register(out: str, allow_one: bool = False) -> int:
     import sys
     try:
-        cams = register_wrist_cameras(out)
+        cams = register_wrist_cameras(out, allow_one=allow_one)
     except ArducamConfigError as exc:
         print(f"refused: {exc}", file=sys.stderr)
         return 1
@@ -642,12 +658,14 @@ def main(argv=None) -> int:
     register_parser = subparsers.add_parser(
         "register", help="write the wrist-camera config from what is plugged in")
     register_parser.add_argument("--out", default=str(DEFAULT_CONFIG_PATH.with_name("wrist_usb.json")))
+    register_parser.add_argument("--allow-one", action="store_true",
+                                 help="register a single camera; the pair is the default")
     subparsers.add_parser("list", help="show every capture device the machine sees")
     args = parser.parse_args(argv)
     if args.command == "list":
         return _cmd_list()
     if args.command == "register":
-        return _cmd_register(args.out)
+        return _cmd_register(args.out, args.allow_one)
     if args.command == "identify":
         identify(args.config)
         return 0

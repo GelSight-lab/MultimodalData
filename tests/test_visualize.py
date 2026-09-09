@@ -93,13 +93,16 @@ class TestSensorCameraPreview(unittest.TestCase):
         np.testing.assert_array_equal(panel[600, 420], [44, 55, 66])
         np.testing.assert_array_equal(panel[600, 900], [0, 0, 0])
 
-    def test_sensor_camera_preview_requires_exactly_two_frames(self):
-        with self.assertRaisesRegex(ValueError, "exactly two"):
-            build_preview_panel(
-                *self._args(), recording=False, frame_count=0, elapsed=0,
-                arducam_frames=[np.zeros((480, 640, 3), np.uint8)],
-            )
-
-
-if __name__ == '__main__':
-    unittest.main()
+    def test_sensor_camera_preview_takes_one_or_two_frames(self):
+        """One wrist camera is a valid rig — testing a single one before the
+        mount exists, or carrying on after one comes off."""
+        frame = np.zeros((480, 640, 3), np.uint8)
+        for n in (1, 2):
+            panel = build_preview_panel(
+                [frame] * 3, [frame] * 2, [frame] * 2, {}, False, 0, 0.0,
+                arducam_frames=[frame] * n,
+                arducam_labels=["a", "b"][:n])
+            self.assertEqual(panel.shape[1], 1280)
+        with self.assertRaises(ValueError):
+            build_preview_panel([frame] * 3, [frame] * 2, [frame] * 2, {},
+                                False, 0, 0.0, arducam_frames=[frame] * 3)
