@@ -1,9 +1,13 @@
 """Batch normal-force estimation over release episodes.
 
-Row alignment: published parquet row ``i`` corresponds to source H5 frame
-``trim + i + 15`` for the legacy recordings (the +15 tactile latency shift
-baked into the release — verified frame-exactly by
-``react_preprocess.backfill.verify_against_h5``).
+Row alignment: published parquet row ``i`` corresponds to the GelSight frame
+``react_preprocess.h5io.open_episode(...).align[side].index_map[i]`` — the same
+map the preprocess used to build that row. It is a nearest-capture-time lookup
+on timestamp-aligned recordings and the tick index on legacy ones, and it is
+READ here rather than recomputed. A constant ``+15`` lived here until it met
+the first timestamp-aligned session, which is already aligned: the constant
+double-corrected it and shipped force 13-15 frames (~0.45 s) ahead of the
+tactile it was computed from.
 
 Only rows flagged ``tactile_<side>_is_new`` are reconstructed; duplicated
 rows reuse the previous estimate, which is exact (identical pixels give an
@@ -30,8 +34,16 @@ DATA_ROOT = Path("/media/yxma/Disk1/twm/data")
 STAGE_ROOT = Path("/media/yxma/Disk1/twm/release")
 OUT_ROOT = Path("/media/yxma/Disk1/twm/force_recovery")
 
-# Re-exported from the single definition; do not redeclare the value here.
-from twm.tactile_align import LEGACY_SHIFT  # noqa: E402,F401
+# THE map from published row to GelSight frame comes from the preprocess that
+# built the row, never from a formula re-derived here. `LEGACY_SHIFT` used to
+# be imported and added directly, which was right only while every recording
+# was legacy: a timestamp-aligned recording is already aligned, so the constant
+# double-corrected it and put the force 13-15 frames (~0.45 s) ahead of the
+# tactile it was computed from. Shipped that way in the 2026-09-09 validation
+# set. The comment below already named the hazard -- "two modules evaluate
+# trim + row + LEGACY_SHIFT and get the same answer" -- so this reads the
+# answer instead of evaluating it a second time.
+from twm.react_preprocess.h5io import open_episode  # noqa: E402
 N_REFERENCE = 15
 FIELDS = ("force_normal_n", "volume_mm3", "contact_area_mm2", "max_depth_mm")
 
@@ -79,6 +91,18 @@ def process_side(task: str, date: str, ep: str, side: str, *,
     h5_path = DATA_ROOT / task / date / f"{ep}.h5"
     ref_rows = _reference_rows(inten, is_new)
 
+    # The published row -> GelSight frame map, from the module that built the
+    # published rows. Timestamp-aligned recordings get a nearest-capture-time
+    # lookup; legacy ones get the tick index. Either way it is read, not
+    # re-derived, so force and the tactile columns cannot drift apart.
+    align = open_episode(h5_path, task).align[side]
+    idx_map = np.asarray(align.index_map, np.int64)
+    if len(idx_map) != T:
+        raise ValueError(
+            f"{task}/{date}/{ep}_{side}: the parquet has {T} rows but the "
+            f"tactile alignment has {len(idx_map)}. One of them was built from "
+            f"a different recording.")
+
     # Force comes from the SAME calibration the rest of the project uses.
     # What was here — a single N-per-mm3 constant times the v1 MLP volume —
     # scored rho 0.297 on GlowTact `round` and mapped a true 0.16-8 N range
@@ -97,7 +121,7 @@ def process_side(task: str, date: str, ep: str, side: str, *,
         n_frames = len(frames)
 
         def src(row: int) -> int:
-            return min(trim + row + LEGACY_SHIFT, n_frames - 1)
+            return min(int(idx_map[row]), n_frames - 1)
 
         # flatfield: validated on cnc_Mini ground truth (held-out rho
         # 0.34 -> 0.65 with edge filtering); normalizes the vignette the
@@ -119,10 +143,13 @@ def process_side(task: str, date: str, ep: str, side: str, *,
         from .react_calib import force_stages
         # WHICH FRAME EACH NUMBER CAME FROM, recorded AT THE READ.
         #
-        # Force and the tactile columns agree on the frame today — measured,
-        # lag 0 on 24 side-episodes — but only because two modules evaluate
-        # `trim + row + LEGACY_SHIFT` and get the same answer. Nothing in the
-        # data says so, and a reader cannot check it without reading us.
+        # Force and the tactile columns used to agree only because two modules
+        # evaluated `trim + row + LEGACY_SHIFT` and got the same answer, which
+        # held exactly as long as every recording was legacy. The first
+        # timestamp-aligned session broke it: the preprocess stopped adding the
+        # constant, this module did not, and the 2026-09-09 validation set
+        # shipped with force 13-15 frames ahead of its own tactile. Both now
+        # read one `index_map`, so there is no second evaluation to disagree.
         #
         # That arrangement failed three times in one session: the preview's
         # force disc landed half a second from its own tile, the verifier
@@ -160,7 +187,9 @@ def process_side(task: str, date: str, ep: str, side: str, *,
 
     meta = {
         "task": task, "date": date, "episode": ep, "side": side,
-        "trim": trim, "shift": LEGACY_SHIFT,
+        # `shift` is gone: there is no constant any more. The alignment is a
+        # per-row map, and `source_frame` in the npz carries it row by row.
+        "trim": trim, "tactile_timestamped": bool(align.timestamped),
         # thresholds now live in stages(): |dI|>8 for the valid mask and
         # depth>0.05 mm for the contact mask
         "contact_threshold_mm": 0.05,
