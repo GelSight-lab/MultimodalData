@@ -742,9 +742,17 @@ def main(argv=None) -> int:
         "assign", help="name the side of the one camera left plugged in")
     assign_parser.add_argument("side", choices=("left", "right"))
     assign_parser.add_argument("--config", default=str(DEFAULT_CONFIG_PATH.with_name("wrist_usb.json")))
+    tune_parser = subparsers.add_parser(
+        "tune", help="live window: adjust the controls and watch the cost")
+    tune_parser.add_argument("--config", default=str(DEFAULT_CONFIG_PATH.with_name("wrist_usb.json")))
+    tune_parser.add_argument("--camera", default=None, help="cam0 or cam1; default both")
+    tune_parser.add_argument("--fps", type=int, default=30)
     args = parser.parse_args(argv)
     if args.command == "list":
         return _cmd_list()
+    if args.command == "tune":
+        from twm.camera_tuner import tune
+        return tune(args.config, args.camera, args.fps)
     if args.command == "assign":
         import sys
         try:
