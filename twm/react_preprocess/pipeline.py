@@ -12,6 +12,7 @@ Output layout (mirrors the HF dataset):
 """
 from __future__ import annotations
 
+import json
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -27,6 +28,7 @@ from twm.recorder.frames import decode_arducam
 
 from .encode import depth_writer, rgb_writer
 from .h5io import open_episode
+from twm.wrist_tone import apply_tone_curve, camera_kind_from_serials, gamma_for_camera
 from .tactile import process_side
 
 
@@ -54,16 +56,25 @@ def _encode_cameras(f, source, video_dir: Path) -> None:
                 w.write(ds[source.trim + s:source.trim + e])
 
 
-def _encode_wrist(f, source, video_dir: Path) -> int:
-    """The two Arducam wrist streams, decoded here rather than at record time.
+def _encode_wrist(f, source, video_dir: Path) -> dict:
+    """The two wrist streams, decoded here rather than at record time.
 
     Cut at `source.trim` like every other stream: a wrist video that starts
     at frame 0 while the tactile beside it starts at the trim plays ahead of
     it, and nothing in the file says so.
+
+    Each stream is published through the power curve its camera generation
+    calls for — the wrist cameras record much darker than the rest of the rig
+    and cannot be fixed at the camera (no gain control, exposure already at the
+    30 fps ceiling). See `tone` for where the exponents come from and why they
+    are per camera rather than per episode. Returns the exponent used per slot
+    so it reaches the episode metadata; 1.0 means the stream was published
+    exactly as recorded.
     """
     if "arducam" not in f:
-        return 0
-    written = 0
+        return {}
+    gamma = gamma_for_camera(_wrist_camera_kind(f), source.task)
+    gammas = {}
     for slot, name in WRIST_STREAM.items():
         key = f"arducam/{slot}/frames"
         if key not in f:
@@ -75,9 +86,27 @@ def _encode_wrist(f, source, video_dir: Path) -> int:
                 block = ds[source.trim + s:source.trim + e]
                 # decode_arducam is a no-op on the raw-BGR episodes recorded
                 # before 2026-09, so both layouts take this one path.
-                w.write(np.stack([decode_arducam(fr) for fr in block]))
-        written += 1
-    return written
+                w.write(apply_tone_curve(
+                    np.stack([decode_arducam(fr) for fr in block]), gamma))
+        gammas[slot] = round(float(gamma), 4)
+    return gammas
+
+
+def _wrist_camera_kind(f) -> str | None:
+    """Which wrist camera this recording used, or None when it had none.
+
+    The Arducams (serial-keyed, through 2026-09-09) and the generic USB pair
+    (port-keyed, 2026-09-10 on) differ in field of view, exposure and
+    distortion. A `has_wrist` boolean would merge them into one modality.
+    """
+    raw = f["metadata"].attrs.get("arducam_config", None)
+    if not raw:
+        return None
+    try:
+        cams = json.loads(raw)
+    except (TypeError, ValueError):
+        return None
+    return camera_kind_from_serials([c.get("serial") for c in cams])
 
 
 def _encode_depth(f, source, depth_dir: Path) -> int:
@@ -97,21 +126,35 @@ def _encode_depth(f, source, depth_dir: Path) -> int:
 
 
 def _object_pose(f, source) -> np.ndarray | None:
-    """Nearest-timestamp pose of the manipulated object, if it was tracked."""
+    """Nearest-timestamp pose of the manipulated object, if this task has one.
+
+    Which task tracks an object is DECLARED (`config.OBJECT_TRACKED_TASKS`),
+    not searched for. This used to try the bodies (task, "object",
+    "motherboard") in turn and take whichever the recording happened to
+    contain -- so a pushT session recorded while Motive still had a
+    `motherboard` body defined got that body's output as its object pose. On
+    2026-09-09 that was 3 stray samples over 8.9 minutes, 157 mm apart, and
+    the nearest-neighbour fill spread them across all 13484 rows. The column
+    then reads 100% valid while every other pushT episode is all NaN, and
+    nothing in the data says which one to believe.
+    """
     from .h5io import cam_align_poses
+    from .config import OBJECT_BODY, OBJECT_TRACKED_TASKS
 
-    for body in (source.task, "object", "motherboard"):
-        grp = f"optitrack/{body}"
-        if grp in f and len(f[f"{grp}/timestamps"]) > 0:
-            pose = cam_align_poses(source.trimmed_cam_ts,
-                                   f[f"{grp}/timestamps"][:], f[f"{grp}/pose"][:]).copy()
-            off = source.world_offset
-            pose[:, 0] += off[0]; pose[:, 1] += off[1]; pose[:, 2] += off[2]
-            return pose
-    return np.full((source.T, 7), np.nan, np.float32)
+    none = np.full((source.T, 7), np.nan, np.float32)
+    if source.task not in OBJECT_TRACKED_TASKS:
+        return none
+    grp = f"optitrack/{OBJECT_BODY[source.task]}"
+    if grp not in f or len(f[f"{grp}/timestamps"]) == 0:
+        return none
+    pose = cam_align_poses(source.trimmed_cam_ts,
+                           f[f"{grp}/timestamps"][:], f[f"{grp}/pose"][:]).copy()
+    off = source.world_offset
+    pose[:, 0] += off[0]; pose[:, 1] += off[1]; pose[:, 2] += off[2]
+    return pose
 
 
-def _write_detect_sidecar(path: Path, source, tactile) -> None:
+def _write_detect_sidecar(path: Path, source, tactile, extra_meta=None) -> None:
     """Small torch sidecar consumed by the quality detector."""
     import torch
 
@@ -129,6 +172,7 @@ def _write_detect_sidecar(path: Path, source, tactile) -> None:
             "world_frame_offset_applied": list(source.world_offset),
             "tactile_timestamped": bool(source.timestamped),
             "tactile_stats": {s: tactile[s].stats for s in SIDES},
+            **(extra_meta or {}),
         },
     }, str(path))
 
@@ -169,9 +213,10 @@ def build_episode(h5_path: Path, task: str, force: bool = False,
         return BuildReport(source.episode, "skipped", detail="already built")
 
     with h5py.File(str(h5_path), "r") as f:
+        wrist = {"wrist_camera": _wrist_camera_kind(f), "wrist_tone_gamma": {}}
         if encode_video:
             _encode_cameras(f, source, video_dir)
-            _encode_wrist(f, source, video_dir)
+            wrist["wrist_tone_gamma"] = _encode_wrist(f, source, video_dir)
         tactile = {
             side: process_side(f, side, source.align[side],
                                video_dir / f"{GEL_STREAM[side]}.mp4",
@@ -185,7 +230,8 @@ def build_episode(h5_path: Path, task: str, force: bool = False,
 
     table = meta_mod.build_table(source, tactile, obj_pose)
     meta_mod.write_table(table, pq_path)
-    _write_detect_sidecar(meta_dir / f"{source.episode}._detect.pt", source, tactile)
+    _write_detect_sidecar(meta_dir / f"{source.episode}._detect.pt", source, tactile,
+                          extra_meta=wrist)
 
     lstat = tactile["left"].stats
     detail = (f"T={source.T} "

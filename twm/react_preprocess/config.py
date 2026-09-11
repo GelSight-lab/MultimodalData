@@ -46,6 +46,24 @@ H5_ROOTS = {
 # Sessions that predate the multi-camera rig and are not published.
 EXCLUDE_DATES = {"2026-03-23"}
 
+# ── which task tracks the manipulated object ─────────────────────────────────
+# `object_pose` is optional, and only the motherboard has a rigid body on it.
+# The pushT block does not, and nothing else is planned to.
+#
+# Declared, because the alternative was a search: `_object_pose` tried the
+# bodies (task, "object", "motherboard") in turn and took the first one the
+# recording happened to contain. Motive was still emitting a `motherboard`
+# body during the 2026-09-09 pushT session -- 3 stray samples over 8.9
+# minutes, 157 mm apart, a marker cluster mistaken for the board -- so that
+# episode shipped with `object_pose` 100% non-NaN, three garbage values
+# nearest-neighboured across 13484 rows. Every other pushT episode is all
+# NaN, which is the honest way to say "not tracked", and a reader has no way
+# to tell the two apart from the column alone.
+OBJECT_TRACKED_TASKS = frozenset({"motherboard"})
+
+# The rigid body that IS the object, per task that has one.
+OBJECT_BODY = {"motherboard": "motherboard"}
+
 # ── sessions whose SOURCE recordings no longer exist ─────────────────────────
 # Deleted 2026-09-09 to make room for re-collection: 1.19 TB of raw HDF5 across
 # 38 episodes, by the operator's decision, knowing there was no other copy.

@@ -9,6 +9,19 @@
     gelsight/{left,right}/timestamps  float64 [T]   capture time per frame
     arducam/cam{0,1}/frames, timestamps (only when configured)
     optitrack/{name}/timestamps float64 [N], pose float64 [N,7]
+
+CHANNEL ORDER: every colour array in this file is **BGR**, not RGB. The
+RealSense is opened as `rs.format.bgr8` and the GelSight/wrist frames come
+out of `cv2.imdecode`, which is BGR too, and all of them are stored exactly
+as they arrive. Nothing converts.
+
+Worth saying here because the PUBLISHED release is the other way round: the
+encoder is told `pix_fmt="bgr24"`, so ffmpeg does the conversion and a
+standard decoder hands the mp4 back as RGB. Both are right for what they
+are; reading this file as RGB is not. It turns a blue pushT block orange,
+which reads as a lighting oddity rather than a bug -- and the repository
+already carries `fix_channel_order.py` from the last time that went
+unnoticed across a whole dataset.
 """
 from __future__ import annotations
 
