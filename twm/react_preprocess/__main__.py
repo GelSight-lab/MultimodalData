@@ -196,11 +196,13 @@ def main(argv=None) -> int:
     b.add_argument("--meta-only", action="store_true",
                    help="recompute parquet without re-encoding video")
     b.add_argument("--single-pass", action="store_true",
-                   help="encode every colour stream from one traversal of the "
-                        "recording instead of one per stream. Same output; the "
-                        "recording interleaves streams frame by frame, so "
-                        "per-stream encoding walks the whole file seven times "
-                        "and reads ~6x the bytes it uses")
+                   help="encode every colour stream from one traversal of "
+                          "the recording instead of one per stream. Same "
+                          "output, 1.8x faster: the recording interleaves "
+                          "streams frame by frame, so per-stream encoding "
+                          "walks the whole file seven times. SEEK-bound, "
+                          "not bandwidth-bound -- measured 1.81 vs 1.90 GB "
+                          "read for the same episode (pipeline._rgb_plan)")
     b.add_argument("--no-repair", action="store_true",
                    help="do not attempt to recover a recording that will not "
                         "open; report the diagnosis and move on. Recovery "

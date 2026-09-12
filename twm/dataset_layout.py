@@ -97,9 +97,48 @@ def _parquet_rows_and_columns(path: Path):
     return len(df), list(df.columns)
 
 
+def _stream_frames(path) -> int:
+    """Frames the container can actually deliver, by counting PACKETS.
+
+    Three ways to ask, measured on a real 1995-frame published video:
+
+        nb_read_frames  (-count_frames)   1.95 s   decodes every frame
+        nb_read_packets (-count_packets)  0.06 s   reads the index
+        nb_frames       (metadata only)   0.06 s   believes the header
+
+    All three see a re-encoded short file. Only the first two see a TRUNCATED
+    one — `nb_frames` cheerfully reports 1995 for a file whose second half is
+    gone, which is the exact case this check exists for. Packets cost 1/32nd of
+    a decode and catch both, so a whole task is seconds rather than a quarter
+    of an hour, and the gate can stay on by default.
+
+    Decoding is still what `segment.py` does on the cut path, where frames are
+    being rewritten rather than merely counted.
+    """
+    import subprocess
+    r = subprocess.run(
+        ["ffprobe", "-v", "error", "-count_packets", "-select_streams", "v:0",
+         "-show_entries", "stream=nb_read_packets", "-of", "csv=p=0", str(path)],
+        capture_output=True, text=True)
+    if r.returncode != 0 or not r.stdout.strip().isdigit():
+        raise RuntimeError((r.stderr or r.stdout).strip()[:200] or "no frame count")
+    return int(r.stdout.strip())
+
+
 def check_layout(root, date: str, *, require_force: bool = True,
-                 require_previews: bool = True) -> LayoutReport:
-    """Validate one session inside a task-shaped folder."""
+                 require_previews: bool = True,
+                 count_frames: bool = False) -> LayoutReport:
+    """Validate one session inside a task-shaped folder.
+
+    ``count_frames`` DECODES every published video and compares its length to
+    the parquet beside it. Off by default because `check_remote` never
+    downloads the videos — it writes empty placeholders and checks presence —
+    so it has no bytes to count. Turn it on for a local tree, which is where
+    the gate runs before an upload anyway.
+
+    The cut path has guarded this since it existed (`segment.py`); the
+    whole-episode path only ever checked that the files were THERE.
+    """
     root = Path(root)
     rep = LayoutReport(str(root), date)
     meta = root / "meta" / date
@@ -122,11 +161,19 @@ def check_layout(root, date: str, *, require_force: bool = True,
             rep.fail("meta", f"{ep}: parquet unreadable ({type(exc).__name__}: {exc})")
             continue
         rows_by_ep[ep] = n
-        for c in ("task", "task_index", "episode", "episode_index", "frame_index"):
-            if c not in cols:
-                rep.warnings.append(f"{ep}: parquet has no {c} — every published "
-                                    f"folder carries the LeRobot index columns")
-                break
+        # A FAILURE, not a warning. These were a warning, so 84 parquets
+        # shipped without them and the gate still said pass; a warning nobody
+        # fails on is a comment. Report every missing column rather than the
+        # first — the previous `break` hid `frame_index` behind the four that
+        # had just been added.
+        missing_idx = [c for c in ("task", "task_index", "episode",
+                                   "episode_index", "frame_index")
+                       if c not in cols]
+        if missing_idx:
+            rep.fail("index columns",
+                     f"{ep}: parquet has no {', '.join(missing_idx)} — every "
+                     f"published folder carries the LeRobot index columns "
+                     f"(react_preprocess.meta.add_index_columns)")
         if require_force:
             missing = [c for c in FORCE_COLUMNS if c not in cols]
             if missing:
@@ -138,6 +185,20 @@ def check_layout(root, date: str, *, require_force: bool = True,
             for f in files:
                 if not (d / f).is_file():
                     rep.fail(name, f"{ep}: missing {name}/{date}/{ep}/{f}")
+        if count_frames:
+            for f in VIDEO_FILES + WRIST_FILES:
+                v = root / "videos" / date / ep / f
+                if not v.is_file():
+                    continue                      # already reported above
+                try:
+                    got = _stream_frames(v)
+                except Exception as exc:          # noqa: BLE001
+                    rep.fail("videos", f"{ep}: {f} will not read "
+                                       f"({type(exc).__name__}: {exc})")
+                    continue
+                if got != n:
+                    rep.fail("videos", f"{ep}: {f} has {got} frames but the "
+                                       f"parquet has {n} rows")
         missing_wrist = [w for w in WRIST_FILES
                          if not (root / "videos" / date / ep / w).is_file()]
         if len(missing_wrist) == len(WRIST_FILES):
@@ -294,6 +355,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     sub = p.add_subparsers(dest="cmd", required=True)
     c = sub.add_parser("check", help="a local folder")
     c.add_argument("root")
+    # Local only: check-remote never downloads the videos, so it has no bytes
+    # to count. This is the gate that runs before an upload anyway.
+    c.add_argument("--no-frame-count", action="store_true",
+                   help="skip decoding each video to compare its length with "
+                        "the parquet (decoding a session takes minutes)")
     r = sub.add_parser("check-remote", help="a folder already on the Hub")
     r.add_argument("repo_id")
     r.add_argument("prefix")
@@ -304,7 +370,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         q.add_argument("--json", action="store_true")
     a = p.parse_args(argv)
     kw = {"require_force": not a.no_force, "require_previews": not a.no_previews}
-    rep = (check_layout(a.root, a.date, **kw) if a.cmd == "check"
+    rep = (check_layout(a.root, a.date, count_frames=not a.no_frame_count, **kw)
+           if a.cmd == "check"
            else check_remote(a.repo_id, a.prefix, a.date, **kw))
     print(json.dumps(rep.to_dict(), indent=2) if a.json else rep.table())
     return 0 if rep.ok else 1

@@ -177,6 +177,15 @@ CALIB_SESSIONS = {
     # cameras as the motherboard and pushT sessions of that day. Nothing about
     # a new task moves the RealSense-to-mocap extrinsics.
     ("rope",        "2026-09-11"): "2026-09-09",
+    # 2026-09-12. Not inferred from the date: the rig config stored IN the
+    # recordings is byte-identical to 2026-09-11 (same id_path per side, same
+    # serial 200901010001 for the port-keyed USB pair), no calibration was
+    # solved that day, and the recorder resolves its own overlay through
+    # `current_epoch()`, which has been 2026-09-09 since the solve — so the
+    # recordings were made through this epoch. The operator confirmed the
+    # cameras were not disturbed between the two sessions.
+    ("pushT",       "2026-09-12"): "2026-09-09",
+    ("motherboard", "2026-09-12"): "2026-09-09",
 }
 
 
