@@ -28,6 +28,8 @@ from twm.sched import publisher  # noqa: E402
 FORCE_LOG = Path("/tmp/force_logs")
 FORCE_POOL = ("/tmp/claude-1004/-home-yxma-MultimodalData/"
               "d734563d-9427-48c6-a0e9-fe7c75ba0ddf/scratchpad/pub/force_pool.sh")
+MAKE_WORKLIST = ("/tmp/claude-1004/-home-yxma-MultimodalData/"
+                 "d734563d-9427-48c6-a0e9-fe7c75ba0ddf/scratchpad/pub/make_worklist.py")
 LOG = Path("/tmp/sched.log")
 DATA = "/media/yxma/Disk1/twm/data"
 
@@ -86,15 +88,31 @@ def force_workers() -> list[str]:
 
 
 def backlog() -> int:
-    """Claimed-but-unfinished plus unclaimed force jobs."""
+    """Force jobs that exist, computed from the release tree itself.
+
+    Not from the worklist file. That file is refreshed by the advance loop,
+    which spends most of its cycle cutting -- so between refreshes the
+    scheduler saw a stale list, reported backlog 0, and would not start a
+    worker while real work waited. Three episodes sat that way the moment they
+    finished building: motherboard/episode_007 and rope/episode_004 and _010.
+
+    An episode counts when it is fully built, its source recording still
+    exists, and a side has no npz. Same definition make_worklist writes out,
+    so the two cannot disagree.
+    """
     n = 0
-    for wl in FORCE_LOG.glob("worklist*.txt"):
-        for line in wl.read_text().splitlines():
-            if not line.strip():
+    for task in ("motherboard", "pushT", "rope"):
+        rel = Path(f"/media/yxma/Disk1/twm/release/{task}")
+        for pq_path in rel.glob("meta/2026-09-*/episode_*.parquet"):
+            date, ep = pq_path.parent.name, pq_path.stem
+            if len(list((rel / "videos" / date / ep).glob("*.mp4"))) != 7:
                 continue
-            t, d, e, s = line.split()
-            if not Path(f"/media/yxma/Disk1/twm/force_recovery/{t}/{d}/{e}_{s}.npz").exists():
-                n += 1
+            if not Path(f"/media/yxma/Disk1/twm/data/{task}/{date}/{ep}.h5").exists():
+                continue
+            for side in ("left", "right"):
+                if not Path(f"/media/yxma/Disk1/twm/force_recovery/{task}/"
+                            f"{date}/{ep}_{side}.npz").exists():
+                    n += 1
     return n
 
 
@@ -128,8 +146,8 @@ def main() -> int:
         fw = force_workers()
         fw_run = [p for p in fw if _state(p) != "T"]
         fw_stop = [p for p in fw if _state(p) == "T"]
-        if bi > best:
-            best = bi
+        if not probing:
+            best = bi            # the baseline this probe will be judged against
         if pub_proc is not None and pub_proc.poll() is not None:
             pub_proc = None
         # Asking the Hub what exists costs a round trip, so only between
@@ -172,6 +190,11 @@ def main() -> int:
         if d.add_cpu and fw_stop:
             os.kill(int(fw_stop[0]), 18); act.append(f"恢复 force pid{fw_stop[0]}")
         elif d.add_cpu:
+            # Refresh the list the worker will read. The scheduler decides to
+            # spawn from ground truth, so it must not hand the worker a list
+            # that predates the episodes it just counted.
+            subprocess.run([sys.executable, MAKE_WORKLIST],
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             # Nothing suspended to resume, so START one. The controller could
             # previously only resume, and the force pool exits once its queue
             # drains -- so when a later build produced new force jobs there was
