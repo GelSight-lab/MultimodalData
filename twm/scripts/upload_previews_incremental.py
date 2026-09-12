@@ -41,6 +41,29 @@ def is_finished(path: Path) -> bool:
         return False
 
 
+def sha256(path: Path) -> str:
+    import hashlib
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for blk in iter(lambda: f.read(1 << 20), b""):
+            h.update(blk)
+    return h.hexdigest()
+
+
+def changed(local: dict[str, str], remote: dict[str, str]) -> list[str]:
+    """Keys whose local bytes differ from what the Hub holds.
+
+    `--resend` asked "is it already there", which re-sent all 61 previews
+    every round -- 533 uploads -- and, once the renderer was fixed, could not
+    tell an old preview from a new one anyway. Comparing the content answers
+    both: a re-rendered file differs, an untouched one does not.
+
+    The Hub stores these as LFS, whose oid IS the sha256 of the content, so no
+    download is needed to compare.
+    """
+    return sorted(k for k, sha in local.items() if remote.get(k) != sha)
+
+
 def pending(local: set[str], remote: set[str], publishes: set[str]) -> list[str]:
     """`<date>/<episode>` keys ready to send: rendered, published, not yet up."""
     return sorted((local & publishes) - remote)
@@ -57,13 +80,16 @@ def publishes(task: str, api) -> set[str]:
     return out
 
 
-def remote_previews(task: str, api) -> set[str]:
-    out = set()
-    for f in api.list_repo_files(REPO, repo_type="dataset"):
-        p = f.split("/")
+def remote_previews(task: str, api) -> dict[str, str]:
+    """`<date>/<episode>` -> sha256 of what the Hub holds."""
+    info = api.repo_info(REPO, repo_type="dataset", files_metadata=True)
+    out = {}
+    for sib in info.siblings:
+        p = sib.rfilename.split("/")
         if (len(p) == 5 and p[0] == "data" and p[1] == task
                 and p[2] == "previews" and p[4].endswith(".mp4")):
-            out.add(f"{p[3]}/{p[4][:-len('.mp4')]}")
+            sha = sib.lfs.sha256 if sib.lfs else None
+            out[f"{p[3]}/{p[4][:-len('.mp4')]}"] = sha
     return out
 
 
@@ -73,13 +99,17 @@ def local_finished(task: str) -> set[str]:
             if is_finished(p)} if root.is_dir() else set()
 
 
-def round_once(api, dry_run: bool) -> tuple[int, int]:
+def round_once(api, dry_run: bool, resend: bool = False) -> tuple[int, int]:
     """One pass over every task. Returns (uploaded, still outstanding)."""
     sent = outstanding = 0
     for task in TASKS:
         pub = publishes(task, api)
-        keys = pending(local_finished(task), remote_previews(task, api), pub)
-        outstanding += len(pub) - len(remote_previews(task, api)) - len(keys)
+        up = remote_previews(task, api)
+        ready = local_finished(task) & pub
+        local_sha = {k: sha256(CUT_ROOT / task / "previews" / f"{k}.mp4")
+                     for k in ready}
+        keys = changed(local_sha, up)
+        outstanding += len(pub) - len(ready)
         if not keys:
             continue
         print(f"  [{task}] 上传 {len(keys)} 个: {', '.join(k.split('/')[-1] for k in keys[:4])}"
@@ -100,12 +130,15 @@ def main() -> int:
                     help="keep polling while the renders run")
     ap.add_argument("--interval", type=int, default=180)
     ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--resend", action="store_true",
+                    help="re-upload previews already on the Hub — for when the "
+                         "renderer itself was wrong, not just incomplete")
     a = ap.parse_args()
     from huggingface_hub import HfApi
     api = HfApi()
     total = 0
     while True:
-        sent, outstanding = round_once(api, a.dry_run)
+        sent, outstanding = round_once(api, a.dry_run, a.resend)
         total += sent
         print(f"  [{time.strftime('%H:%M:%S')}] 本轮 {sent}，累计 {total}，"
               f"尚未渲染 {outstanding}", flush=True)

@@ -47,3 +47,22 @@ def test_order_is_stable():
     got = pending(local={f"2026-09-11/e{i}" for i in range(5)}, remote=set(),
                   publishes={f"2026-09-11/e{i}" for i in range(5)})
     assert got == sorted(got)
+
+
+def test_changed_files_are_resent_and_identical_ones_are_not():
+    """`--resend` re-sent everything EVERY round: 533 uploads for 61 files.
+
+    After the renderer was fixed, the Hub held a mix of old and new previews,
+    so 'already there' was the wrong question. The right one is whether the
+    bytes differ.
+    """
+    from upload_previews_incremental import changed
+    local = {"a": "sha_new", "b": "sha_same", "c": "sha_only_local"}
+    remote = {"a": "sha_old", "b": "sha_same"}
+    assert changed(local, remote) == ["a", "c"]
+
+
+def test_nothing_changed_is_empty():
+    from upload_previews_incremental import changed
+    same = {"a": "x", "b": "y"}
+    assert changed(same, dict(same)) == []
