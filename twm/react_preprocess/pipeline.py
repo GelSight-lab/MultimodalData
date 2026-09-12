@@ -56,6 +56,71 @@ def _encode_cameras(f, source, video_dir: Path) -> None:
                 w.write(ds[source.trim + s:source.trim + e])
 
 
+def _rgb_plan(f, source) -> tuple[list, dict]:
+    """The colour streams to encode: [(dataset, name, gamma_or_None)].
+
+    ``gamma`` is None for a RealSense stream (published as recorded) and the
+    wrist camera's tone exponent otherwise; see ``_encode_wrist``.
+    """
+    plan = [(f[k], name, None)
+            for cam_idx, name in CAM_STREAM.items()
+            if (k := f"realsense/cam{cam_idx}/color") in f]
+    gammas = {}
+    if "arducam" in f:
+        gamma = gamma_for_camera(_wrist_camera_kind(f), source.task)
+        for slot, name in WRIST_STREAM.items():
+            if (k := f"arducam/{slot}/frames") in f:
+                plan.append((f[k], name, gamma))
+                gammas[slot] = round(float(gamma), 4)
+    return plan, gammas
+
+
+def _encode_rgb_single_pass(f, source, video_dir: Path) -> dict:
+    """Every colour stream, from ONE traversal of the recording.
+
+    Identical output to ``_encode_cameras`` + ``_encode_wrist``; the only
+    difference is the order the file is read in, and that order is what the
+    recording's layout makes expensive.
+
+    The recorder writes one chunk per frame per stream, tick by tick, so on
+    disk the file reads
+    ``cam0₀ cam1₀ cam2₀ gelL₀ gelR₀ wristL₀ wristR₀ | cam0₁ cam1₁ …``.
+    Measured on a rope recording: each chunk is 0.62 MB and the next chunk of
+    the SAME stream sits 3.87 MB further on. Encoding one stream at a time
+    therefore walks the whole file to consume a sixth of what it reads, and
+    does that once per stream — seven traversals, ~6x more bytes off the
+    platter than the file holds. On the 2026-09 backlog that was 30 MB/s of
+    real disk throughput on a disk that does ~100 MB/s sequentially.
+
+    Reading all the colour streams for one block of frames before moving on
+    consumes each 3.87 MB span once, in one go. Raising ``read_ahead_kb``
+    cannot do this: the useful bytes are strided, so a bigger readahead just
+    fetches the neighbouring streams' chunks and discards them (measured: 2 MB
+    readahead made no difference, if anything slightly worse).
+
+    Not yet the default. It changes the core build path and the difference is
+    invisible in the output, so it wants a full session's worth of evidence
+    before it becomes what every build does.
+    """
+    from contextlib import ExitStack
+
+    plan, gammas = _rgb_plan(f, source)
+    if not plan:
+        return gammas
+    with ExitStack() as stack:
+        writers = [stack.enter_context(rgb_writer(video_dir / f"{name}.mp4"))
+                   for _, name, _ in plan]
+        for s in range(0, source.T, CHUNK):
+            e = min(s + CHUNK, source.T)
+            for (ds, _, gamma), w in zip(plan, writers):
+                block = ds[source.trim + s:source.trim + e]
+                if gamma is not None:
+                    block = apply_tone_curve(
+                        np.stack([decode_arducam(fr) for fr in block]), gamma)
+                w.write(block)
+    return gammas
+
+
 def _encode_wrist(f, source, video_dir: Path) -> dict:
     """The two wrist streams, decoded here rather than at record time.
 
@@ -179,7 +244,7 @@ def _write_detect_sidecar(path: Path, source, tactile, extra_meta=None) -> None:
 
 def build_episode(h5_path: Path, task: str, force: bool = False,
                   with_depth: bool = False, encode_video: bool = True,
-                  auto_repair: bool = True) -> BuildReport:
+                  auto_repair: bool = True, single_pass: bool = False) -> BuildReport:
     """Build every published artefact for one source recording.
 
     A recording that will not open is diagnosed and, for the one signature
@@ -213,10 +278,22 @@ def build_episode(h5_path: Path, task: str, force: bool = False,
         return BuildReport(source.episode, "skipped", detail="already built")
 
     with h5py.File(str(h5_path), "r") as f:
-        wrist = {"wrist_camera": _wrist_camera_kind(f), "wrist_tone_gamma": {}}
+        # The tone exponent is a property of (camera, task), not of this run,
+        # so it is recorded even when the video is not re-encoded. Leaving it
+        # empty under --meta-only made the metadata claim no curve was applied
+        # to mp4s that were in fact published through one.
+        kind = _wrist_camera_kind(f)
+        wrist = {"wrist_camera": kind,
+                 "wrist_tone_gamma": {slot: round(gamma_for_camera(kind, source.task), 4)
+                                      for slot in WRIST_STREAM
+                                      if f"arducam/{slot}/frames" in f}}
         if encode_video:
-            _encode_cameras(f, source, video_dir)
-            wrist["wrist_tone_gamma"] = _encode_wrist(f, source, video_dir)
+            if single_pass:
+                wrist["wrist_tone_gamma"] = _encode_rgb_single_pass(
+                    f, source, video_dir)
+            else:
+                _encode_cameras(f, source, video_dir)
+                wrist["wrist_tone_gamma"] = _encode_wrist(f, source, video_dir)
         tactile = {
             side: process_side(f, side, source.align[side],
                                video_dir / f"{GEL_STREAM[side]}.mp4",

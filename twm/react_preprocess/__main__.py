@@ -31,7 +31,8 @@ def cmd_build(args) -> int:
         report = build_episode(p, args.task, force=args.force,
                                with_depth=args.with_depth,
                                encode_video=not args.meta_only,
-                               auto_repair=not args.no_repair)
+                               auto_repair=not args.no_repair,
+                               single_pass=args.single_pass)
         print(f"  {report}", flush=True)
         failures += report.status == "FAIL"
         refused += report.status == "RECOVERED-NOT-PUBLISHABLE"
@@ -190,6 +191,12 @@ def main(argv=None) -> int:
     b.add_argument("--with-depth", action="store_true")
     b.add_argument("--meta-only", action="store_true",
                    help="recompute parquet without re-encoding video")
+    b.add_argument("--single-pass", action="store_true",
+                   help="encode every colour stream from one traversal of the "
+                        "recording instead of one per stream. Same output; the "
+                        "recording interleaves streams frame by frame, so "
+                        "per-stream encoding walks the whole file seven times "
+                        "and reads ~6x the bytes it uses")
     b.add_argument("--no-repair", action="store_true",
                    help="do not attempt to recover a recording that will not "
                         "open; report the diagnosis and move on. Recovery "
