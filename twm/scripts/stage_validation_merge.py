@@ -24,10 +24,14 @@ from __future__ import annotations
 import argparse
 import json
 import shutil
+import sys
 from pathlib import Path
 
 import pyarrow as pa
 import pyarrow.parquet as pq
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from twm.react_preprocess.meta import add_index_columns  # noqa: E402
 
 CUT_ROOT = Path("/media/yxma/Disk1/twm/release_cut")
 DATE = "2026-09-09"
@@ -48,26 +52,14 @@ ARRIVALS = [
 
 
 def _reindex(table: pa.Table, task: str, new_ep: str, new_idx: int) -> pa.Table:
-    """Set the LeRobot index columns to what this episode is now called."""
-    n = table.num_rows
-    want = {
-        "task": pa.array([task] * n, pa.string()),
-        "task_index": pa.array([TASK_INDEX[task]] * n, pa.int64()),
-        "episode": pa.array([f"{DATE}/{new_ep}"] * n, pa.string()),
-        "episode_index": pa.array([new_idx] * n, pa.int64()),
-        # Row position within THIS episode. `frame_idx` already counts rows,
-        # but every published parquet carries both and the layout check names
-        # `frame_index`; the cut segments shipped neither of the two int64
-        # LeRobot columns.
-        "frame_index": pa.array(list(range(n)), pa.int64()),
-    }
-    for name, col in want.items():
-        if name in table.column_names:
-            table = table.set_column(table.schema.get_field_index(name),
-                                     name, col)
-        else:
-            table = table.append_column(name, col)
-    return table.replace_schema_metadata(table.schema.metadata)
+    """Set the LeRobot index columns to what this episode is now called.
+
+    Renumbering is not a rename: `episode` and `episode_index` are stored as
+    DATA, so a folder whose files disagree with their own contents is worse
+    than one that never carried the columns.
+    """
+    return add_index_columns(table, task, TASK_INDEX[task],
+                             f"{DATE}/{new_ep}", new_idx)
 
 
 def stage(out: Path, start_index: int, download) -> list[dict]:

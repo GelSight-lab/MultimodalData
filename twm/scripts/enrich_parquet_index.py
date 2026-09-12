@@ -1,60 +1,56 @@
-"""Add task-aware index columns to each episode parquet (LeRobot-aligned):
-    task          (str)   e.g. "motherboard"
-    task_index    (int)   0=motherboard, 1=pushT
-    episode       (str)   "<date>/episode_NNN"
-    episode_index (int)   0-based within task, by sorted episode key
-    frame_index   (int)   = frame_idx (LeRobot name alias)
+"""Add the LeRobot index columns to every parquet in a task's staging tree.
 
-Non-destructive: keeps all existing columns. Re-writes the parquet in place
-in the release staging dir.
+    task          (str)   e.g. "motherboard"
+    task_index    (int64) 0=motherboard, 1=pushT, 2=rope
+    episode       (str)   "<date>/episode_NNN"
+    episode_index (int64) 0-based within the task, by sorted episode key
+    frame_index   (int64) row position within the episode
+
+Non-destructive: every other column is kept, and re-running replaces the five
+rather than appending duplicates.
+
+This used to write its own copy of the columns as **int32**, while every
+published parquet carries int64 -- two writers of one schema, disagreeing.
+Both the shape and the numbering now come from one place each:
+`react_preprocess.meta.add_index_columns` and `backfill_index_columns`.
 """
 from __future__ import annotations
 
 import argparse
+import os
+import sys
 from pathlib import Path
 
-import numpy as np
-import pyarrow as pa
 import pyarrow.parquet as pq
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from backfill_index_columns import TASK_INDEX, episode_indices  # noqa: E402
+
+from twm.react_preprocess.meta import add_index_columns  # noqa: E402
+
 STAGE = Path("/media/yxma/Disk1/twm/release")
-# Append only: these ints are published in every parquet, so renumbering
-# an existing task would silently relabel data already downloaded.
-TASK_INDEX = {"motherboard": 0, "pushT": 1, "rope": 2}
 
 
-def main():
+def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--task", required=True, choices=list(TASK_INDEX))
-    args = ap.parse_args()
-    task = args.task
-    meta_root = STAGE / task / "meta"
+    ap.add_argument("--stage", default=str(STAGE))
+    a = ap.parse_args()
+    meta_root = Path(a.stage) / a.task / "meta"
     parquets = sorted(meta_root.rglob("episode_*.parquet"))
-    # episode_index by sorted episode key
-    keys = []
+    idx = episode_indices(f"{p.parent.name}/{p.stem}" for p in parquets)
     for p in parquets:
-        date = p.parent.name
-        keys.append(f"{date}/{p.stem}")
-    ep_index = {k: i for i, k in enumerate(sorted(set(keys)))}
-
-    for p in parquets:
-        ep_key = f"{p.parent.name}/{p.stem}"
-        tbl = pq.read_table(p)
-        T = tbl.num_rows
-        # drop if re-running
-        for c in ("task", "task_index", "episode", "episode_index", "frame_index"):
-            if c in tbl.column_names:
-                tbl = tbl.drop([c])
-        frame_idx = np.array(tbl.column("frame_idx").to_pylist(), np.int32)
-        tbl = tbl.append_column("task", pa.array([task] * T))
-        tbl = tbl.append_column("task_index", pa.array(np.full(T, TASK_INDEX[task], np.int32)))
-        tbl = tbl.append_column("episode", pa.array([ep_key] * T))
-        tbl = tbl.append_column("episode_index", pa.array(np.full(T, ep_index[ep_key], np.int32)))
-        tbl = tbl.append_column("frame_index", pa.array(frame_idx))
-        pq.write_table(tbl, str(p))
-    print(f"[enrich] {task}: {len(parquets)} parquet enriched "
+        key = f"{p.parent.name}/{p.stem}"
+        t = add_index_columns(pq.read_table(str(p)), a.task,
+                              TASK_INDEX[a.task], key, idx[key])
+        tmp = p.with_suffix(".parquet.tmp")
+        pq.write_table(t, str(tmp))
+        os.replace(tmp, p)
+    print(f"[enrich] {a.task}: {len(parquets)} parquet enriched "
           f"(task/task_index/episode/episode_index/frame_index)", flush=True)
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
