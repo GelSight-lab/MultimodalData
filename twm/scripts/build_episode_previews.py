@@ -259,6 +259,28 @@ def preview_reference(h5file, side: str, task: str, date: str, ep: str):
     return np.median(stack, 0).astype(stack.dtype)
 
 
+def _gel_source_frames(task, date, ep, out_root=None) -> dict:
+    """Per-side: which raw H5 gel frame each row's force was computed from.
+
+    Read from the force npz, NOT from a parquet. The npz holds
+    `force_normal_n` and `source_frame` side by side, so the value drawn and
+    the frame it came from travel in one file and cannot disagree. The uncut
+    release parquet — the one the row mapping comes from — has no force
+    columns at all, so it could not answer this anyway.
+    """
+    import numpy as _np
+    root = Path(out_root) if out_root is not None else FORCE_ROOT
+    out = {}
+    for side in ("left", "right"):
+        f = root / task / date / f"{ep}_{side}.npz"
+        if not f.exists():
+            continue
+        with _np.load(f) as z:
+            if "source_frame" in z:
+                out[side] = _np.asarray(z["source_frame"], dtype=int)
+    return out
+
+
 def _parquet_trim_and_rows(task, date, ep, parquet=None):
     """Where this episode starts in the H5, and how many rows it has.
 
@@ -380,6 +402,35 @@ def _flagged_intervals(task: str, date: str, ep: str) -> list[tuple[int, int, st
     return sorted(out)
 
 
+def gel_frame(source_frames: dict, side: str, row, h5_frame: int,
+              n_gel: int) -> int:
+    """The H5 gel frame to SHOW for a published row.
+
+    The GelSight runs at ~17.8 Hz against a 29.8 Hz write tick, so the
+    published tactile stream is a resample of the raw one and
+    `force_<side>_source_frame` records which raw frame each row's scalars
+    were actually computed from -- about N+2.
+
+    Reading `frames[N]` instead put the force disc ~2 frames ahead of the tile
+    it was drawn beside: measured on motherboard/2026-09-11/episode_000, force
+    led the raw image by 2 frames (r=0.991 at -2 vs 0.980 at 0), while the
+    PUBLISHED video and the published scalars agree at 0. The release was
+    right and the preview was the odd one out -- the same shape of defect
+    `tactile_align` was written to end, one stream further along.
+
+    Per side: the two GelSights are independent streams with their own
+    timestamps, and their columns differ.
+
+    Falls back to the tick when there is no column (older releases) or no row
+    (a tick outside the published episode) -- which is what this did before,
+    so a missing column cannot silently shift anything.
+    """
+    col = source_frames.get(side)
+    if col is None or row is None or not (0 <= int(row) < len(col)):
+        return min(int(h5_frame), n_gel - 1)
+    return min(int(col[int(row)]), n_gel - 1)
+
+
 def clip_window(trim_offset: int, window_start: int | None,
                 T_h5: int, n_frames_target: int) -> tuple[int, int]:
     """The H5 frames a preview plays.
@@ -437,7 +488,15 @@ def build_one_preview(h5_path: Path, out_mp4: Path,
 
         gel_lag = gel_lag_frames(f)
         n_gel = len(f["gelsight/left/frames"])
-        gel_at = lambda i: min(int(i) + gel_lag, n_gel - 1)  # noqa: E731
+        # Which raw gel frame each published row was computed from. `gel_lag`
+        # still applies on legacy recordings, where the raw stream itself is
+        # shifted; the two corrections are independent and compose.
+        gel_src = _gel_source_frames(task_name, date_name, h5_path.stem)
+        if gel_src:
+            print(f"    gel frames follow force source_frame "
+                  f"({'/'.join(sorted(gel_src))})", flush=True)
+        gel_at = lambda side, r, i: gel_frame(  # noqa: E731
+            gel_src, side, r, int(i) + gel_lag, n_gel)
         gs_ref_L = preview_reference(f, "left", task_name, date_name,
                                      h5_path.stem)
         gs_ref_R = preview_reference(f, "right", task_name, date_name,
@@ -460,8 +519,9 @@ def build_one_preview(h5_path: Path, out_mp4: Path,
                 f[f"realsense/cam{cam_idx}/color"][f_idx_int]
                 for cam_idx in range(3)
             ]
-            gs_L = f["gelsight/left/frames"][gel_at(f_idx_int)]
-            gs_R = f["gelsight/right/frames"][gel_at(f_idx_int)]
+            gel_row = row_for_h5_frame(f_idx_int, trim_pq, n_rows)
+            gs_L = f["gelsight/left/frames"][gel_at("left", gel_row, f_idx_int)]
+            gs_R = f["gelsight/right/frames"][gel_at("right", gel_row, f_idx_int)]
 
             opt_poses = optitrack_at(ot_lookup, float(cam_ts[f_idx_int]))
 
