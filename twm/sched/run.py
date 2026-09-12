@@ -23,6 +23,7 @@ from pathlib import Path
 
 sys.path.insert(0, "/home/yxma/MultimodalData")
 from twm.sched.policy import Decision, Limits, State, decide  # noqa: E402
+from twm.sched import publisher  # noqa: E402
 
 FORCE_LOG = Path("/tmp/force_logs")
 LOG = Path("/tmp/sched.log")
@@ -115,6 +116,8 @@ def main() -> int:
     probing = False
     probe_pid = None
     cooldown = 0
+    pub_proc: subprocess.Popen | None = None
+    pub_seen = 0.0
     while True:
         idle, bi = sample()
         b = builds()
@@ -125,12 +128,35 @@ def main() -> int:
         fw_stop = [p for p in fw if _state(p) == "T"]
         if bi > best:
             best = bi
+        if pub_proc is not None and pub_proc.poll() is not None:
+            pub_proc = None
+        # Asking the Hub what exists costs a round trip, so only between
+        # publishes and at most every couple of minutes.
+        if pub_proc is None and time.time() - pub_seen > 120:
+            try:
+                pending = sum(len(v) for v in publisher.ready().values())
+            except Exception:                                    # noqa: BLE001
+                pending = 0
+            pub_seen = time.time()
+        else:
+            pending = 0
         st = State(idle_pct=idle, read_mbs=bi, best_read_mbs=best,
                    disk_running=len(running), disk_paused=len(paused),
                    cpu_workers=len(fw_run), cpu_backlog=backlog(),
-                   probing_disk=probing, cooldown=cooldown)
+                   probing_disk=probing, cooldown=cooldown,
+                   publish_pending=pending,
+                   publisher_running=pub_proc is not None)
         d: Decision = decide(st, lim)
         act = []
+
+        if d.publish and pub_proc is None:
+            # `nice`: verification decodes video, and it must not take cores
+            # from the cut, which is on the critical path.
+            pub_proc = subprocess.Popen(
+                ["nice", "-n", "10", sys.executable, "-u",
+                 "/home/yxma/MultimodalData/twm/sched/publisher.py"],
+                stdout=open("/tmp/publisher.log", "a"), stderr=subprocess.STDOUT)
+            act.append(f"启动发布器 pid{pub_proc.pid}（{pending} 段）")
 
         if d.pause_disk and probe_pid:
             os.kill(int(probe_pid), 19); act.append(f"暂停探测 pid{probe_pid}")
@@ -150,7 +176,7 @@ def main() -> int:
         with LOG.open("a") as f:
             f.write(f"[{time.strftime('%H:%M:%S')}] idle={idle}% 读={bi}MB/s(最佳{best}) "
                     f"构建 {len(running)}跑/{len(paused)}停  力估计 {len(fw_run)}跑/{len(fw_stop)}停 "
-                    f"待办{st.cpu_backlog}  {d.why}"
+                    f"待办{st.cpu_backlog} 待发布{pending}  {d.why}"
                     + (f"  → {', '.join(act)}" if act else "") + "\n")
         if not b and not fw:
             with LOG.open("a") as f:

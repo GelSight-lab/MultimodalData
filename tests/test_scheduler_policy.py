@@ -68,3 +68,21 @@ def test_cooldown_blocks_re_probing_and_counts_down():
 def test_limits_are_respected():
     assert decide(S(idle_pct=40, cpu_backlog=9, cpu_workers=LIM.cpu_max), LIM).add_cpu == 0
     assert decide(S(idle_pct=40, disk_running=LIM.disk_max, disk_paused=2), LIM).resume_disk is False
+
+
+def test_finished_data_is_published_without_waiting_for_anything_else():
+    """Upload is its own budget — 68 MB/s measured, never the constraint — so
+    a finished segment should not queue behind a build or a force worker."""
+    d = decide(S(publish_pending=3, idle_pct=2, disk_running=6, cpu_workers=6), LIM)
+    assert d.publish is True
+
+
+def test_only_one_publisher_at_a_time():
+    """Publishing rewrites the shared indices; two at once would race."""
+    d = decide(S(publish_pending=3, publisher_running=True, idle_pct=40,
+                 cpu_backlog=5), LIM)
+    assert d.publish is False and d.add_cpu == 1
+
+
+def test_nothing_pending_means_no_publish():
+    assert decide(S(publish_pending=0), LIM).publish is False

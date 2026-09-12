@@ -38,6 +38,8 @@ class State:
     cpu_backlog: int         # queued CPU jobs (episode-sides awaiting force)
     probing_disk: bool       # last tick resumed a build to test the water
     cooldown: int            # ticks left before probing the disk again
+    publish_pending: int = 0     # finished, verified-able, unpublished segments
+    publisher_running: bool = False
 
 
 @dataclass
@@ -51,6 +53,7 @@ class Limits:
 
 @dataclass
 class Decision:
+    publish: bool = False
     add_cpu: int = 0
     drop_cpu: int = 0
     resume_disk: bool = False
@@ -68,6 +71,15 @@ def decide(s: State, lim: Limits = Limits()) -> Decision:
     on the disk, so filling idle cores with it never costs the builds
     anything, while an extra build can cost every other reader.
     """
+    # 0. Publishing is its own budget. The upload measured 68 MB/s and 1.36 GB
+    #    in 20 seconds, so it is never the constraint, and data that is
+    #    finished should not wait for a pipeline stage it does not share a
+    #    resource with. It runs at most one at a time because it rewrites the
+    #    shared indices.
+    if s.publish_pending and not s.publisher_running:
+        return Decision(publish=True,
+                        why=f"{s.publish_pending} 段已完成待发布")
+
     # 1. A disk probe is judged before anything else is changed, or the
     #    measurement gets attributed to the wrong action.
     if s.probing_disk:
