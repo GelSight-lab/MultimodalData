@@ -16,6 +16,31 @@ import numpy as np
 import pyarrow as pa
 import pyarrow.parquet as pq
 
+# THE task -> task_index mapping. APPEND ONLY: these ints are published inside
+# every parquet, so renumbering a task silently relabels every copy already
+# downloaded, with nothing on the reader's side to notice.
+#
+# It lived in four places. Two were stale — `dataset_prep` had no `rope` and
+# read the map with `.get(task, 0)`, so a rope episode published through it was
+# stamped task_index=0, which is motherboard.
+TASK_INDEX = {"motherboard": 0, "pushT": 1, "rope": 2}
+
+
+def task_index(task: str) -> int:
+    """`task`'s published index, or KeyError.
+
+    Raises rather than defaulting: a default is how rope became motherboard,
+    and a wrong int here is indistinguishable from a right one downstream.
+    """
+    try:
+        return TASK_INDEX[task]
+    except KeyError:
+        raise KeyError(
+            f"{task!r} has no published task_index. Add it to TASK_INDEX with "
+            f"the NEXT free integer — never reuse or renumber, the existing "
+            f"ints are already inside published parquets.") from None
+
+
 # Columns added after the initial release, in the order they should appear.
 TACTILE_FLAG_COLUMNS = ("tactile_left_is_new", "tactile_right_is_new")
 

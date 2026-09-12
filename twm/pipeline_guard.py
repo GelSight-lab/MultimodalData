@@ -32,11 +32,20 @@ import re
 import sys
 
 ROOT = pathlib.Path(__file__).resolve().parent
+_AUTHORITY = re.compile(r"tactile_align|TactileAlignment|index_map"
+                        r"|gel_index|gel_lag_frames|gel_at")
+_LAG_NAME = re.compile(r"(legacy_shift|shift|tactile_lag|lag)", re.I)
 OPT_OUT = "tactile-lag-exempt"          # marker comment for deliberate cases
 OPT_OUT_FALLBACK = "fallback-ok"        # ... for a deliberate default answer
 # diagnostics/ and legacy_pt/ are dated one-off forensics, frozen with the
 # defects they investigated; guarding them retro-flags history, not pipeline.
-SKIP_DIRS = {"__pycache__", ".git", "calibration", "diagnostics", "legacy_pt"}
+# superseded/ is code the pipeline no longer runs — build_video_release.py
+# sliced GelSight with no lag at all, which matters only if something calls it,
+# and nothing does (react_preprocess.tactile replaced it and maps through
+# TactileAlignment). Guarding dead code buys nothing; DELETING the dead call
+# path is the fix, and moving it here is that deletion.
+SKIP_DIRS = {"__pycache__", ".git", "calibration", "diagnostics", "legacy_pt",
+             "superseded"}
 # Files that legitimately index raw frames: the recorder writing them, the
 # latency studies that exist precisely to compare shifted vs unshifted, and
 # the interactive players whose whole point is a user-adjustable offset.
@@ -62,19 +71,12 @@ def check_single_lag_definition() -> list[str]:
     A default argument is a declaration; it just does not look like one.
     """
     bad = []
-    assign = re.compile(r"\s*(LEGACY_SHIFT|SHIFT|TACTILE_LAG)\s*=\s*\d+")
     default = re.compile(r"(legacy_shift|shift|tactile_lag|lag)"
                          r"\s*(:\s*[\w\[\]| ]+)?\s*=\s*(\d+)", re.I)
     for p in _py_files():
         if p.name in ("tactile_align.py", "pipeline_guard.py"):
             continue
         src = p.read_text()
-        for i, line in enumerate(src.splitlines(), 1):
-            if assign.match(line):
-                bad.append(f"{p.relative_to(ROOT)}:{i}: redeclares the tactile "
-                           f"lag — import it from tactile_align instead")
-        # defaults: only inside a def, and only a nonzero literal (0 is the
-        # honest "no shift" used by the latency viewer's opt-out)
         try:
             tree = ast.parse(src)
         except SyntaxError as e:
@@ -83,6 +85,31 @@ def check_single_lag_definition() -> list[str]:
             bad.append(f"{p.relative_to(ROOT)}:{e.lineno}: cannot parse "
                        f"({e.msg}) — not checked for a duplicate lag")
             continue
+        # Assignments, via the AST rather than a line regex. The regex matched
+        # `SHIFT = 15` at the start of a line and so could not see
+        # `trim, shift = int(z["trim"]), 15` — lowercase, and unpacked from a
+        # tuple. That fourth copy of the constant sat in anyforce_react.py for
+        # the guard's whole life while this check reported green.
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Assign):
+                continue
+            for tgt in node.targets:
+                pairs = (list(zip(tgt.elts, node.value.elts))
+                         if isinstance(tgt, ast.Tuple)
+                         and isinstance(node.value, ast.Tuple)
+                         and len(tgt.elts) == len(node.value.elts)
+                         else [(tgt, node.value)])
+                for name, val in pairs:
+                    if (isinstance(name, ast.Name)
+                            and _LAG_NAME.fullmatch(name.id)
+                            and isinstance(val, ast.Constant)
+                            and isinstance(val.value, int)
+                            and not isinstance(val.value, bool)
+                            and val.value != 0
+                            and OPT_OUT not in src.splitlines()[node.lineno - 1]):
+                        bad.append(f"{p.relative_to(ROOT)}:{node.lineno}: "
+                                   f"{name.id} = {val.value} redeclares the "
+                                   f"tactile lag — import it from tactile_align")
         for fn in (n for n in ast.walk(tree)
                    if isinstance(n, ast.FunctionDef)):
             for arg, dflt in zip(
@@ -108,10 +135,22 @@ def check_no_raw_gel_indexing() -> list[str]:
         r'gelsight/(\{side\}|left|right|%s|\{s\})/frames"?\]\s*\[([^\]]*)\]')
     corrected = ("gel_at", "gel_index", "gel_lag", "LEGACY_SHIFT", "+ lag",
                  "idx_map")
+    # The dataset handle may be BOUND FIRST and indexed later, in which case
+    # no single line contains both halves and the regex above sees nothing:
+    #
+    #     ds = f["gelsight/left/frames"]
+    #     ds[trim + s : trim + e]          <- raw, and invisible to `pat`
+    #
+    # That is how build_video_release.py sliced the GelSight stream with no
+    # lag at all while this check reported green. Bindings are tracked through
+    # the AST so the two halves can be connected.
+    bind = re.compile(r'gelsight/(\{side\}|left|right|%s|\{s\})/frames')
     for p in _py_files():
         if p.name in RAW_OK:
             continue
-        for i, line in enumerate(p.read_text().splitlines(), 1):
+        src = p.read_text()
+        lines = src.splitlines()
+        for i, line in enumerate(lines, 1):
             m = pat.search(line)
             if not m or OPT_OUT in line:
                 continue
@@ -123,6 +162,42 @@ def check_no_raw_gel_indexing() -> list[str]:
             bad.append(f"{p.relative_to(ROOT)}:{i}: indexes raw GelSight "
                        f"frames — use tactile_align.gel_index, or add the "
                        f"'{OPT_OUT}' comment if intentional")
+        try:
+            tree = ast.parse(src)
+        except SyntaxError as e:
+            bad.append(f"{p.relative_to(ROOT)}:{e.lineno}: cannot parse "
+                       f"({e.msg}) — not checked for raw GelSight indexing")
+            continue
+        # A module that slices raw frames but never NAMES an alignment
+        # authority is the defect; one that imports the owner and maps through
+        # it is not. Judging the index expression token-by-token instead
+        # flagged tactile.py's chunked `ds[lo:hi+1]` and run_episode's
+        # `frames[src(row)]` — both of which go through `index_map` — and a
+        # guard that cries wolf on correct code is one people switch off.
+        if _AUTHORITY.search(src):
+            continue
+        held = {}                    # name -> line it was bound on
+        for node in ast.walk(tree):
+            if (isinstance(node, ast.Assign) and len(node.targets) == 1
+                    and isinstance(node.targets[0], ast.Name)
+                    and isinstance(node.value, ast.Subscript)
+                    and bind.search(ast.unparse(node.value.slice))):
+                held[node.targets[0].id] = node.lineno
+        for node in ast.walk(tree):
+            if not (isinstance(node, ast.Subscript)
+                    and isinstance(node.value, ast.Name)
+                    and node.value.id in held):
+                continue
+            idx = ast.unparse(node.slice)
+            if any(c in idx for c in corrected):
+                continue
+            if OPT_OUT in lines[node.lineno - 1] or \
+               OPT_OUT in lines[held[node.value.id] - 1]:
+                continue
+            bad.append(f"{p.relative_to(ROOT)}:{node.lineno}: "
+                       f"{node.value.id}[{idx}] indexes raw GelSight frames "
+                       f"bound at line {held[node.value.id]} — use "
+                       f"tactile_align.gel_index, or add '{OPT_OUT}'")
     return bad
 
 
@@ -427,6 +502,40 @@ def check_scope_filter_independent() -> list[str]:
     return bad
 
 
+def check_single_task_index() -> list[str]:
+    """Only `react_preprocess.meta` may state the task -> task_index mapping.
+
+    These ints are published INSIDE every parquet, so a second copy does not
+    merely drift — it relabels data. There were four. `dataset_prep` held
+    `{"motherboard": 0, "pushT": 1}` and read it with `.get(task, 0)`, so a
+    rope episode published through it was stamped task_index=0, which is
+    motherboard; `build_lerobot_dataset` held a list without rope, which raised
+    instead. Two copies, two different wrong answers, one mapping.
+    """
+    bad = []
+    for p in _py_files():
+        if p.name == "pipeline_guard.py" or p.parts[-2:] == ("react_preprocess",
+                                                             "meta.py"):
+            continue
+        src = p.read_text()
+        try:
+            tree = ast.parse(src)
+        except SyntaxError:
+            continue                      # reported by the checks that parse
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Assign):
+                continue
+            for tgt in node.targets:
+                if getattr(tgt, "id", "") not in ("TASK_INDEX", "TASK_ORDER"):
+                    continue
+                if isinstance(node.value, (ast.Dict, ast.List)):
+                    bad.append(f"{p.relative_to(ROOT)}:{node.lineno}: "
+                               f"{tgt.id} restates the task mapping — import "
+                               f"TASK_INDEX from react_preprocess.meta "
+                               f"(append-only: the ints are published)")
+    return bad
+
+
 def check_no_handwritten_index_conversion() -> list[str]:
     """Nobody converts between the two index spaces by hand.
 
@@ -532,6 +641,7 @@ CHECKS = {
     "no raw GelSight indexing": check_no_raw_gel_indexing,
     "no hand-written index conversion":
         check_no_handwritten_index_conversion,
+    "single task_index mapping": check_single_task_index,
     "force path free of cosmetic steps": check_force_path_clean,
     "single stiffness definition": check_single_stiffness,
 }

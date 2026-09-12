@@ -31,11 +31,10 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-from twm.react_preprocess.meta import add_index_columns  # noqa: E402
+from twm.react_preprocess.meta import TASK_INDEX, add_index_columns  # noqa: E402
 
 CUT_ROOT = Path("/media/yxma/Disk1/twm/release_cut")
 DATE = "2026-09-09"
-TASK_INDEX = {"motherboard": 0, "pushT": 1, "rope": 2}
 VIDEO_STREAMS = ("view_left", "view_middle", "view_right",
                  "tactile_left", "tactile_right", "wrist_left", "wrist_right")
 

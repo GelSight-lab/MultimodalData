@@ -44,7 +44,7 @@ def process(args):
     with h5py.File(str(h5), "r") as f:
         for side, ridx_key, Skey in (("left","ref_p01_idx_left","left"),
                                      ("right","ref_p01_idx_right","right")):
-            ds = f[f"gelsight/{side}/frames"]; N = ds.shape[0]
+            ds = f[f"gelsight/{side}/frames"]; N = ds.shape[0]  # tactile-lag-exempt: applying the shift IS this script's job
             ref = ds[int(cm.get(ridx_key, trim))].astype(np.float32)   # raw H5 ref
             # Corrected pos i -> H5 frame trim+min(i+shift,Tproc-1), clamped to N-1.
             # This is a CONTIGUOUS slab [trim+shift .. N-1] then the last frame

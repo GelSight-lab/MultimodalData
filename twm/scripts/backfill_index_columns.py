@@ -28,12 +28,10 @@ from pathlib import Path
 import pyarrow.parquet as pq
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-from twm.react_preprocess.meta import add_index_columns  # noqa: E402
+from twm.react_preprocess.meta import TASK_INDEX, add_index_columns  # noqa: E402
 
 CUT_ROOT = Path("/media/yxma/Disk1/twm/release_cut")
 REPO = "yxma/React"
-# Append only -- see the module docstring.
-TASK_INDEX = {"motherboard": 0, "pushT": 1, "rope": 2}
 
 
 def episode_indices(keys) -> dict[str, int]:

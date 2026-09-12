@@ -14,6 +14,10 @@ import cv2
 import numpy as np
 from PIL import Image
 
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(
+    os.path.abspath(__file__)))))
+from twm.tactile_align import LEGACY_SHIFT   # noqa: E402
+
 FAF = os.path.expanduser("~/projects/TacForce/force_prediction/FeelAnyForce")
 sys.path.insert(0, FAF)
 
@@ -53,7 +57,10 @@ def main():
         pth_transforms.Normalize(mean_rgb, std_rgb)])
 
     z = np.load(NPZ)
-    trim, shift = int(z["trim"]), 15
+    # The pinned episode is 2026-05-10, before the rig fix, so the legacy
+    # lag applies. Imported, not restated: this line held a fourth copy
+    # of the constant that the guard could not see.
+    trim, shift = int(z["trim"]), LEGACY_SHIFT
     ref_rows = z["reference_rows"]
     ours = z["force_normal_n"]
 

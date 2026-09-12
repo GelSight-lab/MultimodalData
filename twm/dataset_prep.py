@@ -22,6 +22,8 @@ import sys
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence
 
+from twm.react_preprocess.meta import TASK_INDEX, task_index
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 TWM = REPO_ROOT / "twm"
 RELEASE = Path("/media/yxma/Disk1/twm/release")
@@ -50,9 +52,6 @@ def _filter_index(doc, key: str, session: str):
     return out
 
 
-TASK_INDEX = {"motherboard": 0, "pushT": 1}
-
-
 def _stamp_index_columns(pq_path: Path, task: str, date: str, episode: str,
                          episode_index: int) -> None:
     """The LeRobot-style keys every published parquet carries.
@@ -67,7 +66,7 @@ def _stamp_index_columns(pq_path: Path, task: str, date: str, episode: str,
 
     from twm.react_preprocess.meta import add_index_columns
     table = pq_mod.read_table(pq_path)
-    table = add_index_columns(table, task, TASK_INDEX.get(task, 0),
+    table = add_index_columns(table, task, task_index(task),
                               f"{date}/{episode}", episode_index)
     pq_mod.write_table(table, pq_path)
 

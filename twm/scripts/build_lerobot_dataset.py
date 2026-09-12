@@ -31,6 +31,10 @@ import numpy as np
 import pyarrow as pa
 import pyarrow.parquet as pq
 
+import sys as _sys
+_sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from twm.react_preprocess.meta import TASK_INDEX  # noqa: E402
+
 REL = Path("/media/yxma/Disk1/twm/release")
 STAGE_LR = Path("/media/yxma/Disk1/twm/lerobot")
 FPS = 30
@@ -44,7 +48,11 @@ SRC_STREAM = {  # lerobot key -> release mp4 filename
     "observation.images.tactile_right": "tactile_right"}
 TASK_STRINGS = {"motherboard": "bimanual handheld tactile interaction with a motherboard",
                 "pushT": "push a T-shaped object"}
-TASK_ORDER = ["motherboard", "pushT"]
+# Derived, not restated: this list was written before rope existed, so
+# `TASK_ORDER.index("rope")` raised here while `dataset_prep` silently stamped
+# rope as motherboard — two different wrong answers from two copies of one
+# mapping. Sorting by the published index keeps position == task_index.
+TASK_ORDER = [t for t, _ in sorted(TASK_INDEX.items(), key=lambda kv: kv[1])]
 
 
 def list_episodes():
