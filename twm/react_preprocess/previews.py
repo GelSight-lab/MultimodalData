@@ -108,6 +108,11 @@ def plan(task: str, stage_root: Path = STAGE_ROOT) -> Iterator[dict]:
                 "task": task, "date": date, "episode": episode,
                 "source_episode": source_ep,
                 "h5": h5,
+                # The file the trim came from. The renderer cross-checks its own
+                # read against plan's, and both must look at the SAME tree: a
+                # cut segment has no parquet under the uncut release, so a
+                # renderer hardcoded to that tree refused every segment.
+                "parquet": stage_root / task / "meta" / date / f"{episode}.parquet",
                 "out": stage_root / task / "previews" / date / f"{episode}.mp4",
                 "calib_dir": calib_dir(task, date=date),   # per session, not per task
                 "trim_offset": start,

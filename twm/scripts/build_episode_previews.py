@@ -43,6 +43,7 @@ sys.path.insert(0, "/home/yxma/MultimodalData")
 
 from twm.data_collection import REALSENSE_SERIALS    # noqa
 from twm.recorder.frames import decode_arducam  # noqa: E402
+from twm.wrist_tone import apply_tone_curve, episode_wrist_gamma  # noqa: E402
 from twm.viz import (
     DISPLAY_ORDER,
     GS_THUMB_W,
@@ -258,7 +259,7 @@ def preview_reference(h5file, side: str, task: str, date: str, ep: str):
     return np.median(stack, 0).astype(stack.dtype)
 
 
-def _parquet_trim_and_rows(task, date, ep):
+def _parquet_trim_and_rows(task, date, ep, parquet=None):
     """Where this episode starts in the H5, and how many rows it has.
 
     THE source of both, for the clip window and for the force rows alike.
@@ -274,7 +275,11 @@ def _parquet_trim_and_rows(task, date, ep):
     """
     import numpy as _np
     import pyarrow.parquet as pq
-    f = Path("/media/yxma/Disk1/twm/release")/task/"meta"/date/f"{ep}.parquet"
+    # `parquet` names the tree this episode was actually published from. It
+    # defaults to the uncut release, which is where whole episodes live; cut
+    # segments live in release_cut and have no entry there at all.
+    f = (Path(parquet) if parquet is not None
+         else Path("/media/yxma/Disk1/twm/release")/task/"meta"/date/f"{ep}.parquet")
     if not f.exists():
         raise FileNotFoundError(
             f"{task}/{date}/{ep}: no release parquet, so its trim offset is "
@@ -375,12 +380,29 @@ def _flagged_intervals(task: str, date: str, ep: str) -> list[tuple[int, int, st
     return sorted(out)
 
 
+def clip_window(trim_offset: int, window_start: int | None,
+                T_h5: int, n_frames_target: int) -> tuple[int, int]:
+    """The H5 frames a preview plays.
+
+    `window_start` is where the PUBLISHED episode begins. For a cut segment
+    that is not the source recording's trim: `episode_003_seg01` may start
+    9000 frames into `episode_003.h5`. Deriving it from the h5 path instead --
+    the only name a segment shares with its siblings -- rendered all four
+    segments of one episode as the identical clip, published under four names.
+
+    None means "the whole episode is the publication", so the trim is the
+    start, which is what every uncut episode wants.
+    """
+    start = trim_offset if window_start is None else int(window_start)
+    return start, min(T_h5, start + n_frames_target)
+
+
 def build_one_preview(h5_path: Path, out_mp4: Path,
                       clip_s: float, speed: float,
                       project_cams, gel_center_left, gel_center_right,
                       dx: float = 0.0, dy: float = 0.0, dz: float = 0.0,
                       proj_up_axis: str = "y",
-                      press_axes=None) -> None:
+                      press_axes=None, window_start: int | None = None) -> None:
     output_fps = SOURCE_FPS * speed
     n_frames_target = int(round(clip_s * SOURCE_FPS))   # e.g. 30s * 30fps = 900
     task_name = h5_path.parent.parent.name
@@ -391,6 +413,12 @@ def build_one_preview(h5_path: Path, out_mp4: Path,
     # H5 pre-roll: up to 6.5 min BEFORE the episode, sensors parked, action
     # frozen. A silent zero fallback is indistinguishable from the correct
     # answer on every recording that doesn't need one.
+    # h5_path.stem is the SOURCE recording -- `episode_003` for every segment
+    # cut out of it -- and that is the right key here: the force npz, the
+    # release poses and `bad_frames.json` are all stored per recording and
+    # indexed through this trim. What it must NOT decide is where the clip
+    # starts; `window_start` carries that, because a segment's start is the
+    # one thing its name has and its source's does not.
     trim_offset, n_rows = _parquet_trim_and_rows(task_name, date_name,
                                                 h5_path.stem)
     trim_pq = trim_offset
@@ -398,9 +426,9 @@ def build_one_preview(h5_path: Path, out_mp4: Path,
     with h5py.File(str(h5_path), "r") as f:
         cam_ts = f["timestamps"][:]
         T_h5 = len(cam_ts)
-        # First 30s of usable data, starting at trim_offset
-        start = trim_offset
-        end   = min(T_h5, trim_offset + n_frames_target)
+        # First 30s of the PUBLISHED episode (a segment starts part way in)
+        start, end = clip_window(trim_offset, window_start, T_h5,
+                                 n_frames_target)
         sample_idx = np.arange(start, end)
 
         # Pre-load OT once
@@ -441,7 +469,11 @@ def build_one_preview(h5_path: Path, out_mp4: Path,
             if "arducam" in f:
                 # Same tick index as everything else, so the wrist row is in
                 # step with the views and the tactile beside it.
-                wrist = [decode_arducam(f[f"arducam/{slot}/frames"][f_idx_int])
+                # The published curve, so the preview panel matches the
+                # wrist videos the dataset ships. See `twm.wrist_tone`.
+                wg = episode_wrist_gamma(f)
+                wrist = [apply_tone_curve(
+                             decode_arducam(f[f"arducam/{slot}/frames"][f_idx_int]), wg)
                          for slot in sorted(f["arducam"])][:2]
             panel = build_preview_panel(
                 color_frames=color_frames,
