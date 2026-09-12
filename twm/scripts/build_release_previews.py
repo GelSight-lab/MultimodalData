@@ -63,6 +63,18 @@ def make_renderer(task: str, clip_s: float, speed: float):
     return render, len(BEP._load_proj_calibs(task)[0])
 
 
+def shard(jobs: list[dict], index: int, count: int) -> list[dict]:
+    """The `index`-th of `count` disjoint slices, interleaved.
+
+    Interleaved rather than contiguous because the plan is ordered by date and
+    episode, and a recording's cost tracks its length: contiguous blocks hand
+    one worker a run of long episodes and another a run of short ones.
+    """
+    if not 0 <= index < count:
+        raise ValueError(f"shard {index} of {count} is out of range")
+    return jobs[index::count]
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--task", required=True, choices=sorted(previews.CALIB_DIRS))
@@ -74,14 +86,21 @@ def main() -> int:
                          "preview per PUBLISHED segment rather than per source "
                          "episode")
     ap.add_argument("--overwrite", action="store_true")
+    ap.add_argument("--shard", default="0/1", metavar="I/N",
+                    help="render only the I-th of N disjoint slices, so N "
+                         "processes can share one task without rendering the "
+                         "same episode twice (the renderer sits at half a core)")
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()
 
     from pathlib import Path as _P
     stage = _P(args.stage_root) if args.stage_root else previews.STAGE_ROOT
-    jobs = list(previews.plan(args.task, stage))
-    print(f"[previews] {args.task}: {len(jobs)} episodes, "
-          f"calib={previews.CALIB_DIRS[args.task].name}", flush=True)
+    i, n = (int(x) for x in args.shard.split("/"))
+    all_jobs = list(previews.plan(args.task, stage))
+    jobs = shard(all_jobs, i, n)
+    print(f"[previews] {args.task}: {len(jobs)} of {len(all_jobs)} episodes "
+          f"(shard {i}/{n}), calib={previews.CALIB_DIRS[args.task].name}",
+          flush=True)
     if args.dry_run:
         for j in jobs:
             print(f"  {j['date']}/{j['episode']} trim={j['trim_offset']} "
@@ -92,7 +111,7 @@ def main() -> int:
     print(f"[previews] projection cameras: {n_cams}", flush=True)
 
     results = previews.build_task(args.task, render, stage_root=stage,
-                                  overwrite=args.overwrite)
+                                  overwrite=args.overwrite, jobs=jobs)
     for r in results:
         detail = (f"({r['bytes']/1024:.0f} KB)" if r["status"] == "OK"
                   else r.get("error", ""))

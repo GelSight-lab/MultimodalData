@@ -99,6 +99,15 @@ def stage(out: Path, start_index: int, download) -> list[dict]:
                 if f.is_file():
                     shutil.copy2(f, vdst / f"{s}.mp4")
             entry["videos"] = sorted(p.name for p in vdst.iterdir())
+            # The preview was rendered under the segment's own name; it follows
+            # the episode to its new number, or the folder would index a
+            # preview nobody can match to an episode.
+            psrc = CUT_ROOT / task / "previews" / DATE / f"{old_ep}.mp4"
+            if psrc.is_file():
+                pdst = out / "previews" / DATE / f"{new_ep}.mp4"
+                pdst.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(psrc, pdst)
+                entry["preview"] = pdst.name
         manifest.append(entry)
     (out / "_manifest.json").write_text(json.dumps(manifest, indent=2))
     return manifest

@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import Callable, Iterator
+from typing import Callable, Iterable, Iterator
 
 from .config import H5_ROOTS, STAGE_ROOT, WORLD_OFFSET
 
@@ -122,15 +122,22 @@ def plan(task: str, stage_root: Path = STAGE_ROOT) -> Iterator[dict]:
 
 def build_task(task: str, render: Callable[[dict], None],
                stage_root: Path = STAGE_ROOT,
-               overwrite: bool = False) -> list[dict]:
+               overwrite: bool = False,
+               jobs: Iterable[dict] | None = None) -> list[dict]:
     """Render every planned preview with the supplied renderer.
 
     ``render`` receives one job dict. A failure is recorded against that
     episode and the rest continue — one bad recording should not cost the whole
     batch.
+
+    ``jobs`` overrides the plan, so a caller that wants to split the work
+    across processes can hand each one a disjoint slice. Splitting *here*
+    instead — by letting two processes share a list and skip what already
+    exists — races: the output does not exist until the winner finishes
+    writing it, so both start the same episode.
     """
     results = []
-    for job in plan(task, stage_root):
+    for job in (plan(task, stage_root) if jobs is None else jobs):
         if job["out"].exists() and not overwrite:
             results.append({**job, "status": "SKIP"})
             continue
