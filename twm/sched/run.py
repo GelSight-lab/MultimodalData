@@ -26,6 +26,8 @@ from twm.sched.policy import Decision, Limits, State, decide  # noqa: E402
 from twm.sched import publisher  # noqa: E402
 
 FORCE_LOG = Path("/tmp/force_logs")
+FORCE_POOL = ("/tmp/claude-1004/-home-yxma-MultimodalData/"
+              "d734563d-9427-48c6-a0e9-fe7c75ba0ddf/scratchpad/pub/force_pool.sh")
 LOG = Path("/tmp/sched.log")
 DATA = "/media/yxma/Disk1/twm/data"
 
@@ -169,6 +171,19 @@ def main() -> int:
             os.kill(int(probe_pid), 18); act.append(f"恢复 pid{probe_pid}")
         if d.add_cpu and fw_stop:
             os.kill(int(fw_stop[0]), 18); act.append(f"恢复 force pid{fw_stop[0]}")
+        elif d.add_cpu:
+            # Nothing suspended to resume, so START one. The controller could
+            # previously only resume, and the force pool exits once its queue
+            # drains -- so when a later build produced new force jobs there was
+            # no worker left to take them and the stage stalled silently,
+            # logging "worker below floor" every tick with nothing changing.
+            # force_pool workers re-read the worklist and retire themselves
+            # after three idle rounds, so spawning one is self-limiting.
+            spawned = subprocess.Popen(
+                ["setsid", "bash", FORCE_POOL], env={**os.environ, "N": "1"},
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                start_new_session=True)
+            act.append(f"新建 force worker pid{spawned.pid}")
         elif d.drop_cpu and fw_run:
             os.kill(int(fw_run[-1]), 19); act.append(f"暂停 force pid{fw_run[-1]}")
 
