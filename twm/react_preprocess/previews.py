@@ -20,6 +20,7 @@ rendered in one process.
 """
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Callable, Iterator
 
@@ -49,12 +50,42 @@ def trim_offset(task: str, date: str, episode: str,
     return int(meta["_contact_meta"].get("trim_offset", 0))
 
 
+SEGMENT_SUFFIX = re.compile(r"_seg\d+$")
+
+
+def source_start(task: str, date: str, episode: str,
+                 stage_root: Path = STAGE_ROOT) -> int | None:
+    """The H5 frame a published episode begins at, from its own parquet.
+
+    `segment` keeps `source_h5_frame` UNREBASED precisely so this question has
+    an answer: row 0 of a cut segment names the frame of the recording it was
+    taken from. The same column answers it for an uncut episode, where it
+    equals the trim -- so one rule covers both and the preview of a segment
+    starts where the segment does, not where its source episode does.
+    """
+    pq_path = Path(stage_root) / task / "meta" / date / f"{episode}.parquet"
+    if not pq_path.exists():
+        return None
+    import pyarrow.parquet as pq
+
+    md = pq.read_metadata(str(pq_path))
+    if "source_h5_frame" not in md.schema.to_arrow_schema().names:
+        return None
+    col = pq.read_table(str(pq_path), columns=["source_h5_frame"])
+    return int(col.column("source_h5_frame")[0].as_py()) if col.num_rows else None
+
+
 def plan(task: str, stage_root: Path = STAGE_ROOT) -> Iterator[dict]:
     """One job per published episode that still has its source recording.
 
     Driven by the published videos rather than by the source tree, so episodes
     excluded from the release (e.g. the corrupt pushT recording) do not
     reappear here.
+
+    A published episode may be a CUT SEGMENT (`episode_003_seg00`), which has
+    no H5 of its own: its frames come from `episode_003.h5`, starting where the
+    segment starts. Both the source file and the start are resolved here so the
+    renderer does not have to know that segments exist.
     """
     stage_root = Path(stage_root)
     h5_root = H5_ROOTS[task]
@@ -66,15 +97,20 @@ def plan(task: str, stage_root: Path = STAGE_ROOT) -> Iterator[dict]:
         dx, dy, dz = WORLD_OFFSET.get((task, date), (0.0, 0.0, 0.0))
         for ep_dir in sorted(p for p in date_dir.iterdir() if p.is_dir()):
             episode = ep_dir.name
-            h5 = h5_root / date / f"{episode}.h5"
+            source_ep = SEGMENT_SUFFIX.sub("", episode)
+            h5 = h5_root / date / f"{source_ep}.h5"
             if not h5.exists():
                 continue
+            start = source_start(task, date, episode, stage_root)
+            if start is None:
+                start = trim_offset(task, date, source_ep, stage_root)
             yield {
                 "task": task, "date": date, "episode": episode,
+                "source_episode": source_ep,
                 "h5": h5,
                 "out": stage_root / task / "previews" / date / f"{episode}.mp4",
                 "calib_dir": calib_dir(task, date=date),   # per session, not per task
-                "trim_offset": trim_offset(task, date, episode, stage_root),
+                "trim_offset": start,
                 "world_offset": (dx, dy, dz),
             }
 
