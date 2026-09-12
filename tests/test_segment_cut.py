@@ -248,3 +248,16 @@ def test_a_stream_that_came_out_the_wrong_length_stops_the_cut(tmp_path):
                           [(0, 39)], src, dst)
     finally:
         S.frame_count = saved
+
+
+def test_a_tree_whose_frame_numbering_differs_is_refused(tmp_path):
+    """The spans are measured on the master and applied to the published tree.
+    Every stage between them preserves row count and row order; if one ever
+    stops doing so, the cut lands on the wrong frames and nothing else notices.
+    """
+    src, dst = tmp_path / "rel", tmp_path / "cut"
+    _build_episode(src, "2026-09-10", "episode_000", 40)
+
+    with pytest.raises(RuntimeError, match="frame numbering differs"):
+        S.cut_episode("pushT", "2026-09-10", "episode_000", [(0, 39)],
+                      src, dst, verify=False, expected_T=41)

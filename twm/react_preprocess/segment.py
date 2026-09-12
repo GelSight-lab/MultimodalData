@@ -200,17 +200,30 @@ def cut_table(table, a: int, b: int, source_episode: str, name: str):
 # ── one episode ──────────────────────────────────────────────────────────────
 
 def cut_episode(task: str, date: str, episode: str, spans,
-                src_root: Path, dst_root: Path, verify: bool = True) -> list[dict]:
+                src_root: Path, dst_root: Path, verify: bool = True,
+                expected_T: int | None = None) -> list[dict]:
     """Cut one built episode into its publishable segments.
 
     Returns one row per emitted segment. An episode whose only span covers the
     whole recording is copied rather than re-encoded: it has nothing to cut, and
     re-encoding it would cost a generation of quality for no change.
+
+    ``expected_T`` is the length the detector reports saw. The spans are frame
+    indices, and they are computed on one tree and applied to another (the
+    sidecars live with the uncut master, the cut is applied to the Z-up tree
+    that is actually published). Every stage between them preserves row order
+    and row count -- which is exactly the kind of assumption that holds until
+    it does not, and would fail silently by cutting at the wrong frames.
     """
     src_vid = src_root / "videos" / date / episode
     src_pq = src_root / "meta" / date / f"{episode}.parquet"
     table = pq.read_table(str(src_pq))
     T = table.num_rows
+    if expected_T is not None and T != expected_T:
+        raise RuntimeError(
+            f"{task}/{date}/{episode}: the spans were computed on {expected_T} "
+            f"frames but this tree has {T} rows. The frame numbering differs "
+            f"between the two trees, so the cut would land elsewhere.")
 
     missing = [s for s in EXPECTED_STREAMS if not (src_vid / f"{s}.mp4").is_file()]
     if missing:
@@ -265,15 +278,25 @@ def cut_episode(task: str, date: str, episode: str, spans,
 def build_task(task: str, src_root: Path = STAGE_ROOT,
                dst_root: Path | None = None, dates=None,
                min_frames: int = MIN_PUBLISH_FRAMES,
-               verify: bool = True, dry_run: bool = False) -> dict:
-    """Cut every built episode of a task into its publishable segments."""
+               verify: bool = True, dry_run: bool = False,
+               detect_root: Path | None = None) -> dict:
+    """Cut every built episode of a task into its publishable segments.
+
+    ``detect_root`` is where the ``_detect.pt`` sidecars and the videos the
+    corruption detectors read live; ``src_root`` is the tree actually cut.
+    They differ in the real chain: defects are a property of the recording and
+    are measured once on the master, while what gets published has been through
+    force recovery and the Z-up conversion. Frame numbering is checked to match
+    rather than assumed (see ``cut_episode``).
+    """
     src_root = Path(src_root) / task
+    det_root = Path(detect_root) / task if detect_root else src_root
     dst_root = Path(dst_root) if dst_root else Path(str(STAGE_ROOT) + "_cut")
     out = dst_root / task
 
-    sidecars = sorted((src_root / "meta").rglob("episode_*._detect.pt"))
+    sidecars = sorted((det_root / "meta").rglob("episode_*._detect.pt"))
     if not sidecars:
-        raise FileNotFoundError(f"no _detect.pt sidecar under {src_root/'meta'}")
+        raise FileNotFoundError(f"no _detect.pt sidecar under {det_root/'meta'}")
 
     rows, dropped, raw_frames = [], [], 0
     for det in sidecars:
@@ -282,7 +305,7 @@ def build_task(task: str, src_root: Path = STAGE_ROOT,
             continue
         episode = det.name.replace("._detect.pt", "")
         report, _ = curation.episode_report(
-            det, video_dir=src_root / "videos" / date / episode)
+            det, video_dir=det_root / "videos" / date / episode)
         raw_frames += int(report["n_frames"])
         spans = publishable_spans(report, min_frames)
         kept = {(a, b) for a, b in spans}
@@ -300,7 +323,8 @@ def build_task(task: str, src_root: Path = STAGE_ROOT,
             rows += [{"episode": f"{date}/{segment_name(episode, i)}",
                       "n_frames": int(b - a + 1)} for i, (a, b) in enumerate(spans)]
             continue
-        rows += cut_episode(task, date, episode, spans, src_root, out, verify)
+        rows += cut_episode(task, date, episode, spans, src_root, out, verify,
+                            expected_T=int(report["n_frames"]))
 
     kept_frames = sum(r["n_frames"] for r in rows)
     summary = {

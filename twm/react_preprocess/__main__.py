@@ -157,7 +157,8 @@ def cmd_segment(args) -> int:
             s = segment_mod.build_task(
                 task, STAGE_ROOT, args.out, args.dates,
                 min_frames=int(round(args.min_seconds * 30.0)),
-                verify=not args.no_verify, dry_run=args.dry_run)
+                verify=not args.no_verify, dry_run=args.dry_run,
+                detect_root=args.detect_root)
         except FileNotFoundError as exc:
             print(f"[segment] {task}: {exc}", file=sys.stderr)
             continue
@@ -217,6 +218,12 @@ def main(argv=None) -> int:
     g.add_argument("--task", choices=sorted(H5_ROOTS))
     g.add_argument("--dates", nargs="*")
     g.add_argument("--out", help="destination tree (default: <STAGE_ROOT>_cut)")
+    g.add_argument("--detect-root",
+                   help="tree holding the _detect.pt sidecars and the videos "
+                        "the corruption detectors read (default: --task's "
+                        "source tree). Differs from the cut tree in the real "
+                        "chain: defects are measured on the master, the cut is "
+                        "applied to the force+Z-up tree that is published")
     g.add_argument("--min-seconds", type=float,
                    default=segment_mod.MIN_PUBLISH_SECONDS,
                    help="drop clean spans shorter than this")
