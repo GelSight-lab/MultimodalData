@@ -55,6 +55,11 @@ def _reindex(table: pa.Table, task: str, new_ep: str, new_idx: int) -> pa.Table:
         "task_index": pa.array([TASK_INDEX[task]] * n, pa.int64()),
         "episode": pa.array([f"{DATE}/{new_ep}"] * n, pa.string()),
         "episode_index": pa.array([new_idx] * n, pa.int64()),
+        # Row position within THIS episode. `frame_idx` already counts rows,
+        # but every published parquet carries both and the layout check names
+        # `frame_index`; the cut segments shipped neither of the two int64
+        # LeRobot columns.
+        "frame_index": pa.array(list(range(n)), pa.int64()),
     }
     for name, col in want.items():
         if name in table.column_names:
