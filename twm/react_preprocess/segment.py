@@ -128,6 +128,13 @@ def dimensions(path: Path) -> tuple[int, int]:
     tell "this file is broken and wants repair" apart from any other
     subprocess failure.
     """
+    # A file that is not there is a different problem from one that will not
+    # decode, and saying "did not decode" for a missing path sends the reader
+    # looking for corruption. It happened: an interrupted stage_zup left a
+    # partial tree and four rope episodes were reported as undecodable when
+    # the streams simply had not been written yet.
+    if not Path(path).exists():
+        raise UnreadableVideo(f"{path} 不存在（上游阶段尚未产出或被中断）")
     r = subprocess.run(
         ["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries",
          "stream=width,height", "-of", "csv=p=0:s=x", str(path)],
@@ -213,6 +220,8 @@ def frame_count(path: Path) -> int:
     through -- a truncated source would be published unchanged. Counting its
     frames here decodes it, and an unreadable file raises.
     """
+    if not Path(path).exists():
+        raise UnreadableVideo(f"{path} 不存在（上游阶段尚未产出或被中断）")
     r = subprocess.run(
         ["ffprobe", "-v", "error", "-count_frames", "-select_streams", "v:0",
          "-show_entries", "stream=nb_read_frames", "-of", "csv=p=0", str(path)],

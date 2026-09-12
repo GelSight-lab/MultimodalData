@@ -409,3 +409,13 @@ def test_the_copy_path_still_decodes_what_it_copies(tmp_path):
 
     assert summary["episodes"] == 0
     assert [u["episode"] for u in summary["unreadable"]] == ["2026-09-10/episode_000"]
+
+
+def test_a_missing_stream_says_missing_not_undecodable(tmp_path):
+    """An interrupted upstream stage leaves paths that do not exist yet.
+    Reporting those as "did not decode" sent the reader hunting for corruption
+    in four rope episodes whose streams had simply not been written."""
+    with pytest.raises(S.UnreadableVideo, match="不存在"):
+        S.dimensions(tmp_path / "gone.mp4")
+    with pytest.raises(S.UnreadableVideo, match="不存在"):
+        S.frame_count(tmp_path / "gone.mp4")
