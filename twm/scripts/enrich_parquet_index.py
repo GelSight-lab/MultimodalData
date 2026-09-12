@@ -18,7 +18,9 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 STAGE = Path("/media/yxma/Disk1/twm/release")
-TASK_INDEX = {"motherboard": 0, "pushT": 1}
+# Append only: these ints are published in every parquet, so renumbering
+# an existing task would silently relabel data already downloaded.
+TASK_INDEX = {"motherboard": 0, "pushT": 1, "rope": 2}
 
 
 def main():

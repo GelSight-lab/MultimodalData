@@ -56,8 +56,14 @@ RELEASE = Path("/media/yxma/Disk1/twm/release")
 CALIB_DIRS = {
     "motherboard": REPO / "calibration" / "epoch_2026-05-12",
     "pushT":       REPO / "calibration" / "epoch_2026-06-26",
+    # rope was first recorded 2026-09-11, after the only recalibration it has
+    # ever seen, so its task default and its one session agree. This entry is
+    # also how `calib_dir_for_path` recognises "rope" as a task name at all --
+    # without it a rope path resolves to nothing rather than to the right epoch.
+    "rope":        REPO / "calibration" / "epoch_2026-09-09",
 }
-EXPECTED_EPOCH = {"motherboard": "2026-05-12", "pushT": "2026-06-26"}
+EXPECTED_EPOCH = {"motherboard": "2026-05-12", "pushT": "2026-06-26",
+                  "rope": "2026-09-09"}
 
 # The epochs themselves, named by the date each was MEASURED.
 EPOCH_DIRS = {
@@ -149,6 +155,28 @@ CALIB_SESSIONS = {
     # has been 2026-09-09 since the solve). Not an inference from the date:
     # what the rig was on is what the recording was made through.
     ("pushT",       "2026-09-09"): "2026-09-09",
+    # The wrist cameras were swapped (Arducam -> generic USB pair) on
+    # 2026-09-10 and the GelSights were re-seated, but neither touches the
+    # RealSense-to-mocap extrinsics these files hold, so the 2026-09-09 solve
+    # still describes the rig.
+    #
+    # On the residual offset the overlay shows: the operator's ruling
+    # (2026-09-11) is that it is physical, not calibration error — the
+    # OptiTrack rigid-body centroid and the gel SURFACE are different points.
+    # That has an independent measurement behind it: projecting the rigid-body
+    # origin instead of the gel centre lands 21-36 px away
+    # (`twm/scripts/build_release_publish.py`, the `toolbox/calibration.py`
+    # gel-centre bug). Note this does not by itself explain why the June-26 and
+    # 2026-09-09 solves disagree with EACH OTHER by a similar amount on the
+    # same frames, which is a measurement and stands; the epoch in use is
+    # settled by this declaration, not by that comparison.
+    ("pushT",       "2026-09-10"): "2026-09-09",
+    ("pushT",       "2026-09-11"): "2026-09-09",
+    ("motherboard", "2026-09-11"): "2026-09-09",   # same rig, USB wrist pair
+    # A third task, first recorded 2026-09-11 on the same rig and the same
+    # cameras as the motherboard and pushT sessions of that day. Nothing about
+    # a new task moves the RealSense-to-mocap extrinsics.
+    ("rope",        "2026-09-11"): "2026-09-09",
 }
 
 

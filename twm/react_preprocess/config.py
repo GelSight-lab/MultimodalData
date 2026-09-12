@@ -41,6 +41,7 @@ STAGE_ROOT = Path(os.environ.get("REACT_STAGE_ROOT", "/media/yxma/Disk1/twm/rele
 H5_ROOTS = {
     "motherboard": DATA_ROOT / "motherboard",
     "pushT": DATA_ROOT / "pushT",
+    "rope": DATA_ROOT / "rope",
 }
 
 # Sessions that predate the multi-camera rig and are not published.
