@@ -85,18 +85,27 @@ def _encode_rgb_single_pass(f, source, video_dir: Path) -> dict:
     The recorder writes one chunk per frame per stream, tick by tick, so on
     disk the file reads
     ``cam0₀ cam1₀ cam2₀ gelL₀ gelR₀ wristL₀ wristR₀ | cam0₁ cam1₁ …``.
-    Measured on a rope recording: each chunk is 0.62 MB and the next chunk of
-    the SAME stream sits 3.87 MB further on. Encoding one stream at a time
-    therefore walks the whole file to consume a sixth of what it reads, and
-    does that once per stream — seven traversals, ~6x more bytes off the
-    platter than the file holds. On the 2026-09 backlog that was 30 MB/s of
-    real disk throughput on a disk that does ~100 MB/s sequentially.
+    Measured on rope/2026-09-11/episode_011: each chunk is 0.62 MB and the
+    next chunk of the SAME stream sits 3.87 MB further on. Encoding one stream
+    at a time therefore seeks across that stride for every chunk, and does it
+    once per stream.
 
-    Reading all the colour streams for one block of frames before moving on
-    consumes each 3.87 MB span once, in one go. Raising ``read_ahead_kb``
-    cannot do this: the useful bytes are strided, so a bigger readahead just
-    fetches the neighbouring streams' chunks and discards them (measured: 2 MB
-    readahead made no difference, if anything slightly worse).
+    What that costs is TIME, not bytes. Measured on episode_008, reading 600
+    frames of all five colour streams two ways (different frame ranges, so
+    neither ran off the page cache):
+
+        one pass, streams interleaved   1.81 GB read   190 s
+        per stream, as built today      1.90 GB read   351 s
+
+    The same data comes off the platter either way — 1.09x vs 1.14x of the
+    bytes actually used, which is the same number. The per-stream order is
+    simply seek-bound: 1.8x the wall time to move identical bytes. An earlier
+    version of this comment claimed a ~6x read amplification; the measurement
+    above says that was wrong.
+
+    This is also why raising ``read_ahead_kb`` did nothing (measured
+    128 KB -> 2 MB: 32.0 -> 30.3 MB/s aggregate, i.e. nothing). No bytes were
+    being wasted for a bigger readahead to recover.
 
     Not yet the default. It changes the core build path and the difference is
     invisible in the output, so it wants a full session's worth of evidence

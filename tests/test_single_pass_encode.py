@@ -3,8 +3,10 @@
 The recorder writes one chunk per frame per stream, tick by tick, so a single
 stream's chunks are strided through the whole file — measured on a rope
 recording, 0.62 MB chunks with the next chunk of the same stream 3.87 MB
-further on. Encoding one stream at a time therefore walks the entire file
-seven times and reads about six times the bytes it uses.
+further on. Encoding one stream at a time seeks across that stride for every
+chunk. Measured, the two orders move the SAME bytes (1.09x vs 1.14x of what
+is used) and differ only in time: 190 s against 351 s for 600 frames of five
+streams. The cost is seeks, not wasted reads.
 
 The fix is invisible in the output: both paths write the same frames to the
 same files. So the test that matters is about the ORDER the file is read in,
