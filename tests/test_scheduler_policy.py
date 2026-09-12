@@ -86,3 +86,22 @@ def test_only_one_publisher_at_a_time():
 
 def test_nothing_pending_means_no_publish():
     assert decide(S(publish_pending=0), LIM).publish is False
+
+
+def test_the_cpu_pool_is_not_shed_below_its_floor_while_work_is_queued():
+    """A suspended worker holds its claim, so shedding the pool stalls the
+    stage. Observed: idle touched 4%, four of five workers were suspended, and
+    with the resume threshold at idle_high the pool sat frozen at 12% idle
+    while twenty jobs waited."""
+    d = decide(S(idle_pct=4, cpu_workers=LIM.cpu_min, cpu_backlog=20), LIM)
+    assert d.drop_cpu == 0
+
+
+def test_a_pool_below_its_floor_is_restored_without_waiting_for_idle_high():
+    d = decide(S(idle_pct=12, cpu_workers=1, cpu_backlog=20), LIM)
+    assert d.add_cpu == 1
+
+
+def test_with_no_backlog_the_pool_may_shed_to_one():
+    d = decide(S(idle_pct=2, cpu_workers=3, cpu_backlog=0), LIM)
+    assert d.drop_cpu == 1

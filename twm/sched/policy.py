@@ -48,6 +48,7 @@ class Limits:
     cpu_max: int = 6
     idle_high: int = 22      # above this the machine is under-used
     idle_low: int = 6        # below this it is oversubscribed
+    cpu_min: int = 3         # workers kept while any CPU work is queued
     keep_fraction: float = 0.90   # a probe must hold this much of the best
 
 
@@ -90,15 +91,26 @@ def decide(s: State, lim: Limits = Limits()) -> Decision:
         return Decision(why=f"保留磁盘探测：{s.read_mbs} MB/s 未下降")
 
     # 2. Oversubscribed: give CPU back before touching the disk, because the
-    #    CPU jobs are the ones that can be resumed instantly.
-    if s.idle_pct < lim.idle_low and s.cpu_workers > 1:
+    #    CPU jobs are the ones that can be resumed instantly. Never below
+    #    `cpu_min` while work is queued -- a suspended worker holds its claim,
+    #    so shedding the pool to one stalls the stage outright. That happened:
+    #    idle touched 4%, four of five workers were suspended, and because the
+    #    resume threshold was idle_high the pool sat frozen at 12% idle with
+    #    twenty jobs still queued and none progressing.
+    floor = lim.cpu_min if s.cpu_backlog > 0 else 1
+    if s.idle_pct < lim.idle_low and s.cpu_workers > floor:
         return Decision(drop_cpu=1, why=f"CPU 过载 idle={s.idle_pct}%")
 
-    # 3. Spare cores and queued CPU work: always take it. Costs the disk
-    #    nothing.
-    if s.idle_pct > lim.idle_high and s.cpu_backlog > 0 and s.cpu_workers < lim.cpu_max:
-        return Decision(add_cpu=1,
-                        why=f"空闲 {s.idle_pct}%，力估计还有 {s.cpu_backlog} 个待办")
+    # 3. Queued CPU work. Below the floor it is restored as long as the CPU is
+    #    not actually oversubscribed; above the floor it grows only when there
+    #    are cores going spare. Costs the disk almost nothing either way.
+    if s.cpu_backlog > 0 and s.cpu_workers < lim.cpu_max:
+        if s.cpu_workers < lim.cpu_min and s.idle_pct >= lim.idle_low:
+            return Decision(add_cpu=1,
+                            why=f"力估计 worker 低于下限 {s.cpu_workers}<{lim.cpu_min}")
+        if s.idle_pct > lim.idle_high:
+            return Decision(add_cpu=1,
+                            why=f"空闲 {s.idle_pct}%，力估计还有 {s.cpu_backlog} 个待办")
 
     # 4. Only once the CPU is busy or has nothing to do is it worth risking
     #    another reader.
