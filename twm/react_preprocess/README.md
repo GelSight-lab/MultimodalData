@@ -21,7 +21,11 @@ recording.h5
    │  encode    H.264 yuv444p CRF18 (RGB), FFV1 gray16le (depth)
    │  meta      per-frame parquet
    ▼
-release/<task>/{videos,depth,meta}/<date>/episode_NNN/…
+release/<task>/{videos,depth,meta}/<date>/episode_NNN/…      (the master)
+   │  curation  find the defective spans, and their clean complement
+   │  segment   cut, LAST — after force recovery and the Z-up conversion
+   ▼
+release_cut/<task>/{videos,meta}/<date>/episode_NNN_segNN/…  (what ships)
 ```
 
 | Module | Responsibility |
@@ -34,6 +38,7 @@ release/<task>/{videos,depth,meta}/<date>/episode_NNN/…
 | `meta` | parquet assembly and index columns |
 | `detect` | bad-interval detectors + clean-span complement |
 | `curation` | per-task `bad_frames.json` / `segments.json` / `episodes.jsonl` |
+| `segment` | cut episodes down to their clean spans, one span per episode |
 | `previews` | preview policy (calibration choice, trim, world offset, layout) |
 | `pipeline` | per-episode orchestration |
 | `backfill` | recover flags for already-published parquet |
@@ -42,9 +47,78 @@ release/<task>/{videos,depth,meta}/<date>/episode_NNN/…
 `previews` holds policy only — the panel renderer needs rig-local calibration
 the release does not ship, so it stays in `twm/scripts/build_release_previews.py`
 as a thin adapter over `previews.plan()`. Port checks: `detect`/`curation`
-reproduce the published `bad_frames.json` and `segments.json` for all 36
+reproduced the published `bad_frames.json` and `segments.json` for all 36
 episodes with zero differences; the preview adapter re-renders
 `pushT/episode_000` bit-identically (first-frame MAD 0.00, same 900 frames).
+
+`tactile_freeze_*` (added 2026-09-11) deliberately breaks that zero-difference
+property: it flags a defect the published files do not contain. See below.
+
+## Defects are cut out, not annotated
+
+`curation` describes the defects; it does not remove them. That was the whole
+release's model until 2026-09-11, and its weakness is that the description
+lives in a sidecar: a reader who loads the parquet and the MP4s and never opens
+`bad_frames.json` trains on frozen tactile and teleported poses without ever
+being told. Nine of the nineteen 2026-09 episodes carry such a span.
+
+`segment` makes it structural. Every clean span long enough to be a
+demonstration becomes its own published episode, so each frame that ships has
+passed every detector and there is no annotation left to skip — what was
+`bad_frames.json` becomes the gaps between episodes. `release/` stays as the
+uncut master; `release_cut/` is what goes to the Hub.
+
+It runs LAST, after force recovery and the Z-up conversion, so every column
+those add is carried through by the same row slice and neither has to know
+segments exist.
+
+Measured over the 2026-09 sessions: 132.2 min becomes 122.5 min in 38
+episodes. 4.7% was defective; 2.6% was clean but under the 30-second floor
+(`MIN_PUBLISH_SECONDS`). Span lengths are strongly bimodal — 19 slivers under
+1.3 s between nearby defects, then a jump to 2.5 s, 11.6 s and up — so the
+floor costs little and removes every fragment too short to be a demonstration.
+
+A row keeps `timestamp` and `source_h5_frame` unrebased, because both stay
+true of a slice, and gains `source_episode` / `source_frame_idx`, so a segment
+traces back to the recorded frame it came from without an index lookup.
+
+The cut is routed in Python off the decoder rather than by an ffmpeg filter
+graph. `select=between(n,a,b),setpts=N/FRAME_RATE/TB` is **not** frame-exact:
+a 120-frame probe asked for `[10,29]` returned twenty frames whose contents
+were 10, 10, 12, 13, … — right count, wrong pixels, which is exactly the
+failure this stage exists to remove and exactly what a count check cannot see.
+
+## A held GelSight frame is not missing data
+
+The recorder repeats a sensor's last frame at every tick until a new one
+arrives, so a GelSight that stops delivering produces no gap and no error — it
+produces the same frame, and the same metrics, over and over. Nothing in
+curation read that until `tactile_freeze_L` / `tactile_freeze_R`, which find
+runs of bit-identical tactile intensity the way `ot_loss_*` finds runs of
+bit-identical pose.
+
+The threshold is the shared `FREEZE_THRESHOLD_S` (0.25 s, 8 ticks), and the
+margin around it is wide because the two populations are far apart. A GelSight
+runs at 15-18 Hz against a 30 Hz tick, so short repeat runs are the normal
+state of every episode: measured 1-3 ticks, worst case 4. Every genuine
+outage on the pushT 2026-09-10 session was 144 ticks or longer.
+
+Unlike the pose version this one is padded by `BUFFER_FRAMES`: the driver's
+first frames after a reopen are underexposed — measured mean 55, then 73,
+against a settled 75 — and they land just past the end of the freeze.
+
+What it found:
+
+| Data | Episodes touched | Frames added | Where |
+|---|---|---|---|
+| pushT 2026-09-10 (unpublished) | 3 of 3 | 6,233 (17 %) | mid-episode sensor dropouts, 5 s each, plus two dead tails of 20 s and 121 s |
+| motherboard (published) | 32 of 35 | 754 (0.35 %) | the last 0.7-1.1 s of the episode, both sensors |
+| pushT (published) | 4 of 5 | 95 (0.16 %) | same, the last 0.7-1.1 s |
+
+The published tails are a shutdown artefact: the GelSight threads stop before
+the last ticks are written. Regenerating the two published index files would
+trim about a second off each episode's usable span. That has not been done —
+it changes files already on the Hub.
 
 ## Tactile time alignment
 
