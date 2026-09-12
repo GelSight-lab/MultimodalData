@@ -38,6 +38,7 @@ class State:
     cpu_backlog: int         # queued CPU jobs (episode-sides awaiting force)
     probing_disk: bool       # last tick resumed a build to test the water
     cooldown: int            # ticks left before probing the disk again
+    cpu_suspended: int = 0   # workers holding a claim while stopped
     publish_pending: int = 0     # finished, verified-able, unpublished segments
     publisher_running: bool = False
 
@@ -101,6 +102,15 @@ def decide(s: State, lim: Limits = Limits()) -> Decision:
     if s.idle_pct < lim.idle_low and s.cpu_workers > floor:
         return Decision(drop_cpu=1, why=f"CPU 过载 idle={s.idle_pct}%")
 
+    # 2b. A suspended worker still holds its mkdir claim, so its job is frozen
+    #     AND unavailable to anyone else. Leaving one parked in the deadband is
+    #     not neutral, it is stalled work; restore it as soon as the CPU is not
+    #     actually oversubscribed.
+    if (s.cpu_suspended > 0 and s.cpu_backlog > 0
+            and s.idle_pct >= lim.idle_low and s.cpu_workers < lim.cpu_max):
+        return Decision(add_cpu=1,
+                        why=f"恢复被暂停的 worker（{s.cpu_suspended} 个占着认领）")
+
     # 3. Queued CPU work. Below the floor it is restored as long as the CPU is
     #    not actually oversubscribed; above the floor it grows only when there
     #    are cores going spare. Costs the disk almost nothing either way.
@@ -116,7 +126,14 @@ def decide(s: State, lim: Limits = Limits()) -> Decision:
     #    another reader.
     if s.cooldown > 0:
         return Decision(cooldown=s.cooldown - 1, why="磁盘探测冷却中")
-    if (s.idle_pct > lim.idle_high and s.disk_paused > 0
+    # Whether to run another BUILD is a question about the disk, not about
+    # spare cores. Gating it on idle > idle_high starved the disk pool
+    # outright: the CPU pool is sized to hold idle below that, so while any
+    # CPU work was queued no build could ever resume, and the entire rope task
+    # sat suspended for as long as it was observed. The throughput probe is
+    # self-correcting -- it reverts what does not pay -- so the only gate left
+    # is not piling on a machine that is genuinely oversubscribed.
+    if (s.idle_pct >= lim.idle_low and s.disk_paused > 0
             and s.disk_running < lim.disk_max):
         return Decision(resume_disk=True, probing=True,
                         why=f"探测磁盘 +1（当前 {s.disk_running} 个读者 {s.read_mbs} MB/s）")

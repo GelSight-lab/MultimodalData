@@ -105,3 +105,26 @@ def test_a_pool_below_its_floor_is_restored_without_waiting_for_idle_high():
 def test_with_no_backlog_the_pool_may_shed_to_one():
     d = decide(S(idle_pct=2, cpu_workers=3, cpu_backlog=0), LIM)
     assert d.drop_cpu == 1
+
+
+def test_builds_are_not_starved_by_a_busy_cpu():
+    """Observed: eight minutes of no-ops with five builds suspended.
+
+    The CPU pool is sized to keep idle below idle_high, and the only rule that
+    resumed a build required idle ABOVE idle_high. So while any CPU work was
+    queued the disk pool could never grow — the whole rope task sat frozen.
+    Builds are disk-bound; whether to run another one is a question about the
+    disk, not about spare cores.
+    """
+    d = decide(S(idle_pct=15, cpu_backlog=20, cpu_workers=LIM.cpu_min,
+                 disk_running=3, disk_paused=5, read_mbs=51,
+                 best_read_mbs=53), LIM)
+    assert d.resume_disk is True and d.probing is True
+
+
+def test_a_suspended_worker_holding_a_claim_is_eventually_resumed():
+    """A suspended force worker keeps its mkdir claim, so its job is frozen and
+    no one else can take it. Sitting in the deadband forever is not neutral."""
+    d = decide(S(idle_pct=15, cpu_backlog=20, cpu_workers=LIM.cpu_min,
+                 cpu_suspended=2, disk_running=6, disk_paused=0), LIM)
+    assert d.add_cpu == 1

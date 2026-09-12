@@ -145,7 +145,8 @@ def main() -> int:
                    cpu_workers=len(fw_run), cpu_backlog=backlog(),
                    probing_disk=probing, cooldown=cooldown,
                    publish_pending=pending,
-                   publisher_running=pub_proc is not None)
+                   publisher_running=pub_proc is not None,
+                   cpu_suspended=len(fw_stop))
         d: Decision = decide(st, lim)
         act = []
 
