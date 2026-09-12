@@ -33,7 +33,8 @@ def _sidecar_arrays(path: Path) -> tuple[dict, dict]:
 
 
 BAD_KEYS = ("intensity_spikes", "pose_teleports_L", "pose_teleports_R",
-            "ot_loss_L", "ot_loss_R", "cam_corruption", "tactile_corruption")
+            "ot_loss_L", "ot_loss_R", "cam_corruption", "tactile_corruption",
+            "tactile_freeze_L", "tactile_freeze_R")
 
 
 def episode_report(path: Path, video_dir: Path | None = None) -> tuple[dict, dict]:
@@ -59,6 +60,12 @@ def episode_report(path: Path, video_dir: Path | None = None) -> tuple[dict, dic
         "pose_teleports_R": D.detect_pose_teleports(pose_r, T) if "right" in active else [],
         "ot_loss_L": D.detect_pose_freezes(pose_l, T) if "left" in active else [],
         "ot_loss_R": D.detect_pose_freezes(pose_r, T) if "right" in active else [],
+        # A held GelSight frame is not missing data the reader can see: it is
+        # the previous frame again, with the previous frame's metrics.
+        "tactile_freeze_L": D.detect_tactile_freezes(
+            ep["tactile_left_intensity"].numpy(), T),
+        "tactile_freeze_R": D.detect_tactile_freezes(
+            ep["tactile_right_intensity"].numpy(), T),
         "cam_corruption": [],
         "tactile_corruption": [],
     }
@@ -150,6 +157,12 @@ def build_task(task: str, stage_root: Path = STAGE_ROOT,
             "world_frame_offset": cm.get("world_frame_offset_applied", [0.0, 0.0, 0.0]),
             "n_segments": n_seg,
             "total_bad_frames": report["total_bad_frames"],
+            # Which wrist camera, not whether: the Arducam and USB pairs are
+            # different optics. None means the session predates them.
+            "wrist_camera": cm.get("wrist_camera"),
+            # The power curve each wrist stream was published through (1.0 =
+            # as recorded). A declared photometric change; see `tone`.
+            "wrist_tone_gamma": cm.get("wrist_tone_gamma", {}),
         })
         # Declared, always. react_preprocess copies poses straight out of the
         # HDF5, which is Y-up as recorded; an existing row's value wins because

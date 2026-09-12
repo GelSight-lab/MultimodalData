@@ -9,6 +9,8 @@ Three failure modes are flagged per episode:
                        fast in a single frame
 ``ot_loss_*``          the tracker dropping out, which shows up as a run of
                        bit-identical poses rather than as missing samples
+``tactile_freeze_*``   a GelSight dropping out, which shows up the same way in
+                       its intensity trace: the recorder holds the last frame
 
 Thresholds are the ones validated against the published motherboard
 ``bad_frames.json`` (25/27 episodes bit-identical).
@@ -22,6 +24,14 @@ from __future__ import annotations
 import numpy as np
 
 from .config import FPS
+
+class UnreadableVideo(RuntimeError):
+    """A published stream that will not decode at all.
+
+    Distinct from "this stream has corrupt frames": those are intervals to cut
+    around, this is a file that cannot be read and must be rebuilt.
+    """
+
 
 TAU_INTENSITY = 30.0
 TAU_VELOCITY_MPS = 5.0
@@ -171,7 +181,12 @@ def detect_pose_freezes(pose: np.ndarray, T: int) -> list[list[int]]:
     same = np.zeros(T, dtype=bool)
     same[1:] = np.all(np.abs(np.diff(pose, axis=0)) < EPS_POSE_BIT, axis=1)
     min_frames = int(round(FREEZE_THRESHOLD_S * FPS))
+    return pad_and_merge(_frozen_runs(same, T, min_frames), T, 0)
 
+
+def _frozen_runs(same: np.ndarray, T: int, min_frames: int) -> list[tuple[int, int]]:
+    """Inclusive spans of ``min_frames`` or more frames that repeat their
+    predecessor. ``same[i]`` means frame ``i`` equals frame ``i-1``."""
     events, i = [], 1
     while i < T:
         if not same[i]:
@@ -185,7 +200,33 @@ def detect_pose_freezes(pose: np.ndarray, T: int) -> list[list[int]]:
         if (run_b - run_a + 1) >= min_frames:
             events.append((run_a, run_b))
         i = j
-    return pad_and_merge(events, T, 0)
+    return events
+
+
+def detect_tactile_freezes(intensity: np.ndarray, T: int) -> list[list[int]]:
+    """Runs of bit-identical tactile intensity lasting at least
+    ``FREEZE_THRESHOLD_S`` — a GelSight that stopped delivering frames.
+
+    The recorder HOLDS a sensor's last frame at every tick until a new one
+    arrives, so an outage is never missing data: it is the same frame written
+    over and over, and the metrics computed from it repeat to the bit. That is
+    the same signature ``detect_pose_freezes`` reads for OptiTrack.
+
+    A GelSight runs at 15-18 Hz against a 30 Hz tick, so SHORT repeat runs are
+    the normal state of every episode — 1 to 3 ticks, 4 at the slowest. Only
+    the threshold separates that from an outage, and on the pushT 2026-09-10
+    session the two populations are 4 and >= 144 ticks apart.
+
+    Padded by ``BUFFER_FRAMES``, unlike the pose version: the driver's first
+    frames after a reopen are underexposed (measured mean 55, then 73, against
+    a settled 75), and those land just past the end of the freeze.
+    """
+    if T < 2:
+        return []
+    same = np.zeros(T, dtype=bool)
+    same[1:] = np.diff(np.asarray(intensity, np.float64)[:T]) == 0.0
+    return pad_and_merge(_frozen_runs(same, T, int(round(FREEZE_THRESHOLD_S * FPS))),
+                         T, BUFFER_FRAMES)
 
 
 def _video_stats(mp4) -> tuple[np.ndarray, np.ndarray]:
@@ -204,11 +245,26 @@ def _video_stats(mp4) -> tuple[np.ndarray, np.ndarray]:
     """
     import subprocess
     W, H = CAM_SCAN_W, CAM_SCAN_H
-    raw = subprocess.run(
+    proc = subprocess.run(
         ["ffmpeg", "-v", "error", "-i", str(mp4), "-vf", f"scale={W}:{H}",
          "-f", "rawvideo", "-pix_fmt", "rgb24", "-"],
-        capture_output=True).stdout
+        capture_output=True)
+    raw = proc.stdout
     n = len(raw) // (W * H * 3)
+    # A stream that will not decode is not a clean stream. This used to take
+    # ffmpeg's stdout unconditionally, so a truncated file -- one ffmpeg was
+    # killed before it could write the trailer, leaving "moov atom not found"
+    # -- came back as zero bytes, scored as a 0-frame video, and reported NO
+    # corruption. Two of the eight 2026-09-11 motherboard episodes were in
+    # exactly that state (episode_004/wrist_left, episode_006/view_right) and
+    # both passed curation silently; the cut caught them only because ffprobe
+    # happens to be run before encoding. Counting files, or trusting a
+    # detector that cannot fail, is not the same as checking the data.
+    if proc.returncode != 0 or n == 0:
+        err = proc.stderr.decode("utf-8", "replace").strip().splitlines()
+        raise UnreadableVideo(
+            f"{mp4} did not decode ({'exit ' + str(proc.returncode)}): "
+            f"{err[0] if err else 'no output'}")
     a = np.frombuffer(raw[:n * W * H * 3], np.uint8) \
           .reshape(n, H, W, 3).astype(np.int16)
     if n < 2:
