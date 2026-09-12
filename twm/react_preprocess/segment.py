@@ -294,16 +294,26 @@ def build_task(task: str, src_root: Path = STAGE_ROOT,
     dst_root = Path(dst_root) if dst_root else Path(str(STAGE_ROOT) + "_cut")
     out = dst_root / task
 
-    sidecars = sorted((det_root / "meta").rglob("episode_*._detect.pt"))
-    if not sidecars:
-        raise FileNotFoundError(f"no _detect.pt sidecar under {det_root/'meta'}")
+    # Enumerate the tree being CUT, not the tree the defects were measured on.
+    # Those are the same set in a full run and are not during a partial one: a
+    # wave that publishes the 20 episodes built so far has 20 parquets and 33
+    # sidecars, and discovering by sidecar would try to cut 13 episodes this
+    # tree does not contain.
+    parquets = sorted((src_root / "meta").rglob("episode_*.parquet"))
+    if not parquets:
+        raise FileNotFoundError(f"no episode parquet under {src_root/'meta'}")
 
     rows, dropped, raw_frames = [], [], 0
-    for det in sidecars:
-        date = det.parent.name
+    for pq_path in parquets:
+        date, episode = pq_path.parent.name, pq_path.stem
         if dates and date not in dates:
             continue
-        episode = det.name.replace("._detect.pt", "")
+        det = det_root / "meta" / date / f"{episode}._detect.pt"
+        if not det.is_file():
+            raise FileNotFoundError(
+                f"{task}/{date}/{episode}: no _detect.pt under {det_root}. The "
+                f"spans cannot be computed, and publishing it uncut would ship "
+                f"the defects this stage exists to remove.")
         report, _ = curation.episode_report(
             det, video_dir=det_root / "videos" / date / episode)
         raw_frames += int(report["n_frames"])

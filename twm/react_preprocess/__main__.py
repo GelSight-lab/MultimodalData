@@ -156,7 +156,7 @@ def cmd_segment(args) -> int:
     for task in ([args.task] if args.task else sorted(H5_ROOTS)):
         try:
             s = segment_mod.build_task(
-                task, STAGE_ROOT, args.out, args.dates,
+                task, args.src or STAGE_ROOT, args.out, args.dates,
                 min_frames=int(round(args.min_seconds * 30.0)),
                 verify=not args.no_verify, dry_run=args.dry_run,
                 detect_root=args.detect_root)
@@ -224,6 +224,10 @@ def main(argv=None) -> int:
     g = sub.add_parser("segment", help="cut episodes down to their clean spans")
     g.add_argument("--task", choices=sorted(H5_ROOTS))
     g.add_argument("--dates", nargs="*")
+    g.add_argument("--src", help="tree to cut (default: STAGE_ROOT). In the "
+                        "real chain this is the Z-up output, which is what "
+                        "ships; --detect-root stays on the tree the defects "
+                        "were measured on")
     g.add_argument("--out", help="destination tree (default: <STAGE_ROOT>_cut)")
     g.add_argument("--detect-root",
                    help="tree holding the _detect.pt sidecars and the videos "

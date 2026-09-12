@@ -261,3 +261,42 @@ def test_a_tree_whose_frame_numbering_differs_is_refused(tmp_path):
     with pytest.raises(RuntimeError, match="frame numbering differs"):
         S.cut_episode("pushT", "2026-09-10", "episode_000", [(0, 39)],
                       src, dst, verify=False, expected_T=41)
+
+
+def test_it_cuts_what_the_published_tree_holds_not_what_was_detected(tmp_path):
+    """A partial wave publishes fewer episodes than have been detected.
+
+    Discovering by sidecar would try to cut episodes the tree being published
+    does not contain — on the 2026-09 backlog, 33 sidecars against the 20
+    episodes built so far.
+    """
+    src, det, dst = tmp_path / "wave", tmp_path / "rel", tmp_path / "cut"
+    _build_episode(src / "pushT", "2026-09-10", "episode_000", 40)   # in the wave
+    _build_episode(det / "pushT", "2026-09-10", "episode_000", 40)
+    _build_episode(det / "pushT", "2026-09-10", "episode_999", 40)   # detected only
+    for d in (det / "pushT/meta/2026-09-10").glob("*.parquet"):
+        d.with_name(d.stem + "._detect.pt").write_text("x")
+
+    seen = []
+    real = S.curation.episode_report
+    S.curation.episode_report = lambda p, video_dir=None: (
+        seen.append(p.name) or ({**{k: [] for k in S.curation.BAD_KEYS},
+                                 "n_frames": 40}, {}))
+    try:
+        S.build_task("pushT", src, dst, min_frames=16,
+                     verify=False, detect_root=det)
+    finally:
+        S.curation.episode_report = real
+
+    assert seen == ["episode_000._detect.pt"]
+
+
+def test_an_episode_in_the_wave_with_no_sidecar_is_refused(tmp_path):
+    """Publishing it uncut would ship exactly the defects this stage removes."""
+    src, det, dst = tmp_path / "wave", tmp_path / "rel", tmp_path / "cut"
+    _build_episode(src / "pushT", "2026-09-10", "episode_000", 40)
+    (det / "pushT/meta/2026-09-10").mkdir(parents=True)
+
+    with pytest.raises(FileNotFoundError, match="no _detect.pt"):
+        S.build_task("pushT", src, dst, min_frames=16,
+                     verify=False, detect_root=det)
