@@ -8,6 +8,7 @@ the filter expression is invisible in any test that mocks the encoder.
 """
 from __future__ import annotations
 
+import json
 import subprocess
 from pathlib import Path
 
@@ -300,3 +301,111 @@ def test_an_episode_in_the_wave_with_no_sidecar_is_refused(tmp_path):
     with pytest.raises(FileNotFoundError, match="no _detect.pt"):
         S.build_task("pushT", src, dst, min_frames=16,
                      verify=False, detect_root=det)
+
+
+def test_a_second_wave_does_not_erase_the_first_waves_episodes(tmp_path):
+    """The stage runs in waves: episodes whose force estimation has finished
+    are cut while the rest are still being estimated. Writing only the current
+    wave's rows would leave the earlier episodes published but unlisted."""
+    src, dst = tmp_path / "rel", tmp_path / "cut"
+    _build_episode(src / "pushT", "2026-09-10", "episode_000", 40)
+    _build_episode(src / "pushT", "2026-09-10", "episode_001", 40)
+    for d in (src / "pushT/meta/2026-09-10").glob("*.parquet"):
+        d.with_name(d.stem + "._detect.pt").write_text("x")
+
+    real = S.curation.episode_report
+    S.curation.episode_report = lambda p, video_dir=None: (
+        {**{k: [] for k in S.curation.BAD_KEYS}, "n_frames": 40}, {})
+    try:
+        for only in ("episode_000", "episode_001"):
+            keep = tmp_path / only
+            _build_episode(keep / "pushT", "2026-09-10", only, 40)
+            (keep / "pushT/meta/2026-09-10" / f"{only}._detect.pt").write_text("x")
+            S.build_task("pushT", keep, dst, min_frames=16, verify=False,
+                         detect_root=keep)
+    finally:
+        S.curation.episode_report = real
+
+    rows = [json.loads(l) for l in
+            (dst / "pushT/episodes.jsonl").read_text().splitlines() if l.strip()]
+    assert sorted(r["episode"] for r in rows) == [
+        "2026-09-10/episode_000", "2026-09-10/episode_001"]
+
+
+def test_a_later_wave_skips_episodes_it_has_already_cut(tmp_path):
+    """Re-cutting re-encodes every stream to produce the same bytes. A wave
+    does only what is new unless --force says otherwise."""
+    src, dst = tmp_path / "rel", tmp_path / "cut"
+    _build_episode(src / "pushT", "2026-09-10", "episode_000", 40)
+    (src / "pushT/meta/2026-09-10/episode_000._detect.pt").write_text("x")
+
+    calls = []
+    real = S.curation.episode_report
+    S.curation.episode_report = lambda p, video_dir=None: (
+        calls.append(p.name) or ({**{k: [] for k in S.curation.BAD_KEYS},
+                                  "n_frames": 40}, {}))
+    try:
+        first = S.build_task("pushT", src, dst, min_frames=16, verify=False,
+                             detect_root=src)
+        second = S.build_task("pushT", src, dst, min_frames=16, verify=False,
+                              detect_root=src)
+    finally:
+        S.curation.episode_report = real
+
+    assert first["episodes"] == 1 and first["skipped_already_cut"] == 0
+    assert second["episodes"] == 0 and second["skipped_already_cut"] == 1
+    assert len(calls) == 1          # the detectors did not run a second time
+
+
+def test_one_unreadable_stream_does_not_abandon_the_other_episodes(tmp_path):
+    """A file that will not decode is a repair job, not a reason to stop.
+
+    Aborting the task on the first broken stream cost seven readable episodes
+    their cut on 2026-09-12; the run now publishes what IS readable and names
+    what needs repair.
+    """
+    src, dst = tmp_path / "rel", tmp_path / "cut"
+    for ep in ("episode_000", "episode_001", "episode_002"):
+        _build_episode(src / "pushT", "2026-09-10", ep, 40)
+        (src / "pushT/meta/2026-09-10" / f"{ep}._detect.pt").write_text("x")
+    # truncate one stream of the middle episode
+    broken = src / "pushT/videos/2026-09-10/episode_001/view_right.mp4"
+    broken.write_bytes(broken.read_bytes()[:64])
+
+    # a defect in the middle, so the episodes take the CUT path rather than
+    # the verbatim-copy path (the copy path is guarded by frame_count instead)
+    real = S.curation.episode_report
+    S.curation.episode_report = lambda p, video_dir=None: (
+        {**{k: [] for k in S.curation.BAD_KEYS}, "n_frames": 40,
+         "intensity_spikes": [[20, 23]]}, {})
+    try:
+        summary = S.build_task("pushT", src, dst, min_frames=16, verify=False,
+                               detect_root=src)
+    finally:
+        S.curation.episode_report = real
+
+    assert summary["episodes"] == 4                    # 2 good episodes x 2 spans
+    assert [u["episode"] for u in summary["unreadable"]] == ["2026-09-10/episode_001"]
+    assert "did not decode" in summary["unreadable"][0]["why"]
+
+
+def test_the_copy_path_still_decodes_what_it_copies(tmp_path):
+    """A defect-free episode is copied verbatim, so nothing re-encodes it. The
+    frame-count check is then the only thing that opens the file at all."""
+    src, dst = tmp_path / "rel", tmp_path / "cut"
+    _build_episode(src / "pushT", "2026-09-10", "episode_000", 40)
+    (src / "pushT/meta/2026-09-10/episode_000._detect.pt").write_text("x")
+    broken = src / "pushT/videos/2026-09-10/episode_000/wrist_right.mp4"
+    broken.write_bytes(broken.read_bytes()[:64])
+
+    real = S.curation.episode_report
+    S.curation.episode_report = lambda p, video_dir=None: (
+        {**{k: [] for k in S.curation.BAD_KEYS}, "n_frames": 40}, {})
+    try:
+        summary = S.build_task("pushT", src, dst, min_frames=16, verify=True,
+                               detect_root=src)
+    finally:
+        S.curation.episode_report = real
+
+    assert summary["episodes"] == 0
+    assert [u["episode"] for u in summary["unreadable"]] == ["2026-09-10/episode_000"]

@@ -159,7 +159,7 @@ def cmd_segment(args) -> int:
                 task, args.src or STAGE_ROOT, args.out, args.dates,
                 min_frames=int(round(args.min_seconds * 30.0)),
                 verify=not args.no_verify, dry_run=args.dry_run,
-                detect_root=args.detect_root)
+                detect_root=args.detect_root, force=args.force)
         except FileNotFoundError as exc:
             print(f"[segment] {task}: {exc}", file=sys.stderr)
             continue
@@ -175,7 +175,11 @@ def cmd_segment(args) -> int:
               f"{s['raw_frames']/30.0/60:.1f} min "
               f"({s['kept_fraction']*100:.1f}%), "
               f"{len(s['dropped_spans'])} spans below "
-              f"{s['min_publish_seconds']:g}s dropped — {verb}")
+              f"{s['min_publish_seconds']:g}s dropped, "
+              f"{s.get('skipped_already_cut', 0)} 集已剪过跳过 — {verb}")
+        for u in s.get("unreadable", []):
+            print(f"  ★ {u['episode']} 无法解码，需修复: {u['why']}", file=sys.stderr)
+            rc = 1
     return rc
 
 
@@ -241,6 +245,9 @@ def main(argv=None) -> int:
     g.add_argument("--no-verify", action="store_true",
                    help="skip the per-stream frame-count check (it decodes "
                         "every written video)")
+    g.add_argument("--force", action="store_true",
+                   help="re-cut episodes already present in the output tree; "
+                        "by default a wave only cuts what is new")
     g.add_argument("--dry-run", action="store_true")
     g.set_defaults(func=cmd_segment)
 

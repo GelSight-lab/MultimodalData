@@ -35,6 +35,7 @@ import pyarrow.parquet as pq
 
 from . import curation, detect as D
 from .config import FPS, STAGE_ROOT
+from .detect import UnreadableVideo
 
 # A published segment must be long enough to be a demonstration, not a
 # fragment. The measured span lengths are strongly bimodal: 19 spans under 1.3
@@ -54,6 +55,47 @@ MIN_PUBLISH_FRAMES = int(round(MIN_PUBLISH_SECONDS * FPS))
 EXPECTED_STREAMS = ("view_left", "view_middle", "view_right",
                     "tactile_left", "tactile_right",
                     "wrist_left", "wrist_right")
+
+
+def _already_cut(out: Path, date: str, episode: str) -> bool:
+    """Has this source episode produced its parquet(s) in the cut tree?
+
+    Matches both shapes a cut can take: the whole episode copied under its own
+    name, or one file per span named ``<episode>_segNN``.
+    """
+    meta = out / "meta" / date
+    if not meta.is_dir():
+        return False
+    return bool(list(meta.glob(f"{episode}.parquet"))
+                or list(meta.glob(f"{episode}_seg*.parquet")))
+
+
+def _merge_jsonl_list(old: list, new: list) -> list:
+    """Union of two lists of dicts, order preserved, duplicates dropped."""
+    seen, out = set(), []
+    for r in list(old) + list(new):
+        k = json.dumps(r, sort_keys=True)
+        if k not in seen:
+            seen.add(k)
+            out.append(r)
+    return out
+
+
+def _merge_jsonl(path: Path, new_rows: list[dict], key: str) -> list[dict]:
+    """Existing rows first and unchanged, then the new ones; a repeat of the
+    same key is replaced, so re-cutting an episode updates it in place."""
+    old: list[dict] = []
+    if path.is_file():
+        old = [json.loads(l) for l in path.read_text().splitlines() if l.strip()]
+    seen = {r.get(key): i for i, r in enumerate(old)}
+    out = list(old)
+    for r in new_rows:
+        i = seen.get(r.get(key))
+        if i is None:
+            out.append(r)
+        else:
+            out[i] = r
+    return out
 
 
 def segment_name(episode: str, idx: int) -> str:
@@ -80,10 +122,20 @@ def publishable_spans(report: dict, min_frames: int = MIN_PUBLISH_FRAMES):
 # ── video ────────────────────────────────────────────────────────────────────
 
 def dimensions(path: Path) -> tuple[int, int]:
-    out = subprocess.run(
+    """Frame size of a stream, and the first place a broken one is noticed.
+
+    Raises `UnreadableVideo` rather than CalledProcessError so the caller can
+    tell "this file is broken and wants repair" apart from any other
+    subprocess failure.
+    """
+    r = subprocess.run(
         ["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries",
          "stream=width,height", "-of", "csv=p=0:s=x", str(path)],
-        check=True, capture_output=True, text=True).stdout.strip()
+        capture_output=True, text=True)
+    out = r.stdout.strip()
+    if r.returncode != 0 or "x" not in out:
+        raise UnreadableVideo(
+            f"{path} did not decode: {r.stderr.strip().splitlines()[0] if r.stderr.strip() else 'no output'}")
     w, h = out.split("x")[:2]
     return int(w), int(h)
 
@@ -154,12 +206,23 @@ def cut_video(src: Path, spans, dsts) -> None:
 
 def frame_count(path: Path) -> int:
     """Frames in a video, by decode. Slower than the container's count and the
-    only one worth trusting: ``nb_frames`` is whatever the muxer wrote."""
-    out = subprocess.run(
+    only one worth trusting: ``nb_frames`` is whatever the muxer wrote.
+
+    This is also what guards the COPY path. An episode with no defects is
+    copied verbatim rather than re-encoded, so nothing decodes it on the way
+    through -- a truncated source would be published unchanged. Counting its
+    frames here decodes it, and an unreadable file raises.
+    """
+    r = subprocess.run(
         ["ffprobe", "-v", "error", "-count_frames", "-select_streams", "v:0",
          "-show_entries", "stream=nb_read_frames", "-of", "csv=p=0", str(path)],
-        check=True, capture_output=True, text=True).stdout.strip()
-    return int(out.rstrip(","))
+        capture_output=True, text=True)
+    out = r.stdout.strip().rstrip(",")
+    if r.returncode != 0 or not out.isdigit():
+        raise UnreadableVideo(
+            f"{path} did not decode: "
+            f"{r.stderr.strip().splitlines()[0] if r.stderr.strip() else 'no output'}")
+    return int(out)
 
 
 # ── parquet ──────────────────────────────────────────────────────────────────
@@ -279,7 +342,7 @@ def build_task(task: str, src_root: Path = STAGE_ROOT,
                dst_root: Path | None = None, dates=None,
                min_frames: int = MIN_PUBLISH_FRAMES,
                verify: bool = True, dry_run: bool = False,
-               detect_root: Path | None = None) -> dict:
+               detect_root: Path | None = None, force: bool = False) -> dict:
     """Cut every built episode of a task into its publishable segments.
 
     ``detect_root`` is where the ``_detect.pt`` sidecars and the videos the
@@ -303,10 +366,17 @@ def build_task(task: str, src_root: Path = STAGE_ROOT,
     if not parquets:
         raise FileNotFoundError(f"no episode parquet under {src_root/'meta'}")
 
-    rows, dropped, raw_frames = [], [], 0
+    rows, dropped, raw_frames, skipped = [], [], 0, 0
+    unreadable: list[dict] = []
     for pq_path in parquets:
         date, episode = pq_path.parent.name, pq_path.stem
         if dates and date not in dates:
+            continue
+        # Already cut by an earlier wave. Re-cutting is the expensive part of
+        # the stage -- it re-encodes every stream -- and it would produce the
+        # same bytes, so a wave only does what is new unless told otherwise.
+        if not force and not dry_run and _already_cut(out, date, episode):
+            skipped += 1
             continue
         det = det_root / "meta" / date / f"{episode}._detect.pt"
         if not det.is_file():
@@ -333,8 +403,15 @@ def build_task(task: str, src_root: Path = STAGE_ROOT,
             rows += [{"episode": f"{date}/{segment_name(episode, i)}",
                       "n_frames": int(b - a + 1)} for i, (a, b) in enumerate(spans)]
             continue
-        rows += cut_episode(task, date, episode, spans, src_root, out, verify,
-                            expected_T=int(report["n_frames"]))
+        # One broken stream must not cost the other episodes. A file that
+        # will not decode is a repair job, not a reason to abandon the run:
+        # it is recorded, and the wave publishes everything that IS readable.
+        try:
+            rows += cut_episode(task, date, episode, spans, src_root, out,
+                                verify, expected_T=int(report["n_frames"]))
+        except (UnreadableVideo, FileNotFoundError) as exc:
+            unreadable.append({"episode": f"{date}/{episode}", "why": str(exc)})
+            continue
 
     kept_frames = sum(r["n_frames"] for r in rows)
     summary = {
@@ -344,17 +421,34 @@ def build_task(task: str, src_root: Path = STAGE_ROOT,
         "discarded_frames": raw_frames - kept_frames,
         "kept_fraction": round(kept_frames / raw_frames, 4) if raw_frames else 0.0,
         "min_publish_seconds": MIN_PUBLISH_SECONDS,
+        "skipped_already_cut": skipped,
+        "unreadable": unreadable,
         "dropped_spans": dropped,
     }
     if not dry_run:
         out.mkdir(parents=True, exist_ok=True)
+        # MERGE, do not overwrite. The stage is run in waves -- the episodes
+        # whose force estimation has finished are cut while the rest are still
+        # being estimated -- and a second pass writing only its own rows would
+        # erase the first pass's episodes from the index while their videos and
+        # parquet stayed in the tree: published but unlisted, which is the same
+        # defect the curation indices guard against upstream.
+        rows = _merge_jsonl(out / "episodes.jsonl", rows, "episode")
         (out / "episodes.jsonl").write_text(
             "".join(json.dumps(r) + "\n" for r in rows))
-        (out / "segment_provenance.json").write_text(
+        prov_path = out / "segment_provenance.json"
+        prior = {}
+        if prov_path.is_file():
+            try:
+                prior = json.loads(prov_path.read_text())
+            except ValueError:
+                prior = {}
+        prov_path.write_text(
             json.dumps({"summary": {k: v for k, v in summary.items()
                                     if k != "dropped_spans"},
                         "thresholds": D.thresholds(),
                         "min_publish_seconds": MIN_PUBLISH_SECONDS,
-                        "dropped_spans": dropped,
+                        "dropped_spans": _merge_jsonl_list(
+                            prior.get("dropped_spans", []), dropped),
                         "segments": rows}, indent=2))
     return summary
