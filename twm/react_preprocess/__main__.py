@@ -1,6 +1,7 @@
 """Command-line entry point.
 
     python -m react_preprocess build --task pushT [--date D] [--with-depth]
+    python -m react_preprocess segment --task pushT
     python -m react_preprocess audit --root /path/to/data/pushT
     python -m react_preprocess backfill-flags --root /path/to/data/pushT
     python -m react_preprocess verify-flags --root /path/to/data/pushT
@@ -12,7 +13,7 @@ import json
 import sys
 from pathlib import Path
 
-from . import backfill, curation
+from . import backfill, curation, segment as segment_mod
 from .config import H5_ROOTS, STAGE_ROOT
 from .h5io import discover
 from .pipeline import build_episode
@@ -148,6 +149,34 @@ def cmd_curate(args) -> int:
     return 0
 
 
+def cmd_segment(args) -> int:
+    """Cut built episodes down to their clean spans, one span per episode."""
+    rc = 0
+    for task in ([args.task] if args.task else sorted(H5_ROOTS)):
+        try:
+            s = segment_mod.build_task(
+                task, STAGE_ROOT, args.out, args.dates,
+                min_frames=int(round(args.min_seconds * 30.0)),
+                verify=not args.no_verify, dry_run=args.dry_run)
+        except FileNotFoundError as exc:
+            print(f"[segment] {task}: {exc}", file=sys.stderr)
+            continue
+        except RuntimeError as exc:
+            # A frame-count mismatch means the cut did not land where curation
+            # said it would, which is the one thing this stage promises.
+            print(f"[segment] {task}: {exc}", file=sys.stderr)
+            rc = 1
+            continue
+        verb = "would write" if args.dry_run else "wrote"
+        print(f"[segment] {task}: {s['episodes']} segments, "
+              f"{s['kept_minutes']:.1f} min kept of "
+              f"{s['raw_frames']/30.0/60:.1f} min "
+              f"({s['kept_fraction']*100:.1f}%), "
+              f"{len(s['dropped_spans'])} spans below "
+              f"{s['min_publish_seconds']:g}s dropped — {verb}")
+    return rc
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(prog="react_preprocess")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -183,6 +212,19 @@ def main(argv=None) -> int:
     c.add_argument("--task", choices=sorted(H5_ROOTS))
     c.add_argument("--dry-run", action="store_true")
     c.set_defaults(func=cmd_curate)
+
+    g = sub.add_parser("segment", help="cut episodes down to their clean spans")
+    g.add_argument("--task", choices=sorted(H5_ROOTS))
+    g.add_argument("--dates", nargs="*")
+    g.add_argument("--out", help="destination tree (default: <STAGE_ROOT>_cut)")
+    g.add_argument("--min-seconds", type=float,
+                   default=segment_mod.MIN_PUBLISH_SECONDS,
+                   help="drop clean spans shorter than this")
+    g.add_argument("--no-verify", action="store_true",
+                   help="skip the per-stream frame-count check (it decodes "
+                        "every written video)")
+    g.add_argument("--dry-run", action="store_true")
+    g.set_defaults(func=cmd_segment)
 
     v = sub.add_parser("verify-flags", help="check flags against ground truth")
     v.add_argument("--root")
