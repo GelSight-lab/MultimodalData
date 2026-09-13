@@ -14,7 +14,11 @@ import numpy as np
 import pyarrow.parquet as pq
 
 from .dexforce import force_informed_targets, gel_axis
-from .run_episode import DATA_ROOT, LEGACY_SHIFT, OUT_ROOT, STAGE_ROOT
+from .run_episode import DATA_ROOT, OUT_ROOT, STAGE_ROOT
+# LEGACY_SHIFT moved to its one owner. `run_episode` stopped re-exporting
+# it in 9589e2c (the row->GelSight map now comes from the preprocess, not
+# a constant), which left this import dangling and the module unimportable.
+from twm.tactile_align import LEGACY_SHIFT
 
 ASSETS = OUT_ROOT / "site_assets"
 

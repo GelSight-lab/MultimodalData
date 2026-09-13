@@ -61,7 +61,11 @@ from .lut_calibration import MM_PER_PIXEL, crop
 from .marker_removal import marker_mask, stages_depth
 from .o3d_view import has_display, remove_halo_pedestal, render_depth_mesh
 from . import visualize as V
-from .run_episode import DATA_ROOT, LEGACY_SHIFT, OUT_ROOT, STAGE_ROOT
+from .run_episode import DATA_ROOT, OUT_ROOT, STAGE_ROOT
+# LEGACY_SHIFT moved to its one owner. `run_episode` stopped re-exporting
+# it in 9589e2c (the row->GelSight map now comes from the preprocess, not
+# a constant), which left this import dangling and the module unimportable.
+from twm.tactile_align import LEGACY_SHIFT
 
 ASSETS = OUT_ROOT / "site_assets"
 SITE_ASSETS = OUT_ROOT / "site" / "assets"

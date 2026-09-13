@@ -106,7 +106,8 @@ def episode_agreement(X, f, gain, frames: int) -> dict:
 
     from . import react_calib as RC
     from .lut_calibration import crop
-    from .run_episode import (DATA_ROOT, LEGACY_SHIFT, STAGE_ROOT,
+    from twm.tactile_align import LEGACY_SHIFT
+    from .run_episode import (DATA_ROOT, STAGE_ROOT,
                               _reference_rows)
 
     mdl = _models(X, f)
