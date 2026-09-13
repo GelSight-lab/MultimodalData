@@ -166,14 +166,33 @@ def check_layout(root, date: str, *, require_force: bool = True,
         # fails on is a comment. Report every missing column rather than the
         # first — the previous `break` hid `frame_index` behind the four that
         # had just been added.
+        # A WARNING, not a failure, and not "the LeRobot index columns".
+        #
+        # Two things were checked and both came back negative. These are not
+        # LeRobot's set -- the standard one (verified against lerobot/pusht and
+        # lerobot/aloha_sim_insertion_human, both codebase_version v3.0) is
+        # `episode_index, frame_index, timestamp, index, task_index`; `task`
+        # and `episode` are strings we invented and `index`/`timestamp` are
+        # missing here. And nothing reads them: `ReactVideoDataset`, the loader
+        # this dataset actually ships, locates data by PATH
+        # (videos/<date>/<ep>/*.mp4 beside meta/<date>/<ep>.parquet, row i =
+        # frame i) and never opens these columns. `build_lerobot_dataset`
+        # recomputes its own indices rather than carrying these across.
+        #
+        # They were raised to a failure on 2026-09-13 on the grounds that every
+        # older published folder has them. That is consistency, which is not
+        # the same as necessity -- and a gate that blocks new data over
+        # metadata with no consumer costs more than it protects. The columns
+        # stay for consistency with what is already published; the gate does
+        # not.
         missing_idx = [c for c in ("task", "task_index", "episode",
                                    "episode_index", "frame_index")
                        if c not in cols]
         if missing_idx:
-            rep.fail("index columns",
-                     f"{ep}: parquet has no {', '.join(missing_idx)} — every "
-                     f"published folder carries the LeRobot index columns "
-                     f"(react_preprocess.meta.add_index_columns)")
+            rep.warnings.append(
+                f"{ep}: parquet has no {', '.join(missing_idx)} — carried by "
+                f"every older published folder, but no known consumer reads "
+                f"them (react_preprocess.meta.add_index_columns adds them)")
         if require_force:
             missing = [c for c in FORCE_COLUMNS if c not in cols]
             if missing:

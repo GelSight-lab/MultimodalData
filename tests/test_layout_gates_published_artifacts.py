@@ -113,7 +113,16 @@ def test_counting_is_off_by_default(tmp_path):
     assert rep.ok, _problems(rep)
 
 
-def test_missing_index_columns_now_fail(tmp_path):
+def test_missing_index_columns_warn_but_do_not_block(tmp_path):
+    """They are not LeRobot's set and nothing reads them.
+
+    The standard is `episode_index, frame_index, timestamp, index, task_index`
+    (checked against lerobot/pusht and lerobot/aloha_sim_insertion_human, both
+    v3.0). Ours swaps in two invented strings and omits two real ones. And
+    `ReactVideoDataset` locates data by path, never by these columns. Reported
+    so the drift is visible; not a gate, because a gate that blocks new data
+    over metadata with no consumer costs more than it protects.
+    """
     rep = check_layout(_folder(tmp_path, 12, 12, index_cols=False), DATE)
-    assert not rep.ok
-    assert any("index columns" == p.check for p in rep.problems), _problems(rep)
+    assert rep.ok, _problems(rep)
+    assert any("no task" in w for w in rep.warnings), rep.warnings
