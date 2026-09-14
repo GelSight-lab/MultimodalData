@@ -38,6 +38,11 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+# parents[2] is the REPO ROOT. `import twm.X` needs the directory that
+# CONTAINS the twm package, not the package itself -- inserting parents[1]
+# (twm/) leaves every `from twm.calib_epoch import ...` unresolvable, which
+# is why eight verifiers under this directory could not run at all.
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
@@ -170,8 +175,23 @@ def main() -> int:
 
             # THE FORCE THE RENDERER ACTUALLY OVERLAYS, against the tactile
             # tile it actually shows.
+            # WHICH gel frame the renderer shows for camera frame i is not
+            # restated here: `_gel_source_frames` reads it from the force npz,
+            # which records the frame each row's force was computed from. The
+            # old `i + LEGACY_SHIFT` is the pre-2026-06-27 index rule, and on
+            # every timestamped recording it put this correlation at -12
+            # frames while the renderer was at 0 — a checker failing the data
+            # for not matching a mapping the data never used.
+            src_col = BEP._gel_source_frames(TASK, DATE, ep).get("left")
+
+            def shown_gel(i, _c=src_col):
+                if _c is None:
+                    return int(i) + LEGACY_SHIFT
+                r = row_for_h5_frame(int(i), trim, len(_c))
+                return int(_c[r]) if r is not None else int(i)
+
             cam = np.arange(0, min(len(force), n - LEGACY_SHIFT - 1), 4)
-            sig = np.array([(np.abs(gel(int(i) + LEGACY_SHIFT) - pool
+            sig = np.array([(np.abs(gel(shown_gel(i)) - pool
                                     ).max(axis=2) > 8.0).mean() for i in cam])
             shown = np.array([
                 force[r] if (r := row_for_h5_frame(int(i), trim, len(force)))
@@ -182,9 +202,8 @@ def main() -> int:
             # displacement from the observed pose — which is force/k, so it
             # must track the displayed contact signal at lag 0 exactly as the
             # force does.
-            import build_episode_previews as _BEP
             from force_overlay import load_targets as _lt
-            poses = _BEP._release_poses(TASK, DATE, ep)
+            poses = BEP._release_poses(TASK, DATE, ep)
             tg = _lt(TASK, DATE, ep, Path("/media/yxma/Disk1/twm/force_recovery"),
                      poses).get("left")
             if tg is not None and "left" in poses:

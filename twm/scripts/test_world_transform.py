@@ -23,6 +23,11 @@ import sys
 import tempfile
 from pathlib import Path
 
+# parents[2] is the REPO ROOT. `import twm.X` needs the directory that
+# CONTAINS the twm package, not the package itself -- inserting parents[1]
+# (twm/) leaves every `from twm.calib_epoch import ...` unresolvable, which
+# is why eight verifiers under this directory could not run at all.
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import numpy as np                                             # noqa: E402
