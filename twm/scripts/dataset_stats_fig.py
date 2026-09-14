@@ -41,10 +41,14 @@ def panel(d: dict, ceiling: float, path: Path, title: str) -> None:
     mins = [d[t]["minutes"] for t in ts]
     bars = ax[0].barh(ts, mins, color=[COL[t] for t in ts], height=.6)
     for t, r in zip(ts, bars):
+        # `sources` is None where episode numbers collide, so no count can be
+        # derived from the published metadata -- print segments alone rather
+        # than a number that understates.
+        rec = "" if d[t]["sources"] is None else f" / {d[t]['sources']} rec"
         ax[0].text(r.get_width() + max(mins) * .02,
                    r.get_y() + r.get_height() / 2,
-                   f"{d[t]['minutes']:.1f} min\n{d[t]['segs']} seg / "
-                   f"{d[t]['sources']} rec", va="center", fontsize=7)
+                   f"{d[t]['minutes']:.1f} min\n{d[t]['segs']} seg{rec}",
+                   va="center", fontsize=7)
     ax[0].set_xlim(0, max(mins) * 1.55)
     ax[0].set_xlabel("published minutes")
     ax[0].set_title("A  Scale", loc="left", fontweight="bold")

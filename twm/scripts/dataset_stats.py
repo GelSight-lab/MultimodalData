@@ -61,6 +61,16 @@ def published_keys(folder: str, api) -> list[str]:
     return sorted(out)
 
 
+# Folders whose episodes were RENUMBERED on arrival. `data/validation` holds
+# two sessions of 2026-09-09, and the recorder reuses episode numbers within a
+# date: `motherboard/2026-09-09/episode_000` names two different recordings
+# there. Its `source_recording` strings therefore collide, so any count derived
+# from them understates -- 4 strings for 6 recordings. The folder's own README
+# carries the true figure in prose; the figure prints no count rather than a
+# wrong one.
+AMBIGUOUS_PROVENANCE = {"validation"}
+
+
 def collect(folder: str, keys: list[str], fetch) -> dict:
     """Statistics over the PUBLISHED parquets, fetched from the Hub.
 
@@ -126,8 +136,12 @@ def gather() -> dict:
                 print(f"  [{era}] {folder}: 未发布，跳过")
                 continue
             o = collect(folder, keys, fetch)
-            out[era][folder] = summarise(o)
-            print(f"  [{era}] {folder}: {o['segs']} 段 / {len(o['srcs'])} 源录制 "
+            st = summarise(o)
+            if folder in AMBIGUOUS_PROVENANCE:
+                st["sources"] = None
+            out[era][folder] = st
+            src = "源录制数不可判定" if st["sources"] is None else f"{st['sources']} 源录制"
+            print(f"  [{era}] {folder}: {o['segs']} 段 / {src} "
                   f"/ {o['frames'] / 1800:.1f} min")
     return out
 
