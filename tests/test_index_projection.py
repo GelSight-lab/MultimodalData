@@ -123,3 +123,77 @@ def test_write_json_is_atomic(tmp_path):
     P.write_json(p, {"a": 1})
     assert json.loads(p.read_text()) == {"a": 1}
     assert not list(tmp_path.glob("*.tmp"))
+
+
+# ── splits.json ──────────────────────────────────────────────────────────────
+
+def _ep(n_frames, test=(), guard=(), whole=None):
+    return {"n_frames": n_frames, "whole": whole,
+            "test": [list(t) for t in test], "guard": [list(g) for g in guard]}
+
+
+def test_split_stats_are_read_off_the_intervals():
+    """Not off field names no record carries.
+
+    The first version of `splits_stats` asked for `n_test_frames` and
+    `n_train_frames`; a real record has `n_frames`, `whole`, `test` and
+    `guard`, so `.get(name, 0)` answered 0 every time and the function emitted
+    a stats block of zeros that looked computed.
+    """
+    eps = {"a/e": _ep(1000, test=[(100, 199), (500, 599)],
+                      guard=[(90, 209), (490, 609)])}
+    s = P.splits_stats(eps)
+    assert s["n_frames"] == 1000
+    assert s["n_test_frames"] == 200        # inclusive ends: 199-100+1 twice
+    # each guard wraps its test interval with 10 frames either side
+    assert s["n_guard_frames"] == 40
+    assert s["n_test_intervals"] == 2
+    assert s["test_fraction"] == 0.2
+
+
+def test_stats_reproduce_what_build_splits_wrote():
+    """The identity projection must return the file's own numbers.
+
+    This is the only check that pins the CONVENTIONS -- inclusive interval
+    ends, and `n_guard_frames` meaning the margin rather than the wrapping
+    interval. Reasoning about them got the guard count wrong by 2x.
+    """
+    import json
+    from pathlib import Path
+    root = Path("/media/yxma/Disk1/twm/release_cut")
+    checked = 0
+    for task in ("pushT", "motherboard"):
+        f = root / task / "splits.json"
+        if not f.is_file():
+            continue
+        doc = json.loads(f.read_text())
+        got = P.splits_stats(doc["episodes"])
+        for k, v in doc["stats"].items():
+            assert got[k] == v, f"{task} {k}: recomputed {got[k]}, file says {v}"
+        checked += 1
+    if not checked:
+        pytest.skip("no local splits.json to check against")
+
+
+def test_a_stats_block_of_zeros_is_never_the_answer_for_a_real_body():
+    eps = {"a/e": _ep(900, test=[(0, 99)])}
+    assert all(P.splits_stats(eps)[k] for k in
+               ("n_episodes", "n_frames", "n_test_frames", "test_fraction"))
+
+
+def test_a_whole_test_episode_counts_all_its_frames():
+    eps = {"a/e": _ep(500, whole="test")}
+    s = P.splits_stats(eps)
+    assert s["n_whole_test_episodes"] == 1 and s["n_test_frames"] == 500
+
+
+def test_projecting_splits_recomputes_the_stats():
+    doc = {"format": "react-splits/1.0", "seed": 0,
+           "episodes": {"a/e": _ep(1000, test=[(0, 99)]),
+                        "b/e": _ep(2000, test=[(0, 199)])},
+           "stats": {"n_episodes": 2, "n_frames": 3000, "n_test_frames": 300}}
+    out = P.project_splits(doc, ["a/e"])
+    assert out["stats"]["n_episodes"] == 1
+    assert out["stats"]["n_frames"] == 1000
+    assert out["stats"]["n_test_frames"] == 100
+    assert out["seed"] == 0                 # non-episode fields survive

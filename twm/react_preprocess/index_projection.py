@@ -125,16 +125,45 @@ def project_splits(doc: dict, keys) -> dict:
     return out
 
 
+def _span_frames(spans) -> int:
+    """`[[a, b], ...]` with b INCLUSIVE -- the same convention as
+    `segments.json`'s `frame_range`."""
+    return sum(int(b) - int(a) + 1 for a, b in spans or ())
+
+
 def splits_stats(episodes: dict) -> dict:
-    """Frame counts per split, recomputed from the projected episode map."""
-    n_train = n_test = 0
+    """The same fields `build_splits.py` writes, recomputed from the body.
+
+    Every number here is read off the `test`/`guard` interval lists. An earlier
+    version of this function guessed at field names (`n_test_frames`,
+    `train_frames`) that no episode record has, so `.get(name, 0)` returned 0
+    for all of them and it emitted a stats block of zeros that looked computed.
+    That is the very defect this module exists to fix, one level down.
+    """
+    n_frames = n_test = n_guard = n_intervals = n_whole = 0
     for v in episodes.values():
-        n_test += int(v.get("n_test_frames", len(v.get("test_frames", []))))
-        n_train += int(v.get("n_train_frames", 0))
-    total = n_train + n_test
-    return {"n_episodes": len(episodes), "n_train_frames": n_train,
-            "n_test_frames": n_test,
-            "test_fraction": round(n_test / total, 4) if total else 0.0}
+        test, guard = v.get("test"), v.get("guard")
+        n_frames += int(v["n_frames"])
+        n_test += _span_frames(test)
+        # `guard` WRAPS its test interval -- [737,1022] around test [800,959] is
+        # the 160 test frames plus 63 either side. `n_guard_frames` counts the
+        # margin only, which is what `build_splits.py` reports; counting the
+        # whole interval doubles it.
+        n_guard += _span_frames(guard) - _span_frames(test)
+        n_intervals += len(test or ())
+        if v.get("whole") == "test":
+            n_whole += 1
+            n_test += int(v["n_frames"]) - _span_frames(test)
+    return {
+        "n_episodes": len(episodes),
+        "n_frames": n_frames,
+        "n_test_frames": n_test,
+        "n_guard_frames": n_guard,
+        "test_fraction": round(n_test / n_frames, 4) if n_frames else 0.0,
+        "guard_fraction": round(n_guard / n_frames, 4) if n_frames else 0.0,
+        "n_test_intervals": n_intervals,
+        "n_whole_test_episodes": n_whole,
+    }
 
 
 def uncovered(keys, doc: dict) -> list[str]:
