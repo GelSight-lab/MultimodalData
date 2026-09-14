@@ -7,6 +7,13 @@ import cv2
 import numpy as np
 import pytest
 
+pytest.importorskip(
+    "autolab_core",
+    reason="camera_stream -> misc.utils -> autolab_core, the frankapy "
+           "hardware stack. Absent here, this file raised at COLLECTION, "
+           "and one collection error aborts the whole run -- bare pytest "
+           "then executed nothing at all.")
+
 from camera_stream import base_video_stream, usb_video_stream
 from camera_stream.usb_video_stream import USBVideoStream
 
