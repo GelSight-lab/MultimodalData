@@ -60,23 +60,52 @@ def best_lag(x, y, max_lag: int = MAX_LAG) -> tuple[int, float, float]:
     POSITIVE means y is LATER than x. Verified by `calibrate()`, not by
     reading this sentence.
 
-    The margin is how far the peak stands above BOTH NEIGHBOURS. A flat curve
-    means the two signals cannot be separated to one frame, and the lag read
-    off it is noise -- see MIN_SHARPNESS.
+    The margin is how far the peak stands above its neighbours -- but only
+    once `falls_away` has confirmed there is a peak at all. A maximum that
+    does not fall away on both sides gets margin 0, which MIN_SHARPNESS reads
+    as "unmeasurable". That covers both ways the curve can fail to peak:
 
-    A maximum at +/-max_lag is not a peak: one of its neighbours was never
-    observed, so the curve may still be rising outside the search. Its margin
-    is 0 -- "unmeasurable" -- never a lag. Without this, a slow press whose
-    correlation ramps monotonically across the whole window reports whichever
-    endpoint the search allowed: pushT/2026-09-12 gave five false `-6`s, each
-    passing MIN_SHARPNESS because a ramp's per-step slope (0.010) beats the
-    margin even though nothing peaks.
+    * **A maximum at +/-max_lag.** One neighbour was never observed, so the
+      curve may still be rising outside the search. A slow press ramps
+      monotonically across the whole window, and pushT/2026-09-12 gave five
+      false `-6`s -- each past MIN_SHARPNESS, because a ramp's per-step slope
+      (0.010) beats the margin even though nothing peaks.
+    * **A ripple on a plateau.** The neighbour margin is a local test, so a
+      0.007 bump on a curve that spans 0.025 passes it. See `falls_away`.
     """
     out = lag_profile(x, y, max_lag)
     k = max(out, key=out.get)
-    nb = [out[j] for j in (k - 1, k + 1) if j in out]
-    margin = 0.0 if len(nb) < 2 else out[k] - max(nb)
+    margin = out[k] - max(out[k - 1], out[k + 1]) if falls_away(out, k) else 0.0
     return k, out[k], margin
+
+
+def falls_away(profile: dict[int, float], k: int, width: int = 2) -> bool:
+    """Does the correlation drop for `width` steps on BOTH sides of `k`?
+
+    An alignment peak is a peak: shift either way and the two signals agree
+    less. This is what separates one from a ripple on a plateau, and the
+    neighbour margin alone cannot -- it is a local test, so any 0.007 bump
+    passes it.
+
+    Measured on pushT/2026-09-12/episode_001_seg00, whose left hand never
+    presses harder than 1.17 N. Video against `force_left_normal_n` gave
+
+        -8:0.316 -7:0.318 -6:0.324 -5:0.329 -4:0.330 -3:0.329 -2:0.341
+        -1:0.334 +0:0.333 +1:0.314 ... +8:0.151
+
+    -- flat from -8 to 0 within 0.025, and the gate called it "lag -2,
+    margin 0.0067". It is not a peak: -4 (0.330) stands above -3 (0.329), so
+    the curve does not fall away. The same episode's video against
+    `tactile_left_intensity` DOES peak, cleanly, at 0.
+    """
+    for side in (-1, 1):
+        prev = profile[k]
+        for step in range(1, width + 1):
+            j = k + side * step
+            if j not in profile or profile[j] >= prev:
+                return False
+            prev = profile[j]
+    return True
 
 
 def calibrate() -> int:

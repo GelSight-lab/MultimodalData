@@ -21,7 +21,7 @@ REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
 sys.path.insert(0, str(REPO / "twm" / "scripts"))
 
-from check_av_alignment import (MIN_CORR, MIN_SHARPNESS,  # noqa: E402
+from check_av_alignment import (MIN_CORR, MIN_SHARPNESS, falls_away,  # noqa: E402
                                 best_lag, calibrate, episode_lag,
                                 video_motion)
 
@@ -79,6 +79,53 @@ def test_an_interior_peak_still_reports_its_margin():
     y = np.roll(x, 2); y[:2] = x[0]
     k, _, margin = best_lag(x, y, max_lag=6)
     assert k == 2 and margin > MIN_SHARPNESS
+
+
+# Real profiles, measured on published artefacts. Each names the case it pins;
+# reasoning about these curves in the abstract got the answer wrong twice.
+MEASURED = {
+    # a genuine alignment: pushT/2026-09-12/episode_010_seg00, tactile_left
+    "real_peak_at_0": ({-6: 0.869, -5: 0.892, -4: 0.914, -3: 0.933, -2: 0.947,
+                        -1: 0.956, 0: 0.962, 1: 0.953, 2: 0.940, 3: 0.924,
+                        4: 0.902, 5: 0.878, 6: 0.852}, 0, True),
+    # a slow press: episode_000_seg00, tactile_left -- monotone to the edge
+    "ramp_to_the_edge": ({-6: 0.789, -5: 0.779, -4: 0.766, -3: 0.754,
+                          -2: 0.739, -1: 0.722, 0: 0.704, 1: 0.682, 2: 0.657,
+                          3: 0.631, 4: 0.602, 5: 0.571, 6: 0.540}, -6, False),
+    # a plateau: episode_001_seg00, force_left (left hand peaks at 1.17 N)
+    "ripple_on_a_plateau": ({-6: 0.324, -5: 0.329, -4: 0.330, -3: 0.329,
+                             -2: 0.341, -1: 0.334, 0: 0.333, 1: 0.314,
+                             2: 0.294, 3: 0.269, 4: 0.246, 5: 0.222,
+                             6: 0.200}, -2, False),
+    # the same episode's tactile column, which does peak -- weakly but cleanly
+    "weak_but_real_peak": ({-6: 0.139, -5: 0.147, -4: 0.155, -3: 0.184,
+                            -2: 0.209, -1: 0.231, 0: 0.250, 1: 0.238,
+                            2: 0.225, 3: 0.218, 4: 0.211, 5: 0.217,
+                            6: 0.222}, 0, True),
+}
+
+
+@pytest.mark.parametrize("name", sorted(MEASURED))
+def test_falls_away_on_measured_profiles(name):
+    profile, peak, is_peak = MEASURED[name]
+    assert max(profile, key=profile.get) == peak
+    assert falls_away(profile, peak) is is_peak
+
+
+def test_the_plateau_ripple_and_the_real_peak_are_not_told_apart_by_margin():
+    """Why `falls_away` exists rather than a bigger MIN_SHARPNESS.
+
+    The false `-2` and the genuine `0` in the SAME episode have neighbour
+    margins of the same order, so no threshold on the margin separates them.
+    The shape of the curve does.
+    """
+    def neighbour_margin(p):
+        k = max(p, key=p.get)
+        return p[k] - max(p[k - 1], p[k + 1])
+    false_lag = neighbour_margin(MEASURED["ripple_on_a_plateau"][0])
+    real_lag = neighbour_margin(MEASURED["weak_but_real_peak"][0])
+    assert false_lag > MIN_SHARPNESS      # the false one passes the margin test
+    assert abs(false_lag - real_lag) < 0.01
 
 
 def test_noise_is_not_read_as_a_lag():
