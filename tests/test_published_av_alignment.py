@@ -14,6 +14,7 @@ import sys
 from pathlib import Path
 
 import numpy as np
+import pyarrow.parquet as pq
 import pytest
 
 REPO = Path(__file__).resolve().parents[1]
@@ -50,6 +51,36 @@ def test_aligned_signals_report_zero():
     assert best_lag(x, x.copy())[0] == 0
 
 
+def test_a_peak_pinned_to_the_search_edge_is_unmeasurable():
+    """A monotone correlation curve has no peak; its maximum is just whichever
+    endpoint the search allowed.
+
+    Measured on pushT/2026-09-12/episode_000_seg00: correlation rose without
+    turning from +15 (0.284) to -15 (0.825), and `best_lag` with MAX_LAG=6
+    answered "-6, margin 0.010" -- above MIN_SHARPNESS, because the ramp's
+    per-step slope beats the margin even though nothing peaks. Five of six
+    reported lags on that day were this artefact. A slow press produces such a
+    curve, so the gate could fail any clean episode.
+    """
+    x = np.arange(400.0)
+    y = np.exp(np.linspace(0, 3, 400))      # smooth, no resolvable offset
+    k, corr, margin = best_lag(x, y, max_lag=6)
+    assert abs(k) == 6, "this fixture is meant to pin the peak to the edge"
+    assert margin == 0.0, (
+        f"an edge peak was reported with margin {margin:.4f}; one of its two "
+        f"neighbours was never observed, so the margin cannot be positive")
+
+
+def test_an_interior_peak_still_reports_its_margin():
+    """Rejecting edge peaks must not blunt a real one. White noise has the
+    sharpest possible autocorrelation, so a 2-frame shift of it is the clearest
+    case the gate will ever see."""
+    x = np.random.default_rng(7).normal(size=400)
+    y = np.roll(x, 2); y[:2] = x[0]
+    k, _, margin = best_lag(x, y, max_lag=6)
+    assert k == 2 and margin > MIN_SHARPNESS
+
+
 def test_noise_is_not_read_as_a_lag():
     """A window with no contact has nothing to align; the correlation says so.
 
@@ -62,17 +93,39 @@ def test_noise_is_not_read_as_a_lag():
 
 # ── the published tree ───────────────────────────────────────────────────────
 
-def _episodes(task: str, limit: int = 3):
+PAIRS = (("left", "tactile_left_intensity"), ("left", "force_left_normal_n"))
+
+
+def _episodes(task: str, limit: int = 8):
+    """Episodes carrying every column the gate compares, spread across dates.
+
+    Two things this must not do, both learned from the version it replaces:
+
+    * **Take the first `limit`.** The list is date-sorted, so the gate only
+      ever looked at the three OLDEST episodes and never at anything published
+      this week. The five false `-6` lags of 2026-09-12 sat outside its sample
+      entirely. Sampling with a stride covers every date instead.
+    * **Assume the schema.** motherboard's 2026-05/06 episodes are cut locally
+      but not published and predate the force export; asking pyarrow for
+      `force_left_normal_n` there raises ArrowInvalid and takes the whole gate
+      down before it measures anything.
+    """
     root = CUT / task
     meta = root / "meta"
     if not meta.is_dir():
         return []
+    need = {c for _, c in PAIRS}
     out = []
     for d in sorted(meta.iterdir()):
         for p in sorted(d.glob("episode_*.parquet")):
-            if (root / "videos" / d.name / p.stem / "tactile_left.mp4").is_file():
-                out.append((root, d.name, p.stem))
-    return out[:limit]
+            if not (root / "videos" / d.name / p.stem / "tactile_left.mp4").is_file():
+                continue
+            if not need <= set(pq.read_schema(str(p)).names):
+                continue                      # predates the force export
+            out.append((root, d.name, p.stem))
+    if len(out) <= limit:
+        return out
+    return out[::max(1, len(out) // limit)][:limit]
 
 
 @pytest.mark.parametrize("task", ["motherboard", "pushT", "rope"])
@@ -82,8 +135,7 @@ def test_published_video_matches_published_columns(task):
         pytest.skip(f"{task}: no local published tree to check")
     checked = 0
     for root, date, ep in eps:
-        for side, column in (("left", "tactile_left_intensity"),
-                             ("left", "force_left_normal_n")):
+        for side, column in PAIRS:
             got = episode_lag(root, date, ep, side, column)
             if got is None:
                 continue

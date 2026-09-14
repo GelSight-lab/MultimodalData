@@ -60,14 +60,23 @@ def best_lag(x, y, max_lag: int = MAX_LAG) -> tuple[int, float, float]:
     POSITIVE means y is LATER than x. Verified by `calibrate()`, not by
     reading this sentence.
 
-    The margin is how far the peak stands above its NEIGHBOURS. A flat curve
+    The margin is how far the peak stands above BOTH NEIGHBOURS. A flat curve
     means the two signals cannot be separated to one frame, and the lag read
     off it is noise -- see MIN_SHARPNESS.
+
+    A maximum at +/-max_lag is not a peak: one of its neighbours was never
+    observed, so the curve may still be rising outside the search. Its margin
+    is 0 -- "unmeasurable" -- never a lag. Without this, a slow press whose
+    correlation ramps monotonically across the whole window reports whichever
+    endpoint the search allowed: pushT/2026-09-12 gave five false `-6`s, each
+    passing MIN_SHARPNESS because a ramp's per-step slope (0.010) beats the
+    margin even though nothing peaks.
     """
     out = lag_profile(x, y, max_lag)
     k = max(out, key=out.get)
     nb = [out[j] for j in (k - 1, k + 1) if j in out]
-    return k, out[k], out[k] - (max(nb) if nb else 0.0)
+    margin = 0.0 if len(nb) < 2 else out[k] - max(nb)
+    return k, out[k], margin
 
 
 def calibrate() -> int:
