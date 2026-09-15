@@ -44,7 +44,72 @@ POSE_COLS = ("sensor_left_pose", "sensor_right_pose", "object_pose",
              "force_left_target_pose", "force_right_target_pose")
 
 
-def convert_tree(src: Path, dst: Path, task: str) -> dict:
+def _already_zup(src: Path, parquet: Path) -> bool:
+    """Whether this episode is already in the Z-up frame.
+
+    From `episodes.jsonl`, which is where `up_axis` is actually recorded — the
+    parquet's `twm.world_frame` metadata does NOT carry it on any episode in
+    either tree, so a guard reading only the parquet never fires and every
+    already-converted episode gets rotated a second time. Verified: a first
+    attempt turned all 47 motherboard parquets instead of the 15 Y-up ones.
+    """
+    key = f"{parquet.parent.name}/{parquet.stem}"
+    jsonl = src / "episodes.jsonl"
+    if not jsonl.is_file():
+        return False
+    for line in jsonl.read_text().splitlines():
+        if not line.strip():
+            continue
+        row = json.loads(line)
+        if row.get("episode") == key:
+            return row.get("up_axis") == "z"
+    # Not listed: curation refuses to drop episodes, so an unlisted parquet
+    # means the indices are stale. Converting it blind could double-rotate.
+    raise KeyError(f"{key} is not in {jsonl} — cannot tell which frame it is "
+                   f"in; re-run curation before converting")
+
+
+def _merge_force(t, force_src: Path | None, date: str, name: str):
+    """Fold the force channel into the parquet BEFORE the rotation runs.
+
+    `release_force/` is `release/` plus eight columns at the same path, and
+    the Z-up tree is what gets CUT. Publishing an uncut release uploaded both
+    trees over one another so the reader got the union, which is why nothing
+    noticed this tree was built from the one WITHOUT the columns. A segment
+    cannot be addressed by an uncut episode name, so for the cut tree the
+    columns have to be inside the file.
+
+    Merged here, ahead of the branch below, so `force_{left,right}_target_pose`
+    goes through the same rotation as every other pose — and so an episode
+    that is already Z-up gets the columns without being rotated twice.
+    """
+    if force_src is None:
+        return t
+    f = Path(force_src) / "meta" / date / name
+    if not f.is_file():
+        # Not a fallback to a default: the file converts either way. It is
+        # named so that "this episode has no force channel" is a line in the
+        # log rather than a column nobody notices is missing.
+        print(f"  no force channel for {date}/{name} — converting without it",
+              flush=True)
+        return t
+    ft = pq.read_table(f)
+    if ft.num_rows != t.num_rows:
+        raise SystemExit(
+            f"{date}/{name}: force tree has {ft.num_rows} rows, release has "
+            f"{t.num_rows}. These are meant to be the same rows plus eight "
+            f"columns; refusing to merge mismatched frames.")
+    cols, names = list(t.columns), list(t.column_names)
+    for c in ft.column_names:
+        if c.startswith("force_") and c not in names:
+            cols.append(ft.column(c))
+            names.append(c)
+    return pa.table(cols, names=names).replace_schema_metadata(
+        dict(t.schema.metadata or {}))
+
+
+def convert_tree(src: Path, dst: Path, task: str,
+                 force_src: Path | None = None) -> dict:
     from react_toolbox.frames import YUP_TO_ZUP, convert_poses
 
     if dst.exists():
@@ -54,7 +119,20 @@ def convert_tree(src: Path, dst: Path, task: str) -> dict:
 
     # --- parquet -------------------------------------------------------
     for p in sorted((src / "meta").glob("*/*.parquet")):
-        t = pq.read_table(p)
+        t = _merge_force(pq.read_table(p), force_src, p.parent.name, p.name)
+        # ALREADY Z-UP: pass it through untouched. This tree no longer holds
+        # one convention — the 2026-05/06 episodes were converted before the
+        # 2026-09 sessions were recorded — and rotating those a second time is
+        # a net -180 deg that nothing downstream can see: the conversion's own
+        # safety argument is that projections are invariant, so every preview
+        # and clip still renders correctly while the world-frame numbers are
+        # wrong.
+        if _already_zup(src, p):
+            q = dst / "meta" / p.parent.name / p.name
+            q.parent.mkdir(parents=True, exist_ok=True)
+            pq.write_table(t, str(q))
+            n["parquet"] += 1
+            continue
         cols, names = [], []
         for name in t.column_names:
             col = t.column(name)
@@ -137,10 +215,20 @@ def main() -> int:
     ap.add_argument("--task", default="motherboard")
     ap.add_argument("--src", default=None)
     ap.add_argument("--dst", default=None)
+    ap.add_argument("--force-src", dest="force_src", default=None,
+                    help="the force staging tree whose columns to fold in "
+                         "(default: the one force_meta names for this task). "
+                         "Pass 'none' to convert without the force channel.")
     a = ap.parse_args()
     src = Path(a.src) if a.src else release_root(a.task)
     dst = Path(a.dst) if a.dst else src.parent.parent / "release_zup" / a.task
-    n = convert_tree(src, dst, a.task)
+    if a.force_src is None:
+        force_src = force_meta(a.task).parent
+    elif a.force_src.lower() == "none":
+        force_src = None
+    else:
+        force_src = Path(a.force_src)
+    n = convert_tree(src, dst, a.task, force_src=force_src)
     print(f"{src} -> {dst}")
     print(f"  {n['parquet']} parquet ({n['cols']} pose columns), "
           f"{n['calib']} calibrations, {n['episodes']} world offsets rotated")
