@@ -60,6 +60,7 @@ import cv2
 
 from twm.data_collection import make_preview, REALSENSE_SERIALS
 from twm.recorder.frames import decode_arducam
+from twm.wrist_tone import apply_tone_curve, episode_wrist_gamma
 from twm.viz import (
     project_gel_pose,
     load_calibrations,
@@ -84,6 +85,12 @@ class FramePrefetcher:
         self._gs_right_n = gs_right_n
         self._buf_size   = buffer_size
         self._tac_lat    = int(tactile_latency)
+        # Resolved once, here, from the file's own metadata — NOT lazily on
+        # first read: the worker thread starts below and would race the caller
+        # for that slot, and whichever lost published raw frames. See
+        # `twm.wrist_tone`.
+        with h5py.File(str(filepath), "r") as _f:
+            self._wrist_gamma = episode_wrist_gamma(_f)
         self._cache      = {}
         self._lock       = threading.Lock()
         self._head       = 0
@@ -99,7 +106,10 @@ class FramePrefetcher:
         if "arducam" in f:
             # Episodes from 2026-09 onward store the camera's own JPEG;
             # decode_arducam is a no-op on the older raw-BGR ones.
-            arducam = [decode_arducam(f[f"arducam/{slot}/frames"][idx])
+            # Through the SAME curve the dataset publishes them with, so what
+            # is reviewed here is what the dataset contains.
+            arducam = [apply_tone_curve(decode_arducam(f[f"arducam/{slot}/frames"][idx]),
+                                        self._wrist_gamma)
                        for slot in sorted(f["arducam"])][:2]
             while len(arducam) < 2:
                 arducam.append(_blank.copy())
@@ -218,51 +228,154 @@ def make_action_menu(w=320, h=240, paused=False, loop=False):
 # Main
 # ──────────────────────────────────────────────────────────────────────────────
 
+class _H5Playback:
+    """The raw recording, behind the interface the playback loop speaks."""
+
+    def __init__(self, f, h5_path, args):
+        self.f = f
+        self.n_frames = int(f["timestamps"].shape[0])
+        self.fps = args.fps or float(f["metadata"].attrs.get("fps", 30))
+        self.task = str(f["metadata"].attrs.get("task", ""))
+        self.date = Path(h5_path).parent.name
+        self.episode = Path(h5_path).stem
+        self._ts = f["timestamps"][:]
+        self._ot = load_optitrack(f)
+        self.labels = arducam_labels(f)
+        blank = np.full((480, 640, 3), 128, np.uint8)
+        nl = int(f["gelsight/left/frames"].shape[0])
+        nr = int(f["gelsight/right/frames"].shape[0])
+        lat = int(getattr(args, "tactile_latency", 0))
+        self.gs_ref = [
+            f["gelsight/left/frames"][max(0, min(lat, nl - 1))].copy() if nl else blank.copy(),
+            f["gelsight/right/frames"][max(0, min(lat, nr - 1))].copy() if nr else blank.copy()]
+        self._pf = FramePrefetcher(h5_path, self.n_frames, nl, nr, tactile_latency=lat)
+        self._forces = _load_episode_forces(self.task, self.date, self.episode)
+        # The force rows are the RELEASE parquet's rows, which start at the
+        # trim; an H5 tick is that many frames ahead. Without the shift the
+        # disc would lead or lag the contact it annotates.
+        self._trim = _release_trim(self.task, self.date, self.episode)
+
+    def frames(self, i):
+        return self._pf.get(i, self.f)
+
+    def timestamp(self, i):
+        return float(self._ts[i])
+
+    def poses_at(self, i):
+        return optitrack_at(self._ot, float(self._ts[i]))
+
+    def forces_at(self, i):
+        if self._trim is None:
+            return {}
+        return _force_row(self._forces, i - self._trim)
+
+    def close(self):
+        self._pf.stop()
+
+
+class _ReleasePlayback:
+    """A published episode: seven MP4s and a parquet."""
+
+    def __init__(self, episode, args):
+        self.ep = episode
+        self.n_frames = episode.n_frames
+        self.fps = args.fps or episode.fps
+        self.task, self.date, self.episode = episode.task, episode.date, episode.episode
+        self.labels = ["wrist left", "wrist right"] if episode.has("wrist_left") else []
+        self.gs_ref = list(episode.frames(0)[1])
+        self._forces = episode.forces
+
+    def frames(self, i):
+        return self.ep.frames(i)
+
+    def timestamp(self, i):
+        return i / self.fps
+
+    def poses_at(self, i):
+        return self.ep.poses_at(i)
+
+    def forces_at(self, i):
+        return self.ep.forces_at(i)
+
+    def close(self):
+        self.ep.close()
+
+
+def _load_episode_forces(task, date, episode):
+    from twm.force_overlay import load_forces
+    from twm.release_episode import FORCE_ROOT
+    try:
+        return load_forces(task, date, episode, FORCE_ROOT)
+    except Exception:                                        # noqa: BLE001
+        return {}
+
+
+def _force_row(forces, row):
+    return {side: float(arr[row]) for side, arr in forces.items()
+            if 0 <= row < len(arr) and np.isfinite(arr[row])}
+
+
+def _release_trim(task, date, episode):
+    """The published episode's first H5 frame, or None when unknown.
+
+    The force rows are the RELEASE parquet's rows, so without this shift the
+    disc annotates the wrong frames. None means "no published parquet, so the
+    mapping is unknowable" and the caller drops the force overlay rather than
+    drawing it at an offset nobody checked — a 0 here would look exactly like
+    a correctly-aligned episode.
+
+    A parquet that exists but will not read is a real fault and raises.
+    """
+    from twm.react_preprocess.config import STAGE_ROOT
+    pq_path = STAGE_ROOT / task / "meta" / date / f"{episode}.parquet"
+    if not pq_path.is_file():
+        return None
+    import pyarrow.parquet as pq
+    table = pq.read_table(str(pq_path), columns=["source_h5_frame"])
+    return int(table["source_h5_frame"][0].as_py())
+
+
 def process_episode(h5_path, out_video_path, args,
                     project_cams, gel_center_left, gel_center_right):
     """Play back (or export) a single episode. If out_video_path is set, runs headless."""
-    if not os.path.isfile(h5_path):
+    from twm.release_episode import looks_like_release as _is_release
+    if not os.path.isfile(h5_path) and not _is_release(h5_path):
         print(f"File not found: {h5_path}")
         return
 
-    if getattr(args, "check", False):
+    if getattr(args, "check", False) and not _is_release(h5_path):
         from twm.recorder.integrity import check_integrity
         print(check_integrity(h5_path).table())
         print()
 
-    # ── Open HDF5 ────────────────────────────────────────────────────────────
-    f = h5py.File(h5_path, "r")
-    n_frames = int(f["timestamps"].shape[0])
-    if n_frames == 0:
-        print(f"Episode has 0 frames: {h5_path}")
-        f.close()
-        return
+    # ── Open the source: a recording, or a published episode ────────────────
+    from twm.release_episode import looks_like_release, resolve as resolve_release
 
-    fps          = args.fps or float(f["metadata"].attrs.get("fps", 30))
+    f = None
+    if looks_like_release(h5_path):
+        src = _ReleasePlayback(resolve_release(h5_path), args)
+        print(f"Source:   PUBLISHED episode ({src.task}/{src.date}/{src.episode})")
+    else:
+        f = h5py.File(h5_path, "r")
+        if int(f["timestamps"].shape[0]) == 0:
+            print(f"Episode has 0 frames: {h5_path}")
+            f.close()
+            return
+        src = _H5Playback(f, h5_path, args)
+        print("Source:   raw recording")
+    n_frames = src.n_frames
+    fps = src.fps
     fps_override = args.fps is not None
-    task_name    = str(f["metadata"].attrs.get("task", ""))
-    tick_dt      = 1.0 / fps
-    timestamps   = f["timestamps"][:]
-    optitrack    = load_optitrack(f)
-
-    _blank_gs  = np.full((480, 640, 3), 128, dtype=np.uint8)
-    gs_left_n  = int(f["gelsight/left/frames"].shape[0])
-    gs_right_n = int(f["gelsight/right/frames"].shape[0])
-    tac_lat    = int(getattr(args, "tactile_latency", 0))
-    ref_idx_L  = max(0, min(tac_lat, gs_left_n  - 1)) if gs_left_n  > 0 else 0
-    ref_idx_R  = max(0, min(tac_lat, gs_right_n - 1)) if gs_right_n > 0 else 0
-    gs_ref = [
-        f["gelsight/left/frames"][ref_idx_L].copy()  if gs_left_n  > 0 else _blank_gs.copy(),
-        f["gelsight/right/frames"][ref_idx_R].copy() if gs_right_n > 0 else _blank_gs.copy(),
-    ]
-    if tac_lat != 0:
-        print(f"Tactile latency compensation: gelsight pulled from h5_frame + {tac_lat}")
-
-    prefetcher = FramePrefetcher(h5_path, n_frames, gs_left_n, gs_right_n,
-                                 tactile_latency=tac_lat)
-    ard_labels = arducam_labels(f)
+    task_name = src.task
+    tick_dt = 1.0 / fps
+    gs_ref = src.gs_ref
+    ard_labels = src.labels
     if ard_labels:
         print(f"Wrist cameras: {', '.join(ard_labels)} (row 3)")
+    if src.forces_at(0) or any(src.forces_at(i) for i in (n_frames // 2, n_frames - 1)):
+        print("Force overlay: ON (press-force disc + newtons in the status bar)")
+    else:
+        print("Force overlay: no force npz for this episode")
 
     paused     = False
     loop       = False
@@ -300,10 +413,11 @@ def process_episode(h5_path, out_video_path, args,
 
             frame_idx = max(0, min(frame_idx, n_frames - 1))
 
-            color_frames, gs_frames, ard_frames = prefetcher.get(frame_idx, f)
-            cam_t           = float(timestamps[frame_idx])
-            optitrack_poses = optitrack_at(optitrack, cam_t)
-            elapsed         = cam_t - float(timestamps[0])
+            color_frames, gs_frames, ard_frames = src.frames(frame_idx)
+            cam_t           = src.timestamp(frame_idx)
+            optitrack_poses = src.poses_at(frame_idx)
+            forces_n        = src.forces_at(frame_idx)
+            elapsed         = cam_t - src.timestamp(0)
 
             preview = make_preview(
                 color_frames, gs_frames, gs_ref,
@@ -314,9 +428,13 @@ def process_episode(h5_path, out_video_path, args,
             )
 
             # ── Project GelSight centers (single source of truth) ────────────
+            # Pose AND force, the pair the dataset previews show. The overlay
+            # draws the disc on the SAME projected point as the axes, so the
+            # two can never disagree about where the sensor is.
             draw_projection_overlay(
                 preview, optitrack_poses, project_cams,
                 gel_center_left, gel_center_right,
+                forces_n=forces_n or None,
             )
 
             # ── Action menu + status bar ─────────────────────────────────────
@@ -327,8 +445,12 @@ def process_episode(h5_path, out_video_path, args,
                           if len(tick_times) >= 2 else 0.0)
 
             speed_str = f"{speed}x" if speed > 1 else "1x"
+            force_str = "  |  " + "  ".join(
+                f"{s_[0].upper()}={v:.2f}N" for s_, v in sorted(forces_n.items())
+            ) if forces_n else ""
             status = (f"[{'PAUSED' if paused else 'PLAYING'}]  "
-                      f"frame {frame_idx + 1}/{n_frames}  |  t={elapsed:.2f}s  |  {actual_fps:.1f}fps  |  {speed_str}")
+                      f"frame {frame_idx + 1}/{n_frames}  |  t={elapsed:.2f}s  |  "
+                      f"{actual_fps:.1f}fps  |  {speed_str}{force_str}")
             cv2.putText(preview, status, (10, 22),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 200, 255), 2)
 
@@ -397,16 +519,18 @@ def process_episode(h5_path, out_video_path, args,
                 if fps_override or frame_idx >= n_frames - 1 or frame_idx - speed < 0:
                     target_dt = tick_dt
                 else:
-                    target_dt = float(timestamps[frame_idx] - timestamps[frame_idx - speed]) / speed
+                    target_dt = (src.timestamp(frame_idx)
+                                 - src.timestamp(frame_idx - speed)) / speed
                 sleep_t = target_dt - (time.time() - tick_start)
                 if sleep_t > 0:
                     time.sleep(sleep_t)
 
     finally:
-        prefetcher.stop()
+        src.close()
         if 'video_writer' in locals() and video_writer is not None:
             video_writer.release()
-        f.close()
+        if f is not None:
+            f.close()
         if out_video_path is None:
             cv2.destroyAllWindows()
 
@@ -415,7 +539,13 @@ def main():
     parser = argparse.ArgumentParser(
         description="Visualize a TWM episode HDF5 file (with optional "
                     "GelSight-center projection overlay; on by default).")
-    parser.add_argument("path", help="Path to episode .h5 file OR a directory of .h5 files")
+    parser.add_argument("path",
+                        help="A recording (.h5), a directory of them, or a "
+                             "PUBLISHED episode — its parquet, its video "
+                             "directory, or the '<task>/<date>/<episode>' key "
+                             "from episodes.jsonl. A published episode is "
+                             "played from the MP4s and parquet users get, with "
+                             "the force overlay the dataset previews show.")
     parser.add_argument("--fps", type=float, default=None,
                         help="Playback FPS (default: use recorded FPS from metadata)")
     parser.add_argument("--cam_calib", type=str, nargs='+', default=None,
@@ -456,14 +586,20 @@ def main():
             args.cam_calib, args.gel_left, args.gel_right, args.path)
         print(f"calibration epoch: {os.path.dirname(args.cam_calib[0])}")
 
-    # ── Resolve input: file or directory ─────────────────────────────────────
-    if os.path.isdir(args.path):
+    # ── Resolve input: a recording, a folder of them, or a published episode ─
+    from twm.release_episode import looks_like_release
+    if os.path.isdir(args.path) and glob.glob(os.path.join(args.path, "*.h5")):
         h5_files = sorted(glob.glob(os.path.join(args.path, "*.h5")))
-        if not h5_files:
-            print(f"No .h5 files found in {args.path}")
-            sys.exit(1)
         directory_mode = True
-    elif os.path.isfile(args.path):
+    elif os.path.isfile(args.path) and not looks_like_release(args.path):
+        h5_files = [args.path]
+        directory_mode = False
+    elif looks_like_release(args.path):
+        # A published episode: the parquet, its video directory, or the
+        # `<task>/<date>/<episode>` key episodes.jsonl uses. Refused by name
+        # inside `resolve` if it is none of those.
+        from twm.release_episode import resolve as _resolve_release
+        _resolve_release(args.path)
         h5_files = [args.path]
         directory_mode = False
     else:

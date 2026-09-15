@@ -8,6 +8,8 @@ from unittest.mock import MagicMock
 # Temporarily mock h5py and cv2 just for the import of twm.visualize,
 # then restore the real modules so other tests (e.g. test_hdf5_writer) are unaffected.
 _saved = {k: sys.modules.get(k) for k in ('h5py', 'cv2')}
+# Everything already imported stays; only what this window ADDS is poisoned.
+_twm_before = {m for m in sys.modules if m == 'twm' or m.startswith('twm.')}
 sys.modules['h5py'] = MagicMock()
 sys.modules['cv2'] = MagicMock()
 
@@ -20,9 +22,18 @@ for k, v in _saved.items():
     elif k in sys.modules:
         del sys.modules[k]
 
-# twm.visualize imported twm.viz while cv2 was mocked. Reload the canonical
-# panel module with the real cv2 before exercising its pixel output below.
-sys.modules.pop('twm.viz', None)
+# Every twm module imported DURING the mocked window holds the MagicMock, not
+# h5py — including whatever `twm.visualize` pulled in transitively. Dropping
+# only `twm.viz` left the rest poisoned for the whole session: a later test
+# calling `create_episode_file` wrote its episode into a mock and then failed
+# opening a file that was never created, in a module it does not import.
+#
+# Only the ones this window added are dropped. Purging every twm module
+# instead re-imports ones other test files already hold, and two live copies
+# of the same module is a worse failure than the one being fixed.
+for _name in [m for m in list(sys.modules)
+              if (m == 'twm' or m.startswith('twm.')) and m not in _twm_before]:
+    del sys.modules[_name]
 from twm.viz import build_preview_panel, STATUS_STRIP_H
 
 
