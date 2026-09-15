@@ -46,6 +46,7 @@ from twm.react_preprocess.detect import (EPS_POSE_BIT,             # noqa: E402
 from twm.tactile_align import LEGACY_SHIFT, RIG_FIXED_DATE         # noqa: E402
 
 RELEASE = Path("/media/yxma/Disk1/twm/release")
+SINCE: str | None = None        # set by --since; sessions before it are out of scope
 H5_ROOT = Path("/media/yxma/Disk1/twm/data")
 FPS = 30
 
@@ -61,6 +62,51 @@ def expected_shift(date: str) -> int:
     return LEGACY_SHIFT if date <= "2026-06-18" else 0
 
 
+def published_episodes(task: str) -> set[str]:
+    """`<date>/<episode>` keys already on the Hub for this task.
+
+    An episode listed here has been published before; if its parquet is
+    unchanged it asserts nothing new, so a missing source is a gap in the
+    EVIDENCE, not a defect in the data.
+    """
+    from huggingface_hub import HfApi
+    try:
+        files = HfApi().list_repo_files("yxma/React", repo_type="dataset")
+    except Exception:                                        # noqa: BLE001
+        return set()          # offline: treat nothing as published (strict)
+    out = set()
+    for f in files:
+        parts = f.split("/")
+        # data/<task>/meta/<date>/<episode>.parquet — five parts.
+        if len(parts) == 5 and parts[0] == "data" and parts[1] == task \
+                and parts[2] == "meta" and parts[-1].endswith(".parquet"):
+            out.add(f"{parts[3]}/{parts[-1][:-len('.parquet')]}")
+    return out
+
+
+def source_recording(parquet: Path) -> str:
+    """Which recording this parquet's rows came from.
+
+    READ, not derived from the filename. The cut renames its output —
+    `episode_000` becomes `episode_000_seg00`, `_seg01`, … — and deriving the
+    H5 name from the stem sent this looking for `episode_000_seg00.h5`, which
+    has never existed. It reported the source as missing while
+    `episode_000.h5` sat on the disk at 14.9 GB, and 5 segments failed the
+    gate for it. The cut writes `source_episode` into every row so this does
+    not have to guess.
+
+    A parquet without the column is an uncut episode, which IS its own
+    recording.
+    """
+    try:
+        t = pq.read_table(str(parquet), columns=["source_episode"])
+        if t.num_rows:
+            return str(t["source_episode"][0].as_py()).rsplit("/", 1)[-1]
+    except (KeyError, OSError, ValueError):
+        pass
+    return parquet.stem
+
+
 def certify_alignment(task: str, frames: int) -> list[str]:
     """Every episode, both sensors: tactile rows sit where they should.
 
@@ -69,13 +115,23 @@ def certify_alignment(task: str, frames: int) -> list[str]:
     pixels — the only reference that is not itself lossy. The shift is
     ASSERTED, not searched: a constant misalignment is invisible to a search.
     """
-    errs = []
+    errs, warns = [], []
+    already = published_episodes(task)
     for p in sorted((RELEASE / task / "meta").rglob("episode_*.parquet")):
         date, ep = p.parent.name, p.stem
-        h5 = H5_ROOT / task / date / f"{ep}.h5"
+        if SINCE and date < SINCE:
+            continue
+        h5 = H5_ROOT / task / date / f"{source_recording(p)}.h5"
         if not h5.exists():
-            errs.append(f"{task}/{date}/{ep}: source H5 missing — alignment "
-                        f"cannot be certified, only assumed")
+            # 1.19 TB of raw HDF5 was deleted 2026-09-09; for those sessions
+            # this condition is permanent. Failing on it means the gate can
+            # never pass again for the task, which is how a gate turns into a
+            # --skip-gate habit. An episode already published asserts nothing
+            # new, so this is a gap in the evidence, not a defect — said, not
+            # swallowed. Anything NEW still fails.
+            line = (f"{task}/{date}/{ep}: source H5 missing — alignment "
+                    f"cannot be certified, only assumed")
+            (warns if f"{date}/{ep}" in already else errs).append(line)
             continue
         want = expected_shift(date)
         for side in ("left", "right"):
@@ -89,7 +145,7 @@ def certify_alignment(task: str, frames: int) -> list[str]:
                     f"{task}/{date}/{ep} {side}: {r['mismatches']}/"
                     f"{r['compared']} tactile rows disagree with the source at "
                     f"the declared shift {want:+d} (rig fixed {RIG_FIXED_DATE})")
-    return errs
+    return errs, warns
 
 
 # ── half 2: curation ────────────────────────────────────────────────────────
@@ -125,9 +181,14 @@ def certify_curation(task: str) -> list[str]:
             errs.append(f"{task}/{key}: episodes.jsonl claims "
                         f"{row['n_segments']} segments, segments.json has "
                         f"{len(by_ep.get(key, []))}")
-    for missing in sorted({f"{p.parent.name}/{p.stem}"
-                           for p in (root / "meta").rglob("episode_*.parquet")}
-                          - set(bf)):
+    # The scope applies HERE too. `certify_alignment` skips dates before
+    # SINCE; this half did not, so a run pointed at one week still demanded a
+    # curation record for every May and June segment in the tree — 55
+    # problems, none of them about the data being published.
+    published = {f"{p.parent.name}/{p.stem}"
+                 for p in (root / "meta").rglob("episode_*.parquet")
+                 if not (SINCE and p.parent.name < SINCE)}
+    for missing in sorted(published - set(bf)):
         errs.append(f"{task}/{missing}: published but never curated")
 
     # (b) remeasurement: re-derive the scalar detectors INSIDE each clean span
@@ -191,6 +252,16 @@ def certify_previews(task: str, sample: int) -> list[str]:
 
 def main() -> int:
     ap = argparse.ArgumentParser()
+    ap.add_argument("--src", default=None,
+                    help="tree to certify (default: the uncut RELEASE). Must be "
+                         "the tree that will be PUBLISHED — certifying one and "
+                         "uploading another means the checks answered about "
+                         "files nobody ships.")
+    ap.add_argument("--since", default=None,
+                    help="only certify sessions on or after this date. The "
+                         "pre-2026-09 sessions are published, their source H5 "
+                         "is deleted, and they are out of scope — certifying "
+                         "them can only ever fail.")
     ap.add_argument("--task", choices=("motherboard", "pushT"))
     ap.add_argument("--align-frames", type=int, default=2000,
                     help="rows per episode/side compared against source H5")
@@ -199,20 +270,26 @@ def main() -> int:
                     help="episodes per task for the derived-artifact check")
     args = ap.parse_args()
 
+    global RELEASE, SINCE
+    SINCE = args.since
+    if args.src:
+        RELEASE = Path(args.src)
+        print(f"[certify] tree: {RELEASE}", flush=True)
     tasks = [args.task] if args.task else ["motherboard", "pushT"]
     total = 0
     for task in tasks:
         for name, errs in (
-                ("alignment", [] if args.skip_align
+                ("alignment", ([], []) if args.skip_align
                  else certify_alignment(task, args.align_frames)),
-                ("curation", certify_curation(task)),
                 # THE PICTURES, NOT ONLY THE DATA. Both halves above certify
                 # the published parquet against its source H5. Nothing
                 # certified the artifacts DRAWN from it, and that is where the
                 # half-second skew between a tactile tile and the force disc
                 # beside it lived, through every publish, until a reader
                 # watching the videos reported it.
-                ("preview alignment", certify_previews(task, args.preview_sample))):
+                ("curation", (certify_curation(task), [])),
+                ("preview alignment", (certify_previews(task, args.preview_sample), []))):
+            errs, warns = errs if isinstance(errs, tuple) else (errs, [])
             total += len(errs)
             print(f"[{'FAIL' if errs else 'ok'}] {task} {name}"
                   + (f": {len(errs)} problem(s)" if errs else ""))
@@ -220,6 +297,9 @@ def main() -> int:
                 print("   ", e)
             if len(errs) > 40:
                 print(f"    ... and {len(errs) - 40} more")
+            if warns:
+                print(f"    ({len(warns)} already-published episode(s) whose "
+                      f"source recording is deleted — evidence gap, not a defect)")
     print(f"\ncertify: {len(tasks)} task(s), {total} problem(s)")
     return 1 if total else 0
 

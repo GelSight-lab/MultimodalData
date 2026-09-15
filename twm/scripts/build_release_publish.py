@@ -163,6 +163,57 @@ def scoped_index(task_root, since: str, out_dir) -> list[str]:
     return written
 
 
+def check_calibration_epoch(task_root, epoch_root, sessions,
+                            since: str | None = None) -> list[str]:
+    """The calibration shipped beside a session must be the epoch it declares.
+
+    `CALIB_SESSIONS` is the definition of which extrinsics a recording needs,
+    and the module is explicit that date order does not determine it. The
+    published tree carried whatever the build staged: on 2026-09-14 that was
+    `epoch_2026-05-12`, correctly converted and correctly labelled, shipped
+    beside the September sessions. Between epochs |dT| = 53-64 mm, which puts
+    the projected sensor 35-73 px off — shaped like a slightly miscalibrated
+    rig, not like a bug.
+
+    The epoch files on disk are Y-up and the shipped one is Z-up, so the
+    comparison is made after converting whichever side declares itself Y-up
+    (or declares nothing, which for those directories is the same thing).
+    """
+    import numpy as np
+    from twm.calibration_frame import YUP_TO_ZUP_4
+    task_root, epoch_root = Path(task_root), Path(epoch_root)
+    dates = sorted({p.name for p in (task_root / "meta").iterdir() if p.is_dir()}) \
+        if (task_root / "meta").is_dir() else []
+    bad = []
+    for date in dates:
+        if since and date < since:
+            continue          # not being published; its epoch is not this run's claim
+        epoch = sessions.get(date)
+        if epoch is None:
+            bad.append(f"{date}: no epoch declared in CALIB_SESSIONS — the "
+                       f"dataset would ship data its own toolbox raises on")
+            continue
+        for cam in ("left", "middle", "right"):
+            shipped = task_root / "calibration" / f"T_mocap_to_cam_{cam}.json"
+            want = epoch_root / f"epoch_{epoch}" / f"T_mocap_to_cam_{cam}.json"
+            if not shipped.is_file() or not want.is_file():
+                continue
+            a = json.loads(shipped.read_text())
+            b = json.loads(want.read_text())
+            A = np.asarray(a["T_mocap_to_cam"], float)
+            B = np.asarray(b["T_mocap_to_cam"], float)
+            if b.get("up_axis") != "z":
+                B = B @ np.linalg.inv(YUP_TO_ZUP_4)
+            if a.get("up_axis") != "z":
+                A = A @ np.linalg.inv(YUP_TO_ZUP_4)
+            if not np.allclose(A, B, atol=1e-6):
+                bad.append(
+                    f"{date} declares epoch {epoch}, but the {cam} calibration "
+                    f"shipped differs from it by {np.abs(A - B).max():.3f} — "
+                    f"a different epoch puts the projected sensor 35-73 px off")
+    return bad
+
+
 def check_calibration_present(stage, tasks) -> list[str]:
     """Every task being published must ship the calibration its poses use.
 
@@ -350,6 +401,23 @@ def main():
             "refusing to publish: the tree has no calibration to publish "
             "beside its poses")
     print("[gate] the calibration travels with the poses: ok", flush=True)
+
+    print("[gate] the calibration is the epoch the sessions declare ...", flush=True)
+    sys.path.insert(0, str(REPO_ROOT))
+    from react_toolbox.calib_epoch import CALIB_SESSIONS
+    wrong = []
+    for task in tasks:
+        wrong += [f"{task}/{m}" for m in check_calibration_epoch(
+            STAGE / task, REPO_ROOT / "calibration",
+            {d: e for (t, d), e in CALIB_SESSIONS.items() if t == task},
+            since=args.since)]
+    if wrong:
+        for w in wrong[:20]:
+            print("   ", w)
+        raise SystemExit(
+            "refusing to publish: the calibration shipped is not the epoch the "
+            "published sessions declare")
+    print("[gate] the calibration is the epoch the sessions declare: ok", flush=True)
 
     # 1. Upload each task's data/ (exclude _detect.pt sidecars)
     import tempfile
