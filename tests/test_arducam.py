@@ -340,9 +340,39 @@ def test_resolve_slots_reports_missing_serial_with_inventory():
         resolve_slots(slots, devices)
 
 
-def test_shipped_config_maps_left_and_right_serials():
-    from twm.sensor_camera import DEFAULT_CONFIG_PATH, load_config
-    cam0, cam1 = load_config(DEFAULT_CONFIG_PATH)
+def test_the_arducam_config_still_maps_left_and_right_serials():
+    """The Arducam pair is no longer the default, but the rig can still be
+    recorded with it via --wrist_config."""
+    from twm.sensor_camera import ARDUCAM_CONFIG_PATH, load_config
+    cam0, cam1 = load_config(ARDUCAM_CONFIG_PATH)
     assert (cam0.serial, cam0.position) == ("TWML0001", "left")
     assert (cam1.serial, cam1.position) == ("TWMR0001", "right")
     assert (cam0.width, cam0.height, cam0.fps, cam0.pixel_format) == (640, 480, 30, "MJPG")
+
+
+def test_the_default_wrist_config_is_the_tuned_usb_pair():
+    """What `python -m twm.data_collection` records with when no --wrist_config
+    is given. The USB pair is the tested hardware as of 2026-09-10; the
+    Arducams are kept selectable but are no longer what a bare run opens."""
+    from twm.sensor_camera import DEFAULT_CONFIG_PATH, load_config
+    assert DEFAULT_CONFIG_PATH.name == "wrist_usb.json"
+    cam0, cam1 = load_config()          # no argument: the recorder's own call
+    assert (cam0.position, cam1.position) == ("left", "right")
+    # Identity is the USB port, not the serial: these two cameras report the
+    # same serial, so a serial cannot tell them apart.
+    assert cam0.id_path and cam1.id_path and cam0.id_path != cam1.id_path
+    assert not cam0.serial and not cam1.serial
+    for cam in (cam0, cam1):
+        controls = dict(cam.controls)
+        # The two controls that cost frame rate when left at their defaults.
+        assert controls["exposure_dynamic_framerate"] == 0
+        assert cam.buffer_size >= 2
+        assert (cam.width, cam.height, cam.fps, cam.pixel_format) == (640, 480, 30, "MJPG")
+    # Both cameras must be tuned identically or the two views differ in exposure.
+    assert dict(cam0.controls) == dict(cam1.controls)
+
+
+def test_the_recorder_leaves_the_wrist_config_unset_so_the_default_applies():
+    from twm.recorder.config import build_parser, config_from_namespace
+    cfg = config_from_namespace(build_parser().parse_args(["--task", "motherboard"]))
+    assert cfg.arducam_config_path is None

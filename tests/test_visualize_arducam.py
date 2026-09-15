@@ -40,8 +40,14 @@ def test_prefetcher_returns_arducam_frames_when_present(tmp_path):
             pf.stop()
         assert len(color) == 3 and len(gs) == 2
         assert len(ard) == 2
-        np.testing.assert_array_equal(ard[0], f["arducam/cam0/frames"][3])
-        np.testing.assert_array_equal(ard[1], f["arducam/cam1/frames"][3])
+        # The viewer shows the wrist frames through the SAME curve the dataset
+        # publishes them with, so what is reviewed here is what ships. The
+        # exponent comes from the file's own metadata.
+        from twm.wrist_tone import apply_tone_curve, episode_wrist_gamma
+        g = episode_wrist_gamma(f)
+        for slot, got in zip(("cam0", "cam1"), ard):
+            np.testing.assert_array_equal(
+                got, apply_tone_curve(f[f"arducam/{slot}/frames"][3], g))
         assert arducam_labels(f) == ["cam0 left", "cam1 right"]
 
 

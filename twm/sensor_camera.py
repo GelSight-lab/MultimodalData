@@ -14,7 +14,12 @@ from typing import Iterable, Mapping, Sequence
 import numpy as np
 
 
-DEFAULT_CONFIG_PATH = Path(__file__).with_name("config") / "arducam.json"
+_CONFIG_DIR = Path(__file__).with_name("config")
+# The generic USB wrist pair, registered by port and tuned on 2026-09-10, is
+# what the rig runs. The Arducams remain selectable with --wrist_config; they
+# are identified by USB serial instead of port and carry no control block.
+DEFAULT_CONFIG_PATH = _CONFIG_DIR / "wrist_usb.json"
+ARDUCAM_CONFIG_PATH = _CONFIG_DIR / "arducam.json"
 VALID_POSITIONS = frozenset({"unknown", "left", "right"})
 
 
@@ -734,17 +739,17 @@ def main(argv=None) -> int:
     verify_parser.add_argument("--force", action="store_true")
     register_parser = subparsers.add_parser(
         "register", help="write the wrist-camera config from what is plugged in")
-    register_parser.add_argument("--out", default=str(DEFAULT_CONFIG_PATH.with_name("wrist_usb.json")))
+    register_parser.add_argument("--out", default=str(DEFAULT_CONFIG_PATH))
     register_parser.add_argument("--allow-one", action="store_true",
                                  help="register a single camera; the pair is the default")
     subparsers.add_parser("list", help="show every capture device the machine sees")
     assign_parser = subparsers.add_parser(
         "assign", help="name the side of the one camera left plugged in")
     assign_parser.add_argument("side", choices=("left", "right"))
-    assign_parser.add_argument("--config", default=str(DEFAULT_CONFIG_PATH.with_name("wrist_usb.json")))
+    assign_parser.add_argument("--config", default=str(DEFAULT_CONFIG_PATH))
     tune_parser = subparsers.add_parser(
         "tune", help="live window: adjust the controls and watch the cost")
-    tune_parser.add_argument("--config", default=str(DEFAULT_CONFIG_PATH.with_name("wrist_usb.json")))
+    tune_parser.add_argument("--config", default=str(DEFAULT_CONFIG_PATH))
     tune_parser.add_argument("--camera", default=None, help="cam0 or cam1; default both")
     tune_parser.add_argument("--fps", type=int, default=30)
     args = parser.parse_args(argv)

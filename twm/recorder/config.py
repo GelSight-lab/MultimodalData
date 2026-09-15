@@ -110,7 +110,8 @@ def build_parser() -> argparse.ArgumentParser:
                         "monitors.")
     p.add_argument("--no_projection", action="store_true",
                    help="Disable the GelSight→camera projection overlay.")
-    p.add_argument("--arducam_raw", action="store_true",
+    p.add_argument("--arducam_raw", "--wrist_raw", action="store_true",
+                   dest="arducam_raw",
                    help="Decode the wrist cameras at record time and store raw BGR "
                         "(the pre-2026-09 format). The default stores the camera's "
                         "own MJPEG, which is ~28 MB/s and 0.3 of a core cheaper.")
@@ -123,14 +124,16 @@ def build_parser() -> argparse.ArgumentParser:
                    help="Comma-separated RealSense serials to record (default: the rig's three).")
     p.add_argument("--no_optitrack", action="store_true",
                    help="Record without OptiTrack (no ROS needed); pose datasets stay empty.")
-    p.add_argument("--no_arducam", action="store_true",
-                   help="Run without the two sensor-mounted Arducams.")
+    p.add_argument("--no_arducam", "--no_wrist_cams", action="store_true",
+                   dest="no_arducam",
+                   help="Run without the two sensor-mounted wrist cameras.")
     p.add_argument("--wrist_config", "--arducam_config", default=None,
                    dest="wrist_config",
                    help="Wrist-camera JSON config: which two capture devices to "
                         "record, how to identify them, and any V4L2 controls they "
-                        "need. Default twm/config/arducam.json (the Arducams); "
-                        "twm/config/wrist_usb.json is the generic USB pair. "
+                        "need. Default twm/config/wrist_usb.json (the USB pair "
+                        "registered by port); pass twm/config/arducam.json to "
+                        "record the Arducams instead. "
                         "--arducam_config is the old name for this flag.")
     p.add_argument("--data_dir", default=None,
                    help=f"Episode root (default {DATA_DIR}).")

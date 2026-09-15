@@ -102,8 +102,13 @@ def _stop_all(started: List[Any]) -> None:
             log.warning("could not stop %r: %s", resource, exc)
 
 
-STALL_AFTER_S = 1.0        # a stream whose capture clock is older than this is restarted
-SUPERVISOR_POLL_S = 0.25
+# A stream whose capture clock is older than this is restarted. 0.4 s, not the
+# 1.0 s it was: measured over 85,031 GelSight inter-frame gaps on the
+# 2026-09-10/11 pushT episodes the median is 53 ms, p99.9 122 ms and the worst
+# 216 ms, so 0.4 s keeps ~2x margin against normal jitter while cutting 0.6 s
+# (18 frozen frames) off every outage.
+STALL_AFTER_S = 0.4
+SUPERVISOR_POLL_S = 0.1
 
 
 def restart_stream(stream) -> None:
@@ -132,6 +137,11 @@ class SensorSupervisor:
         self._lock = threading.Lock()
         self._restarts: Dict[str, int] = {n: 0 for n in self._streams}
         self._restarting: set = set()
+        # Last time each stream was seen with ANY capture timestamp. A stream
+        # that has never had one is a dummy; one that HAD one and lost it is a
+        # reopened device that is delivering nothing, which is the failure this
+        # tracks. See `_staleness`.
+        self._seen: Dict[str, float] = {}
         self._stop = threading.Event()
         self._thread = threading.Thread(target=self._run, name="SensorSupervisor", daemon=True)
 
@@ -151,18 +161,36 @@ class SensorSupervisor:
         peek = getattr(stream, "peek_frame_with_timestamp", None)
         return None if peek is None else peek()[1]
 
+    def _staleness(self, name: str, ts: Optional[float], now: float) -> Optional[float]:
+        """Seconds since this stream last had a frame, or None if unsupervised.
+
+        A missing timestamp is NOT the same as a missing capture clock.
+        `USBVideoStream.start()` clears `frame_ts`, so a stream that reopened
+        and then delivered nothing peeks as None forever — and reading that as
+        "dummy, skip" is how the pushT 2026-09-10 left GelSight left
+        supervision after its ninth restart and froze for the last 122 s of the
+        episode without a further warning. Once a stream has shown a
+        timestamp, it is supervised for the rest of the run.
+        """
+        with self._lock:
+            if ts is not None:
+                self._seen[name] = now
+                return now - ts
+            seen = self._seen.get(name)
+        return None if seen is None else now - seen
+
     def _run(self) -> None:
         while not self._stop.is_set():
             now = self._clock()
             for name, stream in self._streams.items():
-                ts = self._peek_ts(stream)
-                if ts is None or now - ts <= self.stall_after_s:
+                stale = self._staleness(name, self._peek_ts(stream), now)
+                if stale is None or stale <= self.stall_after_s:
                     continue
                 with self._lock:
                     if name in self._restarting:
                         continue
                     self._restarting.add(name)
-                log.warning("%s: no frame for %.1fs — restarting the stream", name, now - ts)
+                log.warning("%s: no frame for %.1fs — restarting the stream", name, stale)
                 try:
                     restart_stream(stream)
                 except Exception as exc:
@@ -171,6 +199,10 @@ class SensorSupervisor:
                     with self._lock:
                         self._restarts[name] += 1
                         self._restarting.discard(name)
+                        # Give the reopened device a full stall window to
+                        # deliver before it is judged again — without this a
+                        # stream that never comes back is restarted every poll.
+                        self._seen[name] = self._clock()
             self._stop.wait(self.poll_s)
 
     def status(self) -> Dict[str, Dict[str, Any]]:
@@ -179,7 +211,10 @@ class SensorSupervisor:
         with self._lock:
             for name, stream in self._streams.items():
                 ts = self._peek_ts(stream)
-                out[name] = {"stale_s": (now - ts) if ts is not None else None,
+                seen = self._seen.get(name)
+                stale = (now - ts) if ts is not None else (
+                    None if seen is None else now - seen)
+                out[name] = {"stale_s": stale,
                              "restarting": name in self._restarting,
                              "restarts": self._restarts[name]}
         return out
@@ -234,7 +269,7 @@ class SensorRig:
             if config.use_arducam:
                 arducam_config = tuple(drivers.resolve_arducams(config.arducam_config_path))
                 for cam in arducam_config:
-                    log.info("starting Arducam %s%s (%s) at %s", cam.slot,
+                    log.info("starting wrist camera %s%s (%s) at %s", cam.slot,
                              f" {cam.serial}" if getattr(cam, "serial", "") else "",
                              cam.position, cam.device)
                     arducam.append(start(drivers.arducam(cam.config, cam.device,

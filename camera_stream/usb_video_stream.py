@@ -52,8 +52,13 @@ class USBVideoStream(BaseVideoStream):
         self.stream.set(cv2.CAP_PROP_BUFFERSIZE, 1)
 
         if not self.stream.isOpened():
-            print("Cannot open camera stream at id {}".format(self.usb_id))
-            exit()
+            # NOT exit(): on a non-main thread that raises SystemExit, which
+            # silently kills the caller. The supervisor restarts streams on its
+            # own thread, so an `exit()` here took the watchdog down with it.
+            self.stream.release()
+            self.stream = None
+            raise RuntimeError(
+                f"cannot open camera stream at id {self.usb_id} {self._tag()}")
         self.streaming = True
         self.frame_ts = None        # capture timestamp of self.frame (epoch s)
         if create_thread:

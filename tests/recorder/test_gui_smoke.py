@@ -37,6 +37,9 @@ class FakeRecorder:
 
 class FakeRig:
     arducam_encoding = "bgr8"
+    # The real SensorRig always carries this; the preview reads it to pick the
+    # tone curve it must draw the wrist frames through.
+    arducam_config = ()
     calls = 0
 
     def latest_poses(self):

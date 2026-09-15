@@ -1,5 +1,5 @@
 {
-  "_note": "Written by `python -m twm.sensor_camera register`; controls tuned with `tune`. Identity is the USB port, not the serial, so re-plugging into another port means running register again. Controls are applied IN ORDER at every open and the order matters: an automatic must be written before the value it locks, because the manual value is read-only while its automatic is on. brightness stays at the camera default: it is a plain offset, so raising it lifts the black point and the picture goes milky without gaining any information. gamma is the knob that brightens, because it is a curve and leaves black at 0. exposure_time_absolute=333 is 33.3 ms, the ceiling at 30 fps. focus_absolute must be re-checked at the mounted working distance.",
+  "_note": "Written by `python -m twm.sensor_camera register`; controls tuned with `tune`. Identity is the USB port, not the serial, so re-plugging into another port means running register again. Controls are applied IN ORDER at every open and the order matters: an automatic must be written before the value it locks, because the manual value is read-only while its automatic is on. brightness stays at the camera default: it is a plain offset, so raising it lifts the black point and the picture goes milky without gaining any information. gamma is the knob that brightens, because it is a curve and leaves black at 0; it is at its 500 maximum because this camera has NO gain control and its exposure is already at the 30 fps ceiling. Measured 2026-09-11 at the mounted working distance: mean 69.5 -> 76.2 and p95 108.7 -> 117.3 for gamma 450 -> 500, at unchanged 30.1 fps and unchanged temporal noise (0.93 -> 0.95), so it is free. contrast was tried and makes it WORSE (70 -> mean 42.5): it stretches around a low midpoint. brightness would reach mean 88 but lifts the black point from p5=1 to p5=13, which is a fake black, so it stays at 5. Everything past this needs real photons: exposure 666 (100us) reaches the RealSense's mean 108 / p95 154 but the frame rate falls to 15.1 fps, exactly linearly. exposure_time_absolute=333 is 33.3 ms, the ceiling at 30 fps. focus_absolute must be re-checked at the mounted working distance.",
   "cameras": [
     {
       "slot": "cam0",
@@ -14,13 +14,14 @@
         "power_line_frequency": 1,
         "auto_exposure": 1,
         "exposure_time_absolute": 333,
-        "gamma": 450,
+        "gamma": 500,
         "brightness": 5,
         "contrast": 54,
         "white_balance_automatic": 0,
         "white_balance_temperature": 4600,
         "focus_automatic_continuous": 0,
-        "focus_absolute": 68
+        "focus_absolute": 68,
+        "backlight_compensation": 1
       }
     },
     {
@@ -36,13 +37,14 @@
         "power_line_frequency": 1,
         "auto_exposure": 1,
         "exposure_time_absolute": 333,
-        "gamma": 450,
+        "gamma": 500,
         "brightness": 5,
         "contrast": 54,
         "white_balance_automatic": 0,
         "white_balance_temperature": 4600,
         "focus_automatic_continuous": 0,
-        "focus_absolute": 68
+        "focus_absolute": 68,
+        "backlight_compensation": 1
       }
     }
   ]

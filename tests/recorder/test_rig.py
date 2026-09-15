@@ -242,6 +242,48 @@ def test_grab_never_blocks_on_a_stalled_stream_and_the_supervisor_restarts_it():
     assert "stop gs left" in log and not rig.supervisor_alive()
 
 
+class DeadAfterReopenStream(StallableStream):
+    """A stream that reopens successfully and then never delivers a frame.
+
+    `USBVideoStream.start()` sets `frame_ts = None`, so this is exactly the
+    state a GelSight is in after a restart that found the device but got no
+    frames from it — which is how the pushT 2026-09-10 left sensor ended.
+    """
+
+    def peek_frame_with_timestamp(self):
+        if self.restarts:
+            return self.frame.copy(), None       # reopened, nothing coming
+        return super().peek_frame_with_timestamp()
+
+
+def test_a_stream_that_reopens_but_never_delivers_is_not_mistaken_for_a_dummy():
+    """The pushT 2026-09-10 failure, in one test.
+
+    The left GelSight's 9th restart reopened /dev/video7 and then produced
+    nothing. A None timestamp meant "no capture clock, do not supervise", so
+    the stream left supervision without a word: no further warning, no further
+    restart, and the recorder wrote its last held frame for the remaining
+    122 s — 27 % of the episode — while the health line stayed clean.
+    """
+    log = []
+    left = DeadAfterReopenStream(log, "gs left", 5)
+    right = StallableStream(log, "gs right", 6)
+    rig = SensorRig([Stream(log, "rs A")], left, right, Optitrack(log))
+    rig.start_supervisor(stall_after_s=0.1, poll_s=0.02)
+    try:
+        left.healthy = False
+        deadline = time.monotonic() + 5.0
+        while time.monotonic() < deadline and left.restarts < 2:
+            time.sleep(0.02)
+        assert left.restarts >= 2, "a dead stream must keep being restarted"
+        assert right.restarts == 0
+        status = rig.sensor_status()["gelsight_left"]
+        assert status["stale_s"] is not None and status["stale_s"] > 0, \
+            "a dead stream must report staleness, not None"
+    finally:
+        rig.close()
+
+
 def test_streams_without_a_capture_clock_are_never_restarted():
     log = []
     rig = SensorRig.open(config(use_arducam=False, gelsight_serials={"left": "L", "right": "R"}),
@@ -267,7 +309,7 @@ def test_startup_log_names_the_side_of_every_camera(caplog):
     text = "\n".join(caplog.messages)
     assert f"starting RealSense cam0 {REALSENSE_SERIALS[0]} (right)" in text
     assert f"starting RealSense cam1 {REALSENSE_SERIALS[1]} (left)" in text
-    assert "starting Arducam cam0 (unknown) at /dev/cam0" in text
+    assert "starting wrist camera cam0 (unknown) at /dev/cam0" in text
     assert "starting GelSight left L" in text
     assert "starting GelSight right R" in text
 

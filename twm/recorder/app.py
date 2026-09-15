@@ -327,14 +327,32 @@ class PreviewRenderer:
         return panel
 
 
+def wrist_preview_gamma(arducam_config, task: str) -> float:
+    """The tone exponent the preview must draw the wrist frames through.
+
+    The same one `react_preprocess` publishes them through — the operator aims
+    these cameras against this preview, so it has to show what the dataset will
+    contain. See `twm.wrist_tone`.
+    """
+    from twm.wrist_tone import camera_kind_from_serials, gamma_for_camera
+
+    kind = camera_kind_from_serials(
+        [getattr(c, "serial", "") for c in (arducam_config or ())])
+    return gamma_for_camera(kind, task)
+
+
 def _gui_loop(config, recorder: Recorder, capture: CaptureLoop, rig,
               projection: Optional[Dict[str, Any]]) -> int:
     import cv2
     from twm.recorder.frames import decode_arducam
     from twm.viz import build_preview_panel, draw_projection_overlay
+    from twm.wrist_tone import apply_tone_curve
 
     log.info("controls: s start | e end | r reset diff ref | p projection | q quit")
     arducam_labels = rig.arducam_labels() or None
+    wrist_gamma = wrist_preview_gamma(rig.arducam_config, config.task)
+    if wrist_gamma != 1.0:
+        log.info("wrist preview through the published tone curve (gamma %.1f)", wrist_gamma)
     show_projection = projection is not None
     gui_dt = 1.0 / float(getattr(config, 'gui_fps', 15))
 
@@ -354,7 +372,8 @@ def _gui_loop(config, recorder: Recorder, capture: CaptureLoop, rig,
             # Decoded here, at the preview's own rate, rather than on the
             # 30 Hz capture thread: the wrist frames are stored as the camera
             # sent them and only the operator's screen needs pixels.
-            arducam_frames=[decode_arducam(a) for a in tick.arducam] or None,
+            arducam_frames=[apply_tone_curve(decode_arducam(a), wrist_gamma)
+                            for a in tick.arducam] or None,
             arducam_labels=arducam_labels)
 
     def overlay(panel, ot_poses):
