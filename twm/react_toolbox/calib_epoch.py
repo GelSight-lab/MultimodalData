@@ -88,6 +88,16 @@ CALIB_SESSIONS = {
     ("motherboard", "2026-05-19"): "2026-05-12",
     ("motherboard", "2026-09-09"): "2026-09-09",
     ("pushT",       "2026-06-18"): "2026-06-26",
+    # The 2026-09-10 onward sessions -- the week `main` carries -- are covered
+    # by the 2026-09-09 measurement, by the operator's decision: the cameras
+    # were not moved between it and them. Declared here rather than inferred
+    # from the date, because date order does not determine the answer (pushT's
+    # 2026-06-18 belongs to the June-26 solve, measured eight days later).
+    ("motherboard", "2026-09-11"): "2026-09-09",
+    ("motherboard", "2026-09-12"): "2026-09-09",
+    ("pushT",       "2026-09-10"): "2026-09-09",
+    ("pushT",       "2026-09-11"): "2026-09-09",
+    ("pushT",       "2026-09-12"): "2026-09-09",
 }
 
 
