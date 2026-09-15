@@ -20,6 +20,7 @@ import argparse
 import json
 import re
 from pathlib import Path
+from twm.pipeline_stages import TASKS  # one list; nine copies is how rope fell out
 
 SECTION = Path(__file__).with_name("readme_force_section.md")
 USAGE = Path(__file__).with_name("readme_usage_section.md")
@@ -79,7 +80,7 @@ def quality_section() -> str:
     import collections
 
     rows = []
-    for task in ("motherboard", "pushT"):
+    for task in TASKS:
         bf = json.loads((STAGE / task / "bad_frames.json").read_text())
         sg = json.loads((STAGE / task / "segments.json").read_text())
         fam = collections.Counter()

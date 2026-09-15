@@ -20,11 +20,12 @@ from .run_episode import OUT_ROOT, STAGE_ROOT, process_side
 # by writing one through a different entry point. Re-exported here because
 # `export_force_columns` has always imported it from this module.
 from .run_episode import PIPELINE_VERSION  # noqa: F401
+from twm.pipeline_stages import TASKS  # one list; nine copies is how rope fell out
 
 
 def all_episodes() -> list[tuple[str, str, str]]:
     jobs = []
-    for task in ("pushT", "motherboard"):
+    for task in TASKS:
         meta = STAGE_ROOT / task / "meta"
         for p in sorted(meta.rglob("episode_*.parquet")):
             jobs.append((task, p.parent.name, p.stem))

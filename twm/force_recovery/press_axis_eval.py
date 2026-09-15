@@ -27,6 +27,7 @@ from react_paths import force_meta, release_root               # noqa: E402
 from force_recovery.dexforce import (                          # noqa: E402
     STIFFNESS_N_PER_M, gel_axis)
 from force_recovery.site2 import CACHE                         # noqa: E402
+from twm.pipeline_stages import TASKS  # one list; nine copies is how rope fell out
 
 TASK = "motherboard"
 SIDES = ("left", "right")
@@ -260,7 +261,7 @@ def axis_values(out):
 def target_shift(out):
     """How far switching the axis moves the published target poses."""
     per = {}
-    for task in ("motherboard", "pushT"):
+    for task in TASKS:
         tot = []
         for ep in _eps(task):
             for side in SIDES:

@@ -16,6 +16,7 @@ import shutil
 from pathlib import Path
 
 from .config import HF_REPO, STAGE_ROOT
+from twm.pipeline_stages import TASKS  # one list; nine copies is how rope fell out
 
 PACKAGE_ROOT = Path(__file__).resolve().parent
 SOURCE_ROOT = PACKAGE_ROOT.parent                    # twm/
@@ -68,7 +69,7 @@ def code_operations(trees: dict[str, Path] | None = None) -> list:
     return ops
 
 
-def parquet_operations(stage_root: Path, tasks=("motherboard", "pushT")) -> list:
+def parquet_operations(stage_root: Path, tasks=TASKS) -> list:
     """CommitOperationAdd entries for every per-episode parquet."""
     from huggingface_hub import CommitOperationAdd
 

@@ -44,6 +44,7 @@ from twm.react_preprocess.curation import BAD_KEYS                 # noqa: E402
 from twm.react_preprocess.detect import (EPS_POSE_BIT,             # noqa: E402
                                          FREEZE_THRESHOLD_S, TAU_INTENSITY)
 from twm.tactile_align import LEGACY_SHIFT, RIG_FIXED_DATE         # noqa: E402
+from twm.pipeline_stages import TASKS  # one list; nine copies is how rope fell out
 
 RELEASE = Path("/media/yxma/Disk1/twm/release")
 SINCE: str | None = None        # set by --since; sessions before it are out of scope
@@ -262,7 +263,7 @@ def main() -> int:
                          "pre-2026-09 sessions are published, their source H5 "
                          "is deleted, and they are out of scope — certifying "
                          "them can only ever fail.")
-    ap.add_argument("--task", choices=("motherboard", "pushT"))
+    ap.add_argument("--task", choices=TASKS)
     ap.add_argument("--align-frames", type=int, default=2000,
                     help="rows per episode/side compared against source H5")
     ap.add_argument("--skip-align", action="store_true")
@@ -275,7 +276,7 @@ def main() -> int:
     if args.src:
         RELEASE = Path(args.src)
         print(f"[certify] tree: {RELEASE}", flush=True)
-    tasks = [args.task] if args.task else ["motherboard", "pushT"]
+    tasks = [args.task] if args.task else TASKS
     total = 0
     for task in tasks:
         for name, errs in (

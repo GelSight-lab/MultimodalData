@@ -186,6 +186,13 @@ CALIB_SESSIONS = {
     # cameras were not disturbed between the two sessions.
     ("pushT",       "2026-09-12"): "2026-09-09",
     ("motherboard", "2026-09-12"): "2026-09-09",
+    # 2026-09-14 and 2026-09-15, same epoch. The operator confirms the cameras
+    # were not moved between the 2026-09-09 solve and these sessions. Declared
+    # on that statement, not inferred from the date: five days apart says
+    # nothing on its own, as pushT's 2026-06-18 belonging to the June-26 solve
+    # -- measured eight days LATER -- shows.
+    ("rope",        "2026-09-14"): "2026-09-09",
+    ("pushT",       "2026-09-15"): "2026-09-09",
 }
 
 
