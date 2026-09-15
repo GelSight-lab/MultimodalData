@@ -24,23 +24,33 @@ from twm import pipeline_stages as PS
 
 def test_the_stages_are_the_whole_chain_in_order():
     assert [s.name for s in PS.STAGES] == [
-        "build", "force", "export", "curate", "zup", "segment", "index",
+        "build", "force", "curate", "export", "zup", "segment", "index",
         "verify", "publish"]
 
 
+def _needs(stage):
+    """A tuple when a stage has more than one prerequisite. `export` writes the
+    force columns (needs the npz) AND stamps a world-frame declaration read out
+    of episodes.jsonl (needs curate); expressing only one of those is how the
+    missing force estimation surfaced four stages later, at the publish gate."""
+    n = stage.needs
+    return () if n is None else ((n,) if isinstance(n, str) else tuple(n))
+
+
 def test_every_stage_after_the_first_declares_what_it_needs():
+    known = {x.name for x in PS.STAGES}
     for s in PS.STAGES[1:]:
-        assert s.needs, f"{s.name} declares no prerequisite"
-        assert s.needs in {x.name for x in PS.STAGES}, \
-            f"{s.name} needs {s.needs!r}, which is not a stage"
+        assert _needs(s), f"{s.name} declares no prerequisite"
+        for n in _needs(s):
+            assert n in known, f"{s.name} needs {n!r}, which is not a stage"
 
 
 def test_the_order_is_consistent_with_the_dependencies():
-    """Each stage's prerequisite must come before it, or the list is a lie."""
+    """Each stage's prerequisites must come before it, or the list is a lie."""
     seen = set()
     for s in PS.STAGES:
-        if s.needs:
-            assert s.needs in seen, f"{s.name} runs before its prerequisite {s.needs}"
+        for n in _needs(s):
+            assert n in seen, f"{s.name} runs before its prerequisite {n}"
         seen.add(s.name)
 
 
@@ -60,7 +70,7 @@ def test_publish_is_last_and_needs_the_verification():
 
 def test_a_plan_skips_what_it_is_told_to_and_keeps_the_rest_in_order():
     plan = PS.plan(skip={"build", "force"})
-    assert [s.name for s in plan] == ["export", "curate", "zup", "segment",
+    assert [s.name for s in plan] == ["curate", "export", "zup", "segment",
                                       "index", "verify", "publish"]
 
 
@@ -86,7 +96,7 @@ def test_the_build_always_asks_for_depth(monkeypatch):
     assert any("--with-depth" in c for c in cmds)
 
 
-def test_export_is_blocked_when_force_has_produced_nothing(monkeypatch):
+def test_export_is_blocked_when_its_predecessor_has_produced_nothing(monkeypatch):
     """Force estimation was skipped and surfaced four stages later, at the
     publish gate. The prerequisite has to be checked before the work, not
     after."""
@@ -307,7 +317,7 @@ def test_there_is_a_runner_that_executes_the_plan(monkeypatch):
 
     monkeypatch.setattr(PS.Stage, "run", fake_run)
     monkeypatch.setattr(PS, "blocked", lambda stage, task: None)
-    rc = PS.run_all(tasks=("pushT",), skip={"build", "force", "export", "curate", "zup"})
+    rc = PS.run_all(tasks=("pushT",), skip={"build", "force", "curate", "export", "zup"})
     assert rc == 0
     assert [c[0] for c in calls] == ["segment", "index", "verify", "publish"]
 
@@ -318,7 +328,7 @@ def test_the_runner_stops_at_the_first_failing_stage(monkeypatch):
 
     monkeypatch.setattr(PS.Stage, "run", fake_run)
     monkeypatch.setattr(PS, "blocked", lambda stage, task: None)
-    rc = PS.run_all(tasks=("pushT",), skip={"build", "force", "export", "curate", "zup"})
+    rc = PS.run_all(tasks=("pushT",), skip={"build", "force", "curate", "export", "zup"})
     assert rc == 3
 
 
@@ -326,7 +336,7 @@ def test_the_runner_refuses_a_stage_whose_prerequisite_is_short(monkeypatch):
     monkeypatch.setattr(PS.Stage, "run", lambda self, **kw: 0)
     monkeypatch.setattr(PS, "blocked",
                         lambda stage, task: "zup covers only 1/9" if stage.name == "segment" else None)
-    rc = PS.run_all(tasks=("pushT",), skip={"build", "force", "export", "curate", "zup"})
+    rc = PS.run_all(tasks=("pushT",), skip={"build", "force", "curate", "export", "zup"})
     assert rc != 0, "a short prerequisite did not stop the run"
 
 
@@ -429,7 +439,7 @@ def test_a_stage_runs_for_every_task_before_the_next_stage_starts(monkeypatch):
                         lambda self, **kw: calls.append((self.name, kw.get("task"))) or 0)
     monkeypatch.setattr(PS, "blocked", lambda stage, task: None)
     PS.run_all(tasks=("motherboard", "pushT"),
-               skip={"build", "force", "export", "curate", "zup"})
+               skip={"build", "force", "curate", "export", "zup"})
     order = [c[0] for c in calls]
     assert order.index("index") > order.index("segment")
     # every task's index is done before the first verify

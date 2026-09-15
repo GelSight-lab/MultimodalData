@@ -29,6 +29,7 @@ trusted.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import sys
 from pathlib import Path
@@ -108,7 +109,7 @@ def source_recording(parquet: Path) -> str:
     return parquet.stem
 
 
-def certify_alignment(task: str, frames: int) -> list[str]:
+def certify_alignment(task: str, frames: int, todo=None) -> list[str]:
     """Every episode, both sensors: tactile rows sit where they should.
 
     The published `tactile_{side}_is_new` flags are compared against the
@@ -118,9 +119,15 @@ def certify_alignment(task: str, frames: int) -> list[str]:
     """
     errs, warns = [], []
     already = published_episodes(task)
+    # `todo` is the receipt's answer: the units whose bytes have moved since
+    # they last passed. Everything else would be re-read out of the source H5 —
+    # ~2000 rows per side, 2356 GB over the window — to re-derive the same
+    # answer. None is "all of them", which is what a bare invocation means.
     for p in sorted((RELEASE / task / "meta").rglob("episode_*.parquet")):
         date, ep = p.parent.name, p.stem
         if SINCE and date < SINCE:
+            continue
+        if todo is not None and f"{date}/{ep}" not in todo:
             continue
         h5 = H5_ROOT / task / date / f"{source_recording(p)}.h5"
         if not h5.exists():
@@ -251,6 +258,93 @@ def certify_previews(task: str, sample: int) -> list[str]:
     return [f"{name}: {ev}" for ok, name, ev in TPA.RESULTS if not ok]
 
 
+RECEIPT = ".certified.json"
+
+
+def _parquet_hash(path: Path) -> str:
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _published_units(task: str) -> dict[str, Path]:
+    """`date/episode` -> parquet, for the in-scope part of the tree."""
+    root = RELEASE / task / "meta"
+    if not root.is_dir():
+        return {}
+    return {f"{p.parent.name}/{p.stem}": p
+            for p in sorted(root.rglob("episode_*.parquet"))
+            if not (SINCE and p.parent.name < SINCE)}
+
+
+def needs_certifying(task: str, force: bool = False,
+                     check: str = "alignment") -> list[str]:
+    """Which units this run has to read the source H5 for.
+
+    The alignment half reads ~2000 rows per episode per side out of the source
+    H5 and compares them pixel by pixel: 2356 GB over the in-scope window at
+    about 4.8 GB/min. Doing that for an episode that passed last time, is
+    already on the Hub, and whose bytes have not moved re-derives the same
+    answer at the same cost.
+
+    The receipt is keyed on the parquet's CONTENT, not its name. A re-cut
+    episode keeps its name and changes its bytes, and that is exactly the case
+    a name-keyed receipt would wave through.
+    """
+    units = _published_units(task)
+    if force:
+        return sorted(units)
+    seen = {}
+    p = RELEASE / task / RECEIPT
+    if p.is_file():
+        try:
+            seen = json.loads(p.read_text())
+        except (OSError, ValueError):
+            seen = {}
+    # Per CHECK, because they cost very differently and a unit can have passed
+    # one and not the other. Measured on rope: curation 2.3 s against the
+    # parquet scalars, previews 238.2 s because it opens the 120 GB source H5
+    # per sampled episode.
+    out = []
+    for k, q in units.items():
+        rec = seen.get(k)
+        if isinstance(rec, str):            # the first receipt format
+            rec = {"hash": rec, "checks": ["alignment"]}
+        if not rec or rec.get("hash") != _parquet_hash(q) \
+                or check not in rec.get("checks", []):
+            out.append(k)
+    return sorted(out)
+
+
+def write_receipt(task: str, passed, check: str = "alignment") -> None:
+    """Stamp only the units that PASSED. Stamping a failure makes the next run
+    skip the very thing that was wrong."""
+    units = _published_units(task)
+    p = RELEASE / task / RECEIPT
+    seen = {}
+    if p.is_file():
+        try:
+            seen = json.loads(p.read_text())
+        except (OSError, ValueError):
+            seen = {}
+    for k in passed:
+        if k not in units:
+            continue
+        h = _parquet_hash(units[k])
+        rec = seen.get(k)
+        if isinstance(rec, str):
+            rec = {"hash": rec, "checks": ["alignment"]}
+        if not rec or rec.get("hash") != h:
+            rec = {"hash": h, "checks": []}
+        if check not in rec["checks"]:
+            rec["checks"].append(check)
+        seen[k] = rec
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps(seen, indent=1, sort_keys=True))
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--src", default=None,
@@ -267,6 +361,11 @@ def main() -> int:
     ap.add_argument("--align-frames", type=int, default=2000,
                     help="rows per episode/side compared against source H5")
     ap.add_argument("--skip-align", action="store_true")
+    ap.add_argument("--recertify", action="store_true",
+                    help="ignore the receipt and re-read every source H5. For "
+                         "a changed detector or a suspected bad receipt — not "
+                         "for a routine run, where it costs hours to re-derive "
+                         "answers that have not changed.")
     ap.add_argument("--preview-sample", type=int, default=4,
                     help="episodes per task for the derived-artifact check")
     args = ap.parse_args()
@@ -279,9 +378,25 @@ def main() -> int:
     tasks = [args.task] if args.task else TASKS
     total = 0
     for task in tasks:
+        todo = needs_certifying(task, force=args.recertify)
+        n_all = len(_published_units(task))
+        if not args.skip_align:
+            print(f"[certify] {task}: {len(todo)} of {n_all} unit(s) need the "
+                  f"source-H5 pass" + (" (all — --recertify)" if args.recertify
+                                       else f", {n_all - len(todo)} unchanged "
+                                            f"since they passed"), flush=True)
+        # previews is a per-TASK sample, not a per-unit check, so the receipt
+        # applies to the task as a whole: skip only when EVERY unit is
+        # unchanged and has passed. One changed segment and the sample is
+        # re-drawn, which is the only honest use of a receipt for a sample.
+        prev_todo = needs_certifying(task, force=args.recertify, check="previews")
+        if not prev_todo:
+            print(f"[certify] {task}: previews unchanged since they passed — "
+                  f"skipping the {args.preview_sample}-episode source-H5 sample "
+                  f"(238 s/task measured)", flush=True)
         for name, errs in (
                 ("alignment", ([], []) if args.skip_align
-                 else certify_alignment(task, args.align_frames)),
+                 else certify_alignment(task, args.align_frames, todo)),
                 # THE PICTURES, NOT ONLY THE DATA. Both halves above certify
                 # the published parquet against its source H5. Nothing
                 # certified the artifacts DRAWN from it, and that is where the
@@ -289,7 +404,8 @@ def main() -> int:
                 # beside it lived, through every publish, until a reader
                 # watching the videos reported it.
                 ("curation", (certify_curation(task), [])),
-                ("preview alignment", (certify_previews(task, args.preview_sample), []))):
+                ("preview alignment", ([], []) if not prev_todo
+                 else (certify_previews(task, args.preview_sample), []))):
             errs, warns = errs if isinstance(errs, tuple) else (errs, [])
             total += len(errs)
             print(f"[{'FAIL' if errs else 'ok'}] {task} {name}"
@@ -301,6 +417,18 @@ def main() -> int:
             if warns:
                 print(f"    ({len(warns)} already-published episode(s) whose "
                       f"source recording is deleted — evidence gap, not a defect)")
+            # Stamp only on a clean alignment pass, and only the units this run
+            # actually read. Stamping a failure, or stamping units the run
+            # skipped, makes the next run skip the very thing that was wrong.
+            if not errs:
+                if name == "alignment" and not args.skip_align and todo:
+                    write_receipt(task, todo, check="alignment")
+                    print(f"    receipt: {len(todo)} unit(s) stamped "
+                          f"(alignment)", flush=True)
+                elif name == "preview alignment" and prev_todo:
+                    write_receipt(task, prev_todo, check="previews")
+                    print(f"    receipt: {len(prev_todo)} unit(s) stamped "
+                          f"(previews)", flush=True)
     print(f"\ncertify: {len(tasks)} task(s), {total} problem(s)")
     return 1 if total else 0
 

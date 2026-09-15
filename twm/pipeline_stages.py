@@ -70,7 +70,12 @@ class Stage:
     """
     name: str
     what: str
-    needs: str | None = None
+    # A tuple when a stage genuinely has more than one prerequisite.
+    # `export` writes force columns (needs the npz) AND stamps a
+    # world-frame declaration read from episodes.jsonl (needs curate).
+    # Expressing only one of those is how the missing force estimation
+    # surfaced four stages later, at the publish gate.
+    needs: str | tuple[str, ...] | None = None
     produced: Callable[[str], bool] = field(default=lambda task: True, repr=False)
     argv: Callable[..., list[list[str]]] = field(default=lambda **kw: [], repr=False)
 
@@ -192,15 +197,15 @@ STAGES: tuple[Stage, ...] = (
           None, _built, _build),
     Stage("force", "per-row normal force from the tactile frames",
           "build", _forced, _force),
-    Stage("export", "force columns into the published parquet",
-          "force", _exported, _export),
     Stage("curate", "bad_frames / segments / episodes indices",
-          "export", _curated, _curate),
+          "force", _curated, _curate),
     # The cut must come after force recovery AND the frame conversion, so that
     # every column those added is carried through by the same row slice; see
     # `react_preprocess.segment`.
+    Stage("export", "force columns into the published parquet",
+          ("force", "curate"), _exported, _export),
     Stage("zup", "rotate the release from the recorded Y-up to Z-up",
-          "curate", _zupped, _zup),
+          "export", _zupped, _zup),
     Stage("segment", "cut each episode down to its publishable spans",
           "zup", _segmented, _segment),
     Stage("index", "the cut tree's own bad_frames / segments / splits",
@@ -324,18 +329,20 @@ def blocked(stage: Stage, task: str) -> str | None:
     """
     if stage.needs is None:
         return None
-    prereq = BY_NAME[stage.needs]
-    if not prereq.produced(task):
-        return (f"{stage.name} needs {prereq.name} ({prereq.what}), which has "
-                f"produced nothing for {task}")
-    # Partial output is the dangerous case: it looks done and is not.
-    if prereq.name in ("zup", "segment"):
-        cov = coverage(prereq.name, task)
-        if not cov.complete:
-            head = ", ".join(cov.missing[:3])
-            more = "" if len(cov.missing) <= 3 else f" and {len(cov.missing)-3} more"
-            return (f"{stage.name} needs {prereq.name}, which covers only "
-                    f"{cov.done}/{cov.total} of {task} — missing {head}{more}")
+    names = (stage.needs,) if isinstance(stage.needs, str) else stage.needs
+    for name in names:
+        prereq = BY_NAME[name]
+        if not prereq.produced(task):
+            return (f"{stage.name} needs {prereq.name} ({prereq.what}), which "
+                    f"has produced nothing for {task}")
+        # Partial output is the dangerous case: it looks done and is not.
+        if prereq.name in ("zup", "segment"):
+            cov = coverage(prereq.name, task)
+            if not cov.complete:
+                head = ", ".join(cov.missing[:3])
+                more = "" if len(cov.missing) <= 3 else f" and {len(cov.missing)-3} more"
+                return (f"{stage.name} needs {prereq.name}, which covers only "
+                        f"{cov.done}/{cov.total} of {task} — missing {head}{more}")
     return None
 
 
