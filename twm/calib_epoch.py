@@ -193,6 +193,7 @@ CALIB_SESSIONS = {
     # -- measured eight days LATER -- shows.
     ("rope",        "2026-09-14"): "2026-09-09",
     ("pushT",       "2026-09-15"): "2026-09-09",
+    ("rope",        "2026-09-15"): "2026-09-09",
 }
 
 
