@@ -37,14 +37,15 @@ fall back to black dummy frames). Pull the branch that has it.
 |--------|--------------------|------------------|
 | 3× Intel RealSense D415, 640×480 color + depth @ 30 Hz | `143322063538` (right, cam0), `104122062574` (left, cam1), `217222066989` (middle, cam2) | `REALSENSE_SERIALS` in `twm/recorder/config.py` |
 | 2× GelSight Mini, 640×480 @ ~18 Hz | `2DUPB53G` = left, `2BKRDTAD` = right | `GELSIGHT_SERIALS` in `twm/recorder/config.py` |
-| 2× Arducam B0578 sensor-mounted RGB, 640×480 MJPEG @ 30 Hz | `TWML0001` = left → `arducam/cam0`, `TWMR0001` = right → `arducam/cam1` | `twm/config/arducam.json` (selected by USB serial, any port) |
+| 2× USB wrist cameras (sensor-mounted), 640×480 MJPEG @ 30 Hz — **the default since 2026-09-10** | port `…usb-0:1:1.0` = left → `arducam/cam0`, `…usb-0:2:1.0` = right → `arducam/cam1` | `twm/config/wrist_usb.json` (selected by USB **port**, because both report the same serial — re-plugging into another port needs `register` again) |
+| 2× Arducam B0578 sensor-mounted RGB, same rate — alternative, no longer the default | `TWML0001` = left → `arducam/cam0`, `TWMR0001` = right → `arducam/cam1` | `twm/config/arducam.json` (selected by USB serial, any port); use it with `--wrist_config twm/config/arducam.json` |
 | OptiTrack rigid bodies | `motherboard`, `sensor_left`, `sensor_right` via VRPN/ROS | `OT_TRACKERS` in `twm/recorder/config.py` |
 
 Every other threshold (queue size, fail-fast limits, disk minimums, warm-up
 frames) lives in `RecorderConfig` in `twm/recorder/config.py`, and each has a
 command-line override (`--data_dir`, `--queue_seconds`, `--min_free_gb`,
 `--bandwidth_margin`, `--no_bandwidth_test`, `--realsense_serials`,
-`--no_optitrack`, `--no_arducam`, `--arducam_config`, `--no_projection`).
+`--no_optitrack`, `--no_wrist_cams`, `--wrist_config`, `--no_projection`).
 
 ### Two rig rules learned the hard way (2026-09-06)
 
@@ -233,7 +234,7 @@ python -m twm.recorder bench --dir /media/yxma/Disk1/twm/data --seconds 5
 
 ```bash
 python -m twm.recorder soak --task <task_name> --duration <seconds> \
-  [--data_dir D] [--no_optitrack] [--no_arducam] \
+  [--data_dir D] [--no_optitrack] [--no_wrist_cams] [--wrist_config P] \
   [--realsense_serials A,B,C] [--bandwidth_margin M] [--min_free_gb G]
 ```
 
@@ -246,7 +247,8 @@ every 10 s, and exits `0` (valid episode), `1` (auto-ended or short), or `2`
 |------|--------|
 | `--realsense_serials A,B,C` | Record only these RealSense cameras; the file gets that many `realsense/cam{i}` groups |
 | `--no_optitrack` | No ROS needed; pose datasets stay empty; the OptiTrack watchdog and freshness check are inert |
-| `--no_arducam` | Legacy collection without the wrist cameras |
+| `--no_wrist_cams` | Record without the two wrist cameras (old name: `--no_arducam`) |
+| `--wrist_config P` | Wrist-camera config (default `twm/config/wrist_usb.json`; pass `twm/config/arducam.json` for the Arducams) |
 | `--bandwidth_margin M` | Advisory self-test threshold `fps × M × arducam-scale` (default `M=1.5`) |
 | `--min_free_gb G` | Refuse to start, and auto-end an episode, below `G` GB free (default 50) |
 
@@ -338,11 +340,22 @@ multi-minute soak's `queue_peak_fraction`, not a bench number.
 
 ### Wrist-camera tools
 
-`python -m twm.sensor_camera identify` shows both Arducam feeds labelled by
-slot, serial and side (`0`/`1` choose the left slot, `u` unknown, `s` save,
-`q` quit). `python -m twm.sensor_camera verify --duration 5 --output
-/tmp/twm_arducam_verification.h5 --force` records both Arducams through the
-production writer and validates the file.
+Every subcommand defaults to `twm/config/wrist_usb.json`, the config a bare
+recording run opens. Pass `--config twm/config/arducam.json` to work on the
+Arducams instead.
+
+| Command | What it does |
+|---------|--------------|
+| `list` | Every capture device the machine sees, labelled RealSense / GelSight / wrist candidate |
+| `register [--allow-one]` | Write the config from what is plugged in, keyed by USB port |
+| `assign left\|right` | Name the side of the single camera left plugged in |
+| `identify` | Live preview of both feeds labelled by slot, serial and side (`0`/`1` choose the left slot, `u` unknown, `s` save, `q` quit) |
+| `tune [--camera cam0]` | Live window: change a V4L2 control and watch what it costs in frame rate and contrast |
+| `verify --duration 5` | Record both cameras through the production writer and validate the file |
+
+Registration is by port, so a camera moved to another USB socket must be
+registered again. Both cameras must carry identical controls or the two views
+disagree on exposure; `tune` writes them to both by default.
 
 ### Library layout
 
