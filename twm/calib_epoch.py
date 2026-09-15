@@ -198,20 +198,33 @@ CALIB_SESSIONS = {
 
 
 def session_epoch(task: str, date: str) -> str:
-    """The epoch a recording session declares.
+    """The epoch a recording session was made through.
 
-    Raises for an undeclared session rather than falling back to the task
-    default: the fallback is exactly how a session ships through another
-    session's extrinsics with nobody noticing.
+    An explicit declaration always wins. Failing that, a session dated ON OR
+    AFTER `CURRENT_EPOCH` gets it — the operator's standing decision
+    (2026-09-15), and not the inference this module forbids: the live recorder
+    resolves its own overlay through `current_epoch()`, so a recording made
+    after the solve was made THROUGH that solve. That is a fact about how the
+    rig ran, not a guess from the calendar.
+
+    A session dated BEFORE the current solve still has to declare. For those
+    the calendar genuinely says nothing — pushT's 2026-06-18 belongs to the
+    June-26 solve, measured eight days LATER — and a task-level fallback is
+    how a session once shipped through another session's extrinsics with
+    nobody noticing.
     """
     try:
         return CALIB_SESSIONS[(task, date)]
     except KeyError:
-        known = sorted(d for t, d in CALIB_SESSIONS if t == task)
-        raise KeyError(
-            f"{task}: session {date!r} does not declare a calibration epoch. "
-            f"Declared sessions: {known}. Add it to calib_epoch.CALIB_SESSIONS "
-            f"— do not fall back to another session's extrinsics.") from None
+        pass
+    if date >= CURRENT_EPOCH:
+        return CURRENT_EPOCH
+    known = sorted(d for t, d in CALIB_SESSIONS if t == task)
+    raise KeyError(
+        f"{task}: session {date!r} predates the current epoch "
+        f"{CURRENT_EPOCH} and does not declare one. Declared sessions: "
+        f"{known}. Add it to calib_epoch.CALIB_SESSIONS — for a session older "
+        f"than the current solve the date decides nothing.")
 
 
 
