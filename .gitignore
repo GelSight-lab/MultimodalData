@@ -52,3 +52,8 @@ twm/calibration/result/
 *.zip
 .claude/skills/
 gelwear/
+
+# Z-up conversion outputs written with a relative --dst. The real trees
+# live on Disk1; these are 288 MB of stale artifacts, not source.
+/zup/
+/zup_release/
