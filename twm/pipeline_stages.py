@@ -98,24 +98,48 @@ def _zupped(task):       return _has(RELEASE_ZUP, task, "episode_*.parquet")
 def _segmented(task):    return _has(RELEASE_CUT, task, "*_seg*.parquet")
 
 
-def _build(task, date, episodes=(), **_):
-    ep = ["--episodes", *episodes] if episodes else []
-    # `twm.react_preprocess`, not `react_preprocess`: the latter only imports
-    # with cwd=twm/, which is how the old run_stages invoked it. Every other
-    # stage here runs from the repo root, and a module path that resolves in
-    # one and not the other is how a stage dies on its first line.
-    d = ["--date", date] if date else []
-    return [[sys.executable, "-m", "twm.react_preprocess", "build",
-             "--task", task, *d, "--with-depth", *ep]]
+def _build(task, date=None, episodes=(), **_):
+    """Build the recordings that have no release episode yet.
+
+    `date` was REQUIRED and `run_all` passes none, so the scheduled path died
+    on TypeError every time while the manual path -- a date typed by an
+    operator -- worked. The stage was in the plan and had never run.
+
+    With no date it asks `coverage` what is missing and builds exactly that,
+    one command per date. Rebuilding an episode that already has a parquet
+    costs hours and produces the same bytes.
+
+    `twm.react_preprocess`, not `react_preprocess`: the latter only imports
+    with cwd=twm/, which is how the old run_stages invoked it. Every other
+    stage here runs from the repo root, and a module path that resolves in one
+    and not the other is how a stage dies on its first line.
+    """
+    if date:
+        wanted = {date: list(episodes)}
+    else:
+        wanted = {}
+        for key in coverage("build", task).missing:
+            d, ep = key.split("/", 1)
+            wanted.setdefault(d, []).append(ep)
+    out = []
+    for d, eps in sorted(wanted.items()):
+        ep = ["--episodes", *eps] if eps else []
+        out.append([sys.executable, "-m", "twm.react_preprocess", "build",
+                    "--task", task, "--date", d, "--with-depth", *ep])
+    return out
 
 
 def _force(task=None, workers: int = 2, **_):
-    return [[sys.executable, "-m", "force_recovery.batch_worker", str(i), str(workers)]
-            for i in range(workers)]
+    # `twm.force_recovery`, not `force_recovery` — the same fix `_build` carries.
+    # The bare name resolves only with cwd=twm/, and every stage here runs from
+    # the repo root, so this died with ModuleNotFoundError on its first line
+    # while the three hours behind it went unused.
+    return [[sys.executable, "-m", "twm.force_recovery.batch_worker",
+             str(i), str(workers)] for i in range(workers)]
 
 
 def _export(**_):
-    return [[sys.executable, "-m", "force_recovery.export_force_columns", "export"]]
+    return [[sys.executable, "-m", "twm.force_recovery.export_force_columns", "export"]]
 
 
 def _curate(task, **_):
