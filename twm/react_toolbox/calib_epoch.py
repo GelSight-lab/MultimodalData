@@ -98,6 +98,12 @@ CALIB_SESSIONS = {
     ("pushT",       "2026-09-10"): "2026-09-09",
     ("pushT",       "2026-09-11"): "2026-09-09",
     ("pushT",       "2026-09-12"): "2026-09-09",
+    # rope's sessions, same epoch: the operator confirms the cameras were not
+    # moved between the 2026-09-09 measurement and the 2026-09-14 session.
+    # Declared, not inferred -- five days apart says nothing on its own, as
+    # pushT's 2026-06-18 belonging to the June-26 solve shows.
+    ("rope",        "2026-09-11"): "2026-09-09",
+    ("rope",        "2026-09-14"): "2026-09-09",
 }
 
 

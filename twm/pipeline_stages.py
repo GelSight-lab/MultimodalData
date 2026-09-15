@@ -35,6 +35,7 @@ from typing import Callable, Sequence
 
 TWM = Path(__file__).resolve().parent
 REPO = TWM.parent
+DATA_ROOT = Path("/media/yxma/Disk1/twm/data")
 RELEASE = Path("/media/yxma/Disk1/twm/release")
 RELEASE_ZUP = Path("/media/yxma/Disk1/twm/release_zup")
 RELEASE_CUT = Path("/media/yxma/Disk1/twm/release_cut")
@@ -49,6 +50,14 @@ FORCE_ROOT = Path("/media/yxma/Disk1/twm/force_recovery")
 # a different wrist camera and was published separately as `validation`. The
 # May/June sessions and that epoch belong on an old-data branch, not here.
 SCOPE_SINCE = "2026-09-10"
+
+# Every task with a published task_index. This was a default argument buried in
+# `run_all`'s signature, which is not a list anything can check -- and rope,
+# never being in it, was published by hand and reached the Hub with no
+# bad_frames.json, no segments.json and no splits.json. The last of those made
+# every rope segment read as TRAIN, because `_split_filter` treats an unknown
+# key that way.
+TASKS = ("motherboard", "pushT", "rope")
 
 
 @dataclass(frozen=True)
@@ -215,6 +224,23 @@ class Coverage:
         return self.total > 0 and self.done >= self.total
 
 
+def _recordings_in(root: Path, task: str, since: str | None = None) -> set[str]:
+    """The RAW recordings of a task, as `date/episode`.
+
+    `build`'s source is the recorder's output, not the release tree. Taking it
+    from the release tree made the denominator the output: `done == total`
+    always, and a recording that had never been built was not missing, it was
+    invisible -- rope/2026-09-14 read 11/11 with three of its six recordings
+    untouched.
+    """
+    d = root / task
+    if not d.is_dir():
+        return set()
+    return {f"{p.parent.name}/{p.stem}"
+            for p in d.glob("*/episode_*.h5")
+            if not since or p.parent.name >= since}
+
+
 def _episodes_in(root: Path, task: str) -> set[str]:
     d = root / task / "meta"
     if not d.is_dir():
@@ -235,7 +261,10 @@ def coverage(stage_name: str, task: str) -> Coverage:
     on finding ONE parquet, so a Z-up tree built from 29 of 72 episodes read as
     done and the cut ran on the stale half. Counted, not sampled.
     """
-    src = _episodes_in(RELEASE, task)
+    # `build` turns recordings into release episodes, so its source is the
+    # recorder's tree. Every later stage consumes what build produced.
+    src = (_recordings_in(DATA_ROOT, task, SCOPE_SINCE) if stage_name == "build"
+           else _episodes_in(RELEASE, task))
     out_root = {"zup": RELEASE_ZUP, "segment": RELEASE_CUT,
                 "index": RELEASE_CUT}.get(stage_name, RELEASE)
     out = _episodes_in(out_root, task)
@@ -291,7 +320,7 @@ def status(task: str) -> list[tuple[str, bool]]:
     return [(s.name, bool(s.produced(task))) for s in STAGES]
 
 
-def run_all(tasks: Sequence[str] = ("motherboard", "pushT"),
+def run_all(tasks: Sequence[str] = TASKS,
             skip: Sequence[str] = (), until: str | None = None,
             log=print, **kw) -> int:
     """Walk the plan for each task. Returns 0, or the first non-zero exit.

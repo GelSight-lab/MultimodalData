@@ -40,7 +40,9 @@ FORCE_STAGE = Path("/media/yxma/Disk1/twm/release_force")
 # staging copy, so a fix cannot be published and forgotten locally.
 TOOLBOX_SRC = Path("/home/yxma/MultimodalData/twm/react_toolbox")
 REPO_ROOT = Path("/home/yxma/MultimodalData/twm")
-TASKS = ("motherboard", "pushT")
+# Imported, not restated: two lists that can disagree WILL, and the failure
+# is a task built and cut but never uploaded, with nothing saying so.
+from twm.pipeline_stages import TASKS  # noqa: E402
 
 
 def gate(src, since: str = SCOPE_SINCE, task: str | None = None,

@@ -84,19 +84,88 @@ data/<task>/depth/<date>/episode_NNN/depth_{left,middle,right}.mkv
 
 ## Tasks
 
-| Task | Episodes | Dates | Duration | Clean segments | Calibration |
+`main` carries one week — 2026-09-10 onward. Earlier sessions live on
+`old_data/`, and the 2026-09-09 session (different wrist cameras) ships
+separately as `data/validation`.
+
+| Task | Segments | Source recordings | Dates | Duration | Flagged frames |
 |---|---|---|---|---|---|
-| **motherboard** | 32 | 2026-05-10/11/19 | 108 min | 76 (107 min) | **May-12** (RMSE ~5 mm) |
-| **pushT** | 4 | 2026-06-18 | 25 min | 17 (25 min) | **June-26** (RMSE ~0.6 px) |
+| **motherboard** | 25 | 12 | 2026-09-11/12 | 93.9 min | 0.30 % |
+| **pushT** | 59 | 22 | 2026-09-10/11/12 | 62.9 min | 0.05 % |
+| **rope** | 23 | 8 | 2026-09-11 | 43.8 min | 0.16 % |
 
-See [`tasks.json`](tasks.json) for the machine-readable registry (per-task dates, sensors, calibration epoch, world-frame offsets).
+Segments and source recordings are reported separately on purpose: 25 segments
+is not 25 independent recordings, and reading it that way overstates the
+diversity by a factor of two.
 
-### Calibration epochs
-Cameras were **recalibrated between tasks**. Each task points to the calibration valid for its recordings:
-- `motherboard` → **May-12** extrinsics (`data/motherboard/calibration/`)
-- `pushT` → **June-26** extrinsics (`data/pushT/calibration/`)
+See [`tasks.json`](tasks.json) for the machine-readable registry.
 
-Camera extrinsics are used only for the projection overlay; **stored poses are OptiTrack world-frame** and independent of calibration. The 2026-05-19 motherboard session had a redefined world origin; an offset `(0.23, 0, 0.175) m` is already baked into its poses so all dates share one frame (recorded in `episodes.jsonl`).
+## Statistics
+
+![wrist-camera era](assets/stats_wrist_era.png)
+
+Scale, contact-force distribution, contact occupancy, and tactile validity per
+task. The force distribution uses **unsaturated samples only**; the fraction at
+the pipeline ceiling is annotated separately rather than mixed in, because a
+clipped value is not a measurement. Raw numbers: [`assets/dataset_stats.json`](assets/dataset_stats.json).
+
+![2026-09-09 session](assets/stats_arducam_session.png)
+
+`data/validation` is drawn apart because it is not comparable: different wrist
+cameras, and a session the rest of the release does not share.
+
+## Calibration — read `up_axis`, and use the epoch the session declares
+
+**The published poses are Z-up.** Every calibration file on `main` says so:
+
+```json
+{ "T_mocap_to_cam": [...], "up_axis": "z",
+  "up_axis_note": "converted from the recorded Y-up by R_x(-90): (x,y,z)->(x,-z,y). ..." }
+```
+
+A file with no `up_axis` key is the Y-up original. **Pairing one with these
+poses raises nothing**: the two forms of the same solve differ by 1.27 in
+matrix norm, so the projected point stays inside the frame and the image looks
+plausible. Tactile readings are unaffected. The view-frame action is wrong by
+`R_x(90)`. Refuse a file that does not declare its axis rather than assuming
+one — `twm.calibration_frame.require_zup` does exactly that.
+
+Cameras are **recalibrated between sessions**, so a recording names its epoch
+and nothing infers it from the date: pushT's 2026-06-18 belongs to the June-26
+solve, measured eight days later. Every session on `main` declares the
+**2026-09-09** epoch, published at `data/<task>/calibration/epoch_2026-09-09/`.
+
+Camera extrinsics are used only for projection into a view; **stored poses are
+OptiTrack world-frame** and do not depend on the calibration.
+
+## Splits — held-out INTERVALS, not held-out episodes
+
+`data/<task>/splits.json`. Each segment contributes a few held-out windows from
+its middle; the rest of that segment trains. Holding out whole episodes would
+spend the scarce resource — episodes, and with them scene layouts and lighting —
+to buy an independence that a short-horizon world model does not need.
+
+| Task | test | guard | train | intervals |
+|---|---|---|---|---|
+| motherboard | 11.9 % | 9.4 % | 78.8 % | 271 |
+| pushT | 12.1 % | 9.6 % | 78.3 % | 119 |
+| rope | 12.2 % | 9.6 % | 78.2 % | 60 |
+
+**`guard` is the part that leaks if you ignore it.** A training window of span
+S starting shortly BEFORE a held-out interval `[a, b]` still contains its
+frames, so starts in `[a-(S-1), b]` must be rejected — not just `[a, b]`.
+`guard_frames` is `max_train_window - 1` (63 frames at the published
+`max_train_window` of 64) and it is RECORDED in the file. A loader using a
+longer window must FAIL rather than silently leak: see `assert_window_fits`.
+That failure mode leaves no trace in any metric until the numbers are
+suspiciously good.
+
+The guard frames are neither trained on nor tested on. That is what
+independence costs; it is listed rather than folded into `train`.
+
+An episode present in `episodes.jsonl` but absent from `splits.json` is read as
+TRAIN by `ReactVideoDataset._split_filter`. Every published segment appears in
+both.
 
 ## Downloading — depth is optional
 
@@ -156,7 +225,14 @@ columns; poses/views/depth are unchanged. Set `tactile_latency=0` for the raw
 `camera_stream/measure_gelsight_latency.py`.
 
 ## Data quality
-Per-task `bad_frames.json` flags `intensity_spikes`, `pose_teleports_{L,R}`, `ot_loss_{L,R}` (OptiTrack track loss). Overall flagged: motherboard 0.90 %, pushT 0.67 %. `segments.json` already excludes them.
+Per-task `bad_frames.json` flags `intensity_spikes`, `pose_teleports_{L,R}`,
+`ot_loss_{L,R}` (OptiTrack track loss), `tactile_freeze_{L,R}` — a disconnected
+sensor repeats its last frame rather than going blank, so every scalar detector
+sees a perfectly steady signal — and `cam_corruption`, torn frames found by
+decoding the published video, which no sidecar scalar can see.
+
+Flagged fractions are in the task table above; `segments.json` already excludes
+these spans.
 
 ## Notes
 - **Depth** is available in the source recordings and will be added under `data/<task>/depth/` in a later upload.
