@@ -30,9 +30,20 @@ import pyarrow.parquet as pq
 
 from .depth_force import DepthForceEstimator
 
-DATA_ROOT = Path("/media/yxma/Disk1/twm/data")
-STAGE_ROOT = Path("/media/yxma/Disk1/twm/release")
-OUT_ROOT = Path("/media/yxma/Disk1/twm/force_recovery")
+# Overridable by env, matching `react_preprocess.config`, which parameterises
+# exactly these paths. They were hardcoded here, and `export_force_columns`
+# imports STAGE_ROOT from this module to decide which episodes to export --
+# then REFUSES if any of them lacks an npz. With the path fixed to the whole
+# release that meant the export could only ever run when every episode in the
+# tree, across every task and date, had force estimated. Publishing one task at
+# a time, or one wave of episodes at a time, was impossible; the env var makes
+# the caller able to say which subset it means. Defaults are unchanged.
+import os
+
+DATA_ROOT = Path(os.environ.get("REACT_DATA_ROOT", "/media/yxma/Disk1/twm/data"))
+STAGE_ROOT = Path(os.environ.get("REACT_STAGE_ROOT", "/media/yxma/Disk1/twm/release"))
+OUT_ROOT = Path(os.environ.get("REACT_FORCE_RECOVERY_ROOT",
+                               "/media/yxma/Disk1/twm/force_recovery"))
 
 # THE map from published row to GelSight frame comes from the preprocess that
 # built the row, never from a formula re-derived here. `LEGACY_SHIFT` used to

@@ -59,3 +59,33 @@ def test_nothing_hardcodes_the_old_panel_height():
             if "1280, 480" in line or "1280x480" in line:
                 bad.append(f"{p.relative_to(ROOT)}:{i}: {line.strip()}")
     assert not bad, "\n".join(bad)
+
+
+def test_every_wrist_frame_shown_to_a_human_goes_through_the_tone_curve():
+    """Three places decode `arducam/*/frames` for display: the recorder's live
+    preview, the replay viewer and the dataset preview panels. They must agree,
+    or the operator aims the cameras against one picture, reviews a second and
+    ships a third. The recorder preview was wired first and the other two were
+    left raw — this is the guard against that recurring.
+    """
+    offenders = []
+    for p in _py_files():
+        src = p.read_text()
+        if "arducam" not in src or "decode_arducam" not in src:
+            continue
+        # camera_tuner shows the camera's OWN output — judging a V4L2 control
+        # through a post curve is the one thing it must not do. validate reads
+        # pixels to check them, not to show them. frames.py is the decoder.
+        if p.name in {"frames.py", "camera_tuner.py", "validate.py"}:
+            continue
+        tree = ast.parse(src)
+        decodes = [n for n in ast.walk(tree)
+                   if isinstance(n, ast.Call)
+                   and getattr(n.func, "id", getattr(n.func, "attr", "")) == "decode_arducam"]
+        if not decodes:
+            continue
+        if "apply_tone_curve" not in src:
+            offenders.append(p.relative_to(ROOT))
+    assert not offenders, (
+        "these decode wrist frames for display without the published tone "
+        f"curve: {offenders}")
