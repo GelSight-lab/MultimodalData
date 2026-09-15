@@ -83,6 +83,50 @@ def aggregate(reports: list[dict]) -> dict:
     }
 
 
+def _gathered_is_new(h5_path: Path, side: str, trim: int, n_rows: int) -> np.ndarray | None:
+    """Novelty of the frames the RELEASE actually gathered, or None if legacy.
+
+    A timestamped recording pairs each camera tick with the nearest-in-time gel
+    frame — the mapping repeats and skips — so walking the gel stream by index
+    compares row i against a frame the release never used. The pairing rule is
+    not restated here: it is `h5io.nearest_index`, the one the build ran.
+
+    Novelty is then a property of the PIXELS of those gathered frames, not of
+    their indices. The GelSight emits duplicate frames of its own at 15-18 Hz
+    against a 30 Hz tick; on motherboard/2026-09-11/episode_000 that was 205
+    rows an index walk called new and the release called repeats — with zero
+    disagreements the other way, and every one of the 205 confirmed
+    bit-identical.
+    """
+    import h5py
+    import hdf5plugin  # noqa: F401
+
+    from .h5io import nearest_index
+
+    with h5py.File(str(h5_path), "r") as f:
+        ts_key = f"gelsight/{side}/timestamps"
+        ds = f[f"gelsight/{side}/frames"]
+        if ts_key not in f or len(f[ts_key]) != len(ds) or len(ds) == 0:
+            return None                       # legacy: index-aligned
+        cam = f["timestamps"][trim:trim + n_rows]
+        idx = nearest_index(f[ts_key][:], cam)
+        truth = np.ones(len(idx), bool)
+        # tactile-lag-exempt: `idx` IS the alignment — `h5io.nearest_index`, the
+        # same pairing the build ran — so these are the gathered frames, not a
+        # raw index walk. Reading them by index is the point: the check is
+        # whether consecutive GATHERED frames differ.
+        prev_i, prev = int(idx[0]), ds[int(idx[0])]   # tactile-lag-exempt
+        for r in range(1, len(idx)):
+            cur_i = int(idx[r])
+            if cur_i == prev_i:
+                truth[r] = False              # the same frame again
+                continue
+            cur = ds[cur_i]                   # tactile-lag-exempt
+            truth[r] = not np.array_equal(cur, prev)
+            prev_i, prev = cur_i, cur
+    return truth
+
+
 def _source_is_new(h5_path: Path, side: str, start: int, count: int) -> np.ndarray:
     """Bit-exact 'this frame differs from the previous one' over source pixels."""
     import h5py
@@ -118,6 +162,22 @@ def verify_against_h5(parquet_path: Path, h5_path: Path, side: str = "left",
     proxy = flags_from_scalars(table, side)[:limit]
     trim = int(np.asarray(table["source_h5_frame"].to_numpy())[0])
     n_req = len(proxy)
+
+    gathered = _gathered_is_new(h5_path, side, trim, n_req)
+    if gathered is not None:
+        # Timestamped: the shift is not a free parameter — the pairing is by
+        # time and there is nothing to slide.
+        n = min(len(gathered), n_req)
+        if n < 2:
+            raise ValueError(f"{parquet_path.name}: no overlap with source frames")
+        return {
+            "compared": int(n - 1),
+            "mismatches": int((gathered[1:n] != proxy[1:n]).sum()),
+            "shift": 0,
+            "shift_detected": False,
+            "proxy_unique": int(proxy[1:n].sum()),
+            "source_unique": int(gathered[1:n].sum()),
+        }
 
     candidates = ([shift] if shift is not None
                   else list(search) if search is not None else [0, 15])
