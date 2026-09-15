@@ -17,7 +17,7 @@ from pathlib import Path
 import numpy as np
 
 from . import detect as D
-from .config import FPS, STAGE_ROOT
+from .config import FPS, SIDES, STAGE_ROOT
 
 MIN_SEGMENT_FRAMES = 16
 
@@ -29,7 +29,54 @@ def _sidecar_arrays(path: Path) -> tuple[dict, dict]:
     import torch
 
     ep = torch.load(str(path), weights_only=False, map_location="cpu")
-    return ep, ep["_contact_meta"]
+    cm = dict(ep["_contact_meta"])
+    cm.setdefault("source", "sidecar")
+    return ep, cm
+
+
+def _parquet_arrays(path: Path) -> tuple[dict, dict]:
+    """The same arrays, derived from the published parquet.
+
+    32 of the 43 published motherboard episodes predate 2026-07 and their
+    source H5 is deleted, so their `_detect.pt` can never be rebuilt. Every
+    array the sidecar carries is also a column here, so the release can be
+    curated from itself — and `source` records that it was, because a
+    derivation must not be mistaken for a build artefact.
+    """
+    import pyarrow.parquet as pq
+    import torch
+
+    from .config import WORLD_OFFSET
+
+    table = pq.read_table(str(path))
+    need = ("timestamp", "sensor_left_pose", "sensor_right_pose",
+            "tactile_left_intensity", "tactile_right_intensity")
+    missing = [c for c in need if c not in table.column_names]
+    if missing:
+        raise KeyError(f"{path.parent.name}/{path.stem}: no sidecar, and the "
+                       f"parquet cannot stand in for one — missing {missing}")
+
+    def col(name):
+        return np.asarray(table[name].to_pylist(), dtype=np.float64)
+
+    ep = {name: torch.from_numpy(col(src)) for name, src in (
+        ("timestamps", "timestamp"),
+        ("sensor_left_pose", "sensor_left_pose"),
+        ("sensor_right_pose", "sensor_right_pose"),
+        ("tactile_left_intensity", "tactile_left_intensity"),
+        ("tactile_right_intensity", "tactile_right_intensity"))}
+    trim = (int(np.asarray(table["source_h5_frame"].to_pylist())[0])
+            if "source_h5_frame" in table.column_names else 0)
+    # A side counts as tracked when its pose is not all-NaN, the same thing
+    # `_object_pose` writes for a body that was never broadcast.
+    active = [s for s in SIDES
+              if np.isfinite(col(f"sensor_{s}_pose")).any()]
+    task, date = path.parents[2].name, path.parent.name
+    return ep, {"source": "parquet", "trim_offset": trim,
+                "active_sensors": active,
+                "world_frame_offset_applied": list(
+                    WORLD_OFFSET.get((task, date), (0.0, 0.0, 0.0))),
+                "tactile_timestamped": date > "2026-06-18"}
 
 
 BAD_KEYS = ("intensity_spikes", "pose_teleports_L", "pose_teleports_R",
@@ -44,7 +91,8 @@ def episode_report(path: Path, video_dir: Path | None = None) -> tuple[dict, dic
     video-corruption detectors are skipped — which is the pre-2026-08 state,
     where nothing in curation could see a torn camera frame.
     """
-    ep, cm = _sidecar_arrays(path)
+    ep, cm = (_sidecar_arrays(path) if str(path).endswith("._detect.pt")
+              else _parquet_arrays(path))
     T = int(ep["timestamps"].shape[0])
     active = cm.get("active_sensors", ["left", "right"])
     pose_l = ep["sensor_left_pose"].numpy()
@@ -70,7 +118,12 @@ def episode_report(path: Path, video_dir: Path | None = None) -> tuple[dict, dic
         "tactile_corruption": [],
     }
     if video_dir is not None and Path(video_dir).is_dir():
-        cache = path.with_name(path.name.replace("._detect.pt", "._camscan.json"))
+        # From the EPISODE name, not by string surgery on the input path:
+        # `path` is the parquet when there is no sidecar, and a replace that
+        # does not match left `cache` pointing at the parquet itself, which
+        # then went to json.loads.
+        stem = path.name.replace("._detect.pt", "").replace(".parquet", "")
+        cache = path.with_name(f"{stem}._camscan.json")
         report.update(D.detect_video_corruption(video_dir, T, cache=cache))
 
     mask = np.zeros(T, bool)
@@ -101,20 +154,16 @@ def build_task(task: str, stage_root: Path = STAGE_ROOT,
     parquets = sorted((out_dir / "meta").rglob("episode_*.parquet"))
     if not parquets:
         raise FileNotFoundError(f"no episode parquet under {out_dir/'meta'}")
-    sidecars, missing = [], []
+    # A sidecar when there is one, the parquet itself when there is not: the
+    # pre-2026-07 episodes' source H5 is deleted, so their sidecar can never be
+    # rebuilt, and refusing on that account made the whole task uncurateable.
+    # Nothing is dropped either way — that protection is what the refusal was
+    # for, and `episode_report` now derives the same arrays from the release.
+    sidecars = []
     for pq in parquets:
         det = pq.with_suffix("")
         det = det.with_name(det.name + "._detect.pt")
-        (sidecars if det.is_file() else missing).append(det if det.is_file() else pq)
-    if missing:
-        names = ", ".join(f"{m.parent.name}/{m.stem}" for m in missing[:8])
-        more = "" if len(missing) <= 8 else f", and {len(missing) - 8} more"
-        raise FileNotFoundError(
-            f"{task}: {len(missing)} of {len(parquets)} episodes have a parquet but "
-            f"no _detect.pt sidecar ({names}{more}). Rebuilding the indices from "
-            f"the rest would drop them from episodes.jsonl, segments.json and "
-            f"bad_frames.json. Re-run `react_preprocess build` for them, or curate "
-            f"a staging tree that holds only the episodes you mean to index.")
+        sidecars.append(det if det.is_file() else pq)
 
     # An existing row's up_axis is preserved: react_preprocess itself writes
     # no axis convention, the published rows carry "z" from the Z-up staging
@@ -130,7 +179,8 @@ def build_task(task: str, stage_root: Path = STAGE_ROOT,
 
     episodes, segments, rows = {}, [], []
     for det in sidecars:
-        date, stem = det.parent.name, det.name.replace("._detect.pt", "")
+        date = det.parent.name
+        stem = det.name.replace("._detect.pt", "").replace(".parquet", "")
         key = f"{date}/{stem}"
         report, cm = episode_report(
             det, video_dir=out_dir / "videos" / date / stem)

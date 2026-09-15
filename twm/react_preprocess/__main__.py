@@ -138,7 +138,8 @@ def cmd_curate(args) -> int:
     """Rebuild bad_frames.json / segments.json / episodes.jsonl for a task."""
     for task in ([args.task] if args.task else sorted(H5_ROOTS)):
         try:
-            s = curation.build_task(task, STAGE_ROOT, write=not args.dry_run)
+            root = Path(args.root) if getattr(args, "root", None) else STAGE_ROOT
+            s = curation.build_task(task, root, write=not args.dry_run)
         except FileNotFoundError as exc:
             print(f"[curate] {task}: {exc}", file=sys.stderr)
             continue
@@ -224,6 +225,11 @@ def main(argv=None) -> int:
 
     c = sub.add_parser("curate", help="rebuild bad_frames/segments/episodes indices")
     c.add_argument("--task", choices=sorted(H5_ROOTS))
+    c.add_argument("--root", default=None,
+                   help="tree to curate (default STAGE_ROOT). The cut tree "
+                        "needs its own indices: cutting creates new publishing "
+                        "units, and one absent from splits.json is read as "
+                        "TRAIN by ReactVideoDataset — a silent leak.")
     c.add_argument("--dry-run", action="store_true")
     c.set_defaults(func=cmd_curate)
 

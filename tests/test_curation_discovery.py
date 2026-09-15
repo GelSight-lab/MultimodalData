@@ -15,34 +15,64 @@ import torch
 from twm.react_preprocess import curation
 
 
+def _real_parquet(path, n=20):
+    """A real parquet: curation now DERIVES a report from it when the sidecar
+    is gone, so a one-byte stand-in no longer stands in."""
+    import numpy as np
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+    pose = [[0.3, 0.1, 0.2, 0.0, 0.0, 0.0, 1.0]] * n
+    pq.write_table(pa.table({
+        "frame_idx": np.arange(n, dtype=np.int32),
+        "timestamp": 100.0 + np.arange(n) / 30.0,
+        "sensor_left_pose": pose,
+        "sensor_right_pose": pose,
+        "tactile_left_intensity": np.linspace(0, 2, n, dtype=np.float32),
+        "tactile_right_intensity": np.linspace(2, 0, n, dtype=np.float32),
+        "source_h5_frame": np.arange(n, dtype=np.int32),
+    }), str(path))
+
+
 def _tree(tmp_path, dates, sidecars_for=None):
     root = tmp_path / "motherboard"
     for date, eps in dates.items():
         d = root / "meta" / date
         d.mkdir(parents=True)
         for ep in eps:
-            (d / f"{ep}.parquet").write_bytes(b"x")
+            _real_parquet(d / f"{ep}.parquet")
             if sidecars_for is None or (date, ep) in sidecars_for:
-                torch.save({"timestamps": torch.zeros(10)}, d / f"{ep}._detect.pt")
+                torch.save({"timestamps": torch.zeros(20),
+                            "sensor_left_pose": torch.zeros(20, 7),
+                            "sensor_right_pose": torch.zeros(20, 7),
+                            "tactile_left_intensity": torch.zeros(20),
+                            "tactile_right_intensity": torch.zeros(20),
+                            "_contact_meta": {"trim_offset": 0,
+                                              "active_sensors": ["left", "right"]}},
+                           d / f"{ep}._detect.pt")
     return root
 
 
-def test_a_parquet_without_its_sidecar_is_refused_by_name(tmp_path):
+# The refusal these two used to assert has been replaced, not dropped. It
+# existed so that an episode without a sidecar could never vanish from the
+# indices; but the pre-2026-07 episodes' source H5 is deleted, so their sidecar
+# can NEVER be rebuilt and the refusal made the whole task uncurateable
+# (32 of 43 motherboard episodes, blocking every publish). `episode_report`
+# now derives the same arrays from the published parquet. What must still hold
+# is the invariant the refusal was protecting: nothing is silently dropped.
+
+def test_a_parquet_without_its_sidecar_is_indexed_not_dropped(tmp_path):
     root = _tree(tmp_path, {"2026-05-10": ["episode_000", "episode_001"],
                             "2026-09-09": ["episode_000"]},
                  sidecars_for={("2026-09-09", "episode_000")})
-    with pytest.raises(FileNotFoundError) as exc:
-        curation.build_task("motherboard", root.parent, write=False)
-    msg = str(exc.value)
-    assert "2026-05-10/episode_000" in msg and "2026-05-10/episode_001" in msg
-    assert "2026-09-09" not in msg          # the one that is covered is not named
+    stats = curation.build_task("motherboard", root.parent, write=False)
+    assert stats["episodes"] == 3, "an episode without a sidecar went missing"
 
 
-def test_the_refusal_says_how_many_are_missing(tmp_path):
+def test_a_whole_task_of_sidecar_less_episodes_still_indexes_every_one(tmp_path):
     root = _tree(tmp_path, {"2026-05-10": [f"episode_{i:03d}" for i in range(12)]},
                  sidecars_for=set())
-    with pytest.raises(FileNotFoundError, match="12 of 12"):
-        curation.build_task("motherboard", root.parent, write=False)
+    stats = curation.build_task("motherboard", root.parent, write=False)
+    assert stats["episodes"] == 12
 
 
 def test_an_existing_up_axis_survives_a_rebuild(tmp_path, monkeypatch):
