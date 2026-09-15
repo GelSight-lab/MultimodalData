@@ -460,11 +460,41 @@ def _pct(a: np.ndarray, q) -> tuple:
     return tuple(float(x) for x in np.percentile(a, q))
 
 
+def orphan_force_files(root: Path = EXPORT_ROOT,
+                       stage: Path = None) -> list[str]:
+    """Force files whose source episode has left the release tree.
+
+    `release_force/` is derived from `release/`: same rows, eight more columns.
+    When an episode leaves — 2026-09-09's pushT session was republished as
+    `data/validation` and removed from `release/pushT` — its force copy stays,
+    and anything walking the force tree then opens a parquet that is not there.
+
+    Reported by name rather than crashed on OR skipped quietly: an orphan is
+    the residue of a move nobody finished, which is worth saying, and one of
+    them should not take down a verification of 182 sensor-sides.
+    """
+    stage = STAGE_ROOT if stage is None else Path(stage)
+    out = []
+    for f in sorted(Path(root).glob("*/meta/*/*.parquet")):
+        task, date, ep = f.parts[-4], f.parts[-2], f.stem
+        if not (stage / task / "meta" / date / f"{ep}.parquet").is_file():
+            out.append(f"{task}/{date}/{ep}")
+    return out
+
+
 def verify(root: Path = EXPORT_ROOT) -> dict:
     """Re-read the exported parquets and check every claim, with numbers."""
     manifest = json.loads((root / "force_export_manifest.json").read_text())
     k = manifest["stiffness_n_per_mm"]
     files = sorted(root.glob("*/meta/*/*.parquet"))
+    orphans = set(orphan_force_files(root))
+    if orphans:
+        print(f"[verify] {len(orphans)} force file(s) whose source episode has "
+              f"left the release tree — reported, not verified:")
+        for o in sorted(orphans)[:10]:
+            print(f"    {o}")
+    files = [f for f in files
+             if f"{f.parts[-4]}/{f.parts[-2]}/{f.stem}" not in orphans]
 
     n_sides = aligned = 0
     forces, penets, gel_depths = [], [], []
