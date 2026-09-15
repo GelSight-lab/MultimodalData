@@ -276,7 +276,13 @@ def check_tick_rate(f: h5py.File, stats: Dict[str, Any], fps: int,
                         f"expected {expected_dt * 1000:.2f} ms")
     if max_dt > max_tick_gap_s:
         problems.append(f"max dt {max_dt:.3f}s > max_tick_gap_s {max_tick_gap_s:.3f}s")
-    if late_fraction >= 0.01:
+    # A fraction cannot resolve below 1/T. On a 31-tick recording 1% is 0.31,
+    # so a single late tick scored 3.23% and the check demanded ZERO of them
+    # while its message still said "1%" -- a rounding artefact presented as a
+    # tolerance. One late tick is tolerated whatever T is; on any recording
+    # long enough for 1% to mean something (100 ticks or more) 0.01 * T is
+    # already above 1, so nothing real changes.
+    if late_fraction >= 0.01 and late_count > 1:
         problems.append(f"late_fraction {late_fraction * 100:.2f}% >= 1% ({late_count} tick(s))")
 
     if problems:
