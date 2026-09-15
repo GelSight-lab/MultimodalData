@@ -271,6 +271,33 @@ def cut_table(table, a: int, b: int, source_episode: str, name: str):
 
 # ── one episode ──────────────────────────────────────────────────────────────
 
+# The wrist pair arrived mid-project: the 2026-05 sessions have neither video
+# and are complete without them. Requiring all seven refused all 32 of those
+# episodes and cut the task to nothing. `dataset_layout` already draws this
+# line — none is fine, exactly one is a broken build — and the two gates have
+# to agree on what "complete" means.
+_WRIST_STREAMS = ("wrist_left", "wrist_right")
+
+
+def present_streams(video_dir: Path) -> list[str]:
+    """The streams this episode actually has, in EXPECTED_STREAMS order.
+
+    What gets CUT has to come from here, not from EXPECTED_STREAMS: accepting
+    an episode whose wrist pair is absent and then iterating the full list
+    anyway just moves the failure to the line that opens the file.
+    """
+    return [s for s in EXPECTED_STREAMS if (video_dir / f"{s}.mp4").is_file()]
+
+
+def missing_streams(video_dir: Path) -> list[str]:
+    """Streams whose absence makes this episode incomplete."""
+    have = {s for s in EXPECTED_STREAMS if (video_dir / f"{s}.mp4").is_file()}
+    wrist_present = [w for w in _WRIST_STREAMS if w in have]
+    required = [s for s in EXPECTED_STREAMS
+                if s not in _WRIST_STREAMS or wrist_present]
+    return [s for s in required if s not in have]
+
+
 def cut_episode(task: str, date: str, episode: str, spans,
                 src_root: Path, dst_root: Path, verify: bool = True,
                 expected_T: int | None = None) -> list[dict]:
@@ -297,7 +324,7 @@ def cut_episode(task: str, date: str, episode: str, spans,
             f"frames but this tree has {T} rows. The frame numbering differs "
             f"between the two trees, so the cut would land elsewhere.")
 
-    missing = [s for s in EXPECTED_STREAMS if not (src_vid / f"{s}.mp4").is_file()]
+    missing = missing_streams(src_vid)
     if missing:
         raise FileNotFoundError(
             f"{task}/{date}/{episode}: incomplete build, no {', '.join(missing)}. "
@@ -307,7 +334,7 @@ def cut_episode(task: str, date: str, episode: str, spans,
     names = [episode if whole else segment_name(episode, i)
              for i in range(len(spans))]
 
-    for stream in EXPECTED_STREAMS:
+    for stream in present_streams(src_vid):
         src = src_vid / f"{stream}.mp4"
         dsts = [dst_root / "videos" / date / nm / f"{stream}.mp4" for nm in names]
         if whole:
@@ -327,7 +354,9 @@ def cut_episode(task: str, date: str, episode: str, spans,
             # The whole point of the stage is that a published frame index means
             # what it says, so the row count and every stream's frame count have
             # to agree before the segment counts as written.
-            for stream in EXPECTED_STREAMS:
+            # The streams this episode HAS, same as the cut loop — verifying
+            # a stream that was never cut just re-raises on the missing file.
+            for stream in present_streams(src_vid):
                 got = frame_count(dst_root / "videos" / date / nm / f"{stream}.mp4")
                 if got != sub.num_rows:
                     raise RuntimeError(
@@ -346,6 +375,29 @@ def cut_episode(task: str, date: str, episode: str, spans,
 
 
 # ── one task ─────────────────────────────────────────────────────────────────
+
+def copy_calibration(src_root: Path, out: Path) -> int:
+    """Carry the calibration into the cut tree.
+
+    The Z-up conversion copies `calibration/` so the Z-up poses and the Z-up
+    `T_mocap_to_cam` travel together. Cutting did not, so the tree the chain
+    PUBLISHES had none — and the publish runs with `--no_delete`, leaving on
+    the Hub whatever an earlier uncut publish put there. Poses in one
+    convention read against a matrix in the other put every projection half a
+    frame out, with nothing in either file admitting it.
+
+    Replaced, not merged: a stale file from an earlier convention surviving
+    because nothing overwrote it is the same failure by a slower route.
+    """
+    src = Path(src_root) / "calibration"
+    if not src.is_dir():
+        return 0
+    dst = Path(out) / "calibration"
+    if dst.exists():
+        shutil.rmtree(dst)
+    shutil.copytree(src, dst)
+    return len(list(dst.glob("*")))
+
 
 def build_task(task: str, src_root: Path = STAGE_ROOT,
                dst_root: Path | None = None, dates=None,
@@ -387,12 +439,20 @@ def build_task(task: str, src_root: Path = STAGE_ROOT,
         if not force and not dry_run and _already_cut(out, date, episode):
             skipped += 1
             continue
+        # The sidecar when there is one, the published parquet when there is
+        # not — `episode_report` derives the same arrays from either. The
+        # pre-2026-07 episodes' source H5 is deleted so their sidecar can never
+        # be rebuilt, and refusing on that account would leave exactly the
+        # episodes this stage exists to cut permanently uncuttable.
         det = det_root / "meta" / date / f"{episode}._detect.pt"
         if not det.is_file():
+            det = det_root / "meta" / date / f"{episode}.parquet"
+        if not det.is_file():
             raise FileNotFoundError(
-                f"{task}/{date}/{episode}: no _detect.pt under {det_root}. The "
-                f"spans cannot be computed, and publishing it uncut would ship "
-                f"the defects this stage exists to remove.")
+                f"{task}/{date}/{episode}: neither a _detect.pt nor a parquet "
+                f"under {det_root}. The spans cannot be computed, and "
+                f"publishing it uncut would ship the defects this stage exists "
+                f"to remove.")
         report, _ = curation.episode_report(
             det, video_dir=det_root / "videos" / date / episode)
         raw_frames += int(report["n_frames"])
@@ -442,6 +502,7 @@ def build_task(task: str, src_root: Path = STAGE_ROOT,
         # erase the first pass's episodes from the index while their videos and
         # parquet stayed in the tree: published but unlisted, which is the same
         # defect the curation indices guard against upstream.
+        copy_calibration(src_root, out)
         rows = _merge_jsonl(out / "episodes.jsonl", rows, "episode")
         (out / "episodes.jsonl").write_text(
             "".join(json.dumps(r) + "\n" for r in rows))

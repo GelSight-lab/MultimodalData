@@ -298,7 +298,10 @@ def test_an_episode_in_the_wave_with_no_sidecar_is_refused(tmp_path):
     _build_episode(src / "pushT", "2026-09-10", "episode_000", 40)
     (det / "pushT/meta/2026-09-10").mkdir(parents=True)
 
-    with pytest.raises(FileNotFoundError, match="no _detect.pt"):
+    # The refusal names both sources it looked for: the sidecar, and the
+    # published parquet that stands in when the source H5 is gone.
+    with pytest.raises(FileNotFoundError,
+                       match="neither a _detect.pt nor a parquet"):
         S.build_task("pushT", src, dst, min_frames=16,
                      verify=False, detect_root=det)
 
