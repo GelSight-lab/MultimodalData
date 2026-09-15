@@ -31,7 +31,7 @@ from dataclasses import dataclass, field
 class State:
     idle_pct: int            # mean idle CPU over the sample
     read_mbs: int            # mean blocks-in over the sample
-    best_read_mbs: int       # best aggregate read seen at any concurrency
+    best_read_mbs: int       # read rate measured just BEFORE the current probe
     disk_running: int
     disk_paused: int
     cpu_workers: int
@@ -85,6 +85,12 @@ def decide(s: State, lim: Limits = Limits()) -> Decision:
     # 1. A disk probe is judged before anything else is changed, or the
     #    measurement gets attributed to the wrong action.
     if s.probing_disk:
+        # Judged against the rate measured immediately before this probe, under
+        # the same conditions -- NOT against an all-time high. The high-water
+        # mark was set while force workers were also reading; once they
+        # finished, every probe was measured against a bar from a different
+        # workload and reverted, leaving four builds suspended at 23-40% idle
+        # CPU with nothing else left to run.
         floor = s.best_read_mbs * lim.keep_fraction
         if s.read_mbs < floor:
             return Decision(pause_disk=True, cooldown=10,
@@ -114,8 +120,13 @@ def decide(s: State, lim: Limits = Limits()) -> Decision:
     # 3. Queued CPU work. Below the floor it is restored as long as the CPU is
     #    not actually oversubscribed; above the floor it grows only when there
     #    are cores going spare. Costs the disk almost nothing either way.
-    if s.cpu_backlog > 0 and s.cpu_workers < lim.cpu_max:
-        if s.cpu_workers < lim.cpu_min and s.idle_pct >= lim.idle_low:
+    # Capped by the backlog throughout: a worker with nothing to claim just
+    # retires, and spawning it costs a process start and a log line.
+    if s.cpu_backlog > 0 and s.cpu_workers < min(lim.cpu_max, s.cpu_backlog):
+        # Never more workers than there are jobs: with a backlog of two and a
+        # floor of three, the third has nothing to claim and simply retires.
+        if (s.cpu_workers < min(lim.cpu_min, s.cpu_backlog)
+                and s.idle_pct >= lim.idle_low):
             return Decision(add_cpu=1,
                             why=f"力估计 worker 低于下限 {s.cpu_workers}<{lim.cpu_min}")
         if s.idle_pct > lim.idle_high:

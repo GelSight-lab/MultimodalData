@@ -138,6 +138,7 @@ def main() -> int:
     cooldown = 0
     pub_proc: subprocess.Popen | None = None
     pub_seen = 0.0
+    quiet = 0
     while True:
         idle, bi = sample()
         b = builds()
@@ -217,9 +218,26 @@ def main() -> int:
                     f"构建 {len(running)}跑/{len(paused)}停  力估计 {len(fw_run)}跑/{len(fw_stop)}停 "
                     f"待办{st.cpu_backlog} 待发布{pending}  {d.why}"
                     + (f"  → {', '.join(act)}" if act else "") + "\n")
-        if not b and not fw:
+        # Exit only when there is genuinely nothing left, judged AFTER this
+        # tick's actions and confirmed over several ticks.
+        #
+        # The old check was `not builds and not force_workers`, evaluated on
+        # the snapshot taken BEFORE the actions. At 10:27:55 the scheduler
+        # decided to spawn a worker for two queued jobs and then, in the same
+        # tick, saw the pre-spawn counts of zero and quit -- orphaning the
+        # worker it had just started and taking the publisher with it, because
+        # nothing else spawns one. Eleven finished segments then sat
+        # unpublished for two hours.
+        #
+        # Queued force work and unpublished output are work too, even when no
+        # process is running yet.
+        nothing_left = (not builds() and not force_workers()
+                        and backlog() == 0 and pending == 0
+                        and pub_proc is None)
+        quiet = quiet + 1 if nothing_left else 0
+        if quiet >= 3:
             with LOG.open("a") as f:
-                f.write(f"[{time.strftime('%H:%M:%S')}] 无可调度任务，退出\n")
+                f.write(f"[{time.strftime('%H:%M:%S')}] 连续 3 次确认无任何待办，退出\n")
             return 0
         time.sleep(5)
 

@@ -278,7 +278,21 @@ def test_only_recent_sessions_are_in_scope(tmp_path, monkeypatch):
 
 
 def test_the_date_floor_is_stated_not_hidden():
-    assert PS.SCOPE_SINCE == "2026-09-08"
+    """main carries one week, and the floor is the single place that says so.
+
+    2026-09-09 sits below it deliberately: that session used a different wrist
+    camera and ships separately as `validation`. Asserting the bare constant
+    only catches a silent edit; asserting what it EXCLUDES catches a floor
+    that was moved without the decision behind it being revisited.
+    """
+    assert PS.SCOPE_SINCE == "2026-09-10"
+    assert "2026-09-09" < PS.SCOPE_SINCE, \
+        "the validation epoch would be pulled back into main"
+    assert "2026-05-11" < PS.SCOPE_SINCE and "2026-06-18" < PS.SCOPE_SINCE
+
+    # The publish defaults to it rather than restating it.
+    import twm.scripts.build_release_publish as P
+    assert P.SCOPE_SINCE is PS.SCOPE_SINCE
 
 
 def test_there_is_a_runner_that_executes_the_plan(monkeypatch):

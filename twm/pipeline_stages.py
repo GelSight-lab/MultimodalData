@@ -1,0 +1,337 @@
+"""The release pipeline as one ordered chain, with its dependencies declared.
+
+`dataset_prep.run_stages` covered four of the eight stages a release needs:
+build, force, export, previews. The other four — curate, the Z-up conversion,
+the cut, publish — lived in `react_preprocess.__main__`, in a standalone
+script, and in the publisher. Nothing knew the order, and nothing knew what a
+stage required before it could run.
+
+What that cost on the 2026-09 release, in the order the failures surfaced:
+
+  * `build` ran without ``--with-depth``; found ten hours later, at the layout
+    check, and every episode had to be rebuilt;
+  * `force` was never run at all; found four stages later when the publish
+    gate refused, because `export` will not invent a force column;
+  * `zup` was rebuilt from the 29 episodes that existed at the time while the
+    tree had grown to 72, and `segment` then cut the stale half without
+    complaint.
+
+Every one of those is a missing prerequisite that only announced itself when
+something downstream broke. A list of commands cannot catch them. A stage that
+declares what it needs, and a planner that refuses to start it when the
+prerequisite has produced nothing, can.
+
+    from twm import pipeline_stages as PS
+    for stage in PS.plan(skip={"build"}, until="segment"):
+        stage.run(task="pushT", date="2026-09-12")
+"""
+from __future__ import annotations
+
+import subprocess
+import sys
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Callable, Sequence
+
+TWM = Path(__file__).resolve().parent
+REPO = TWM.parent
+RELEASE = Path("/media/yxma/Disk1/twm/release")
+RELEASE_ZUP = Path("/media/yxma/Disk1/twm/release_zup")
+RELEASE_CUT = Path("/media/yxma/Disk1/twm/release_cut")
+FORCE_ROOT = Path("/media/yxma/Disk1/twm/force_recovery")
+
+# Only sessions from here on are in scope. The 2026-05/06 sessions are already
+# published, their source H5 was deleted on 2026-09-09, and they predate the
+# wrist cameras — so every gate has to argue about them (uncertifiable
+# alignment, missing streams) for no gain, since re-cutting cannot improve data
+# that is already on the Hub. Operator's decision, 2026-09-14.
+# main carries ONE WEEK. 2026-09-09 is excluded as well: it was recorded with
+# a different wrist camera and was published separately as `validation`. The
+# May/June sessions and that epoch belong on an old-data branch, not here.
+SCOPE_SINCE = "2026-09-10"
+
+
+@dataclass(frozen=True)
+class Stage:
+    """One step of the chain.
+
+    `needs` is the stage that must have produced something first; `produced`
+    answers "did it?" for a given task, so a plan can refuse to start a stage
+    whose input is not there rather than discovering it three stages later.
+    """
+    name: str
+    what: str
+    needs: str | None = None
+    produced: Callable[[str], bool] = field(default=lambda task: True, repr=False)
+    argv: Callable[..., list[list[str]]] = field(default=lambda **kw: [], repr=False)
+
+    def commands(self, **kw) -> list[list[str]]:
+        return self.argv(**kw)
+
+    def run(self, *, cwd: Path = REPO, check: bool = True, **kw) -> int:
+        for cmd in self.commands(**kw):
+            r = subprocess.run(cmd, cwd=str(cwd))
+            if r.returncode and check:
+                return r.returncode
+        return 0
+
+
+def _has(root: Path, task: str, pattern: str) -> bool:
+    d = root / task
+    return d.is_dir() and any(d.rglob(pattern))
+
+
+def _built(task):        return _has(RELEASE, task, "episode_*.parquet")
+def _forced(task):       return _has(FORCE_ROOT, task, "*.npz")
+def _exported(task):     return _has(RELEASE, task, "episode_*.parquet")
+def _curated(task):      return (RELEASE / task / "bad_frames.json").is_file()
+def _zupped(task):       return _has(RELEASE_ZUP, task, "episode_*.parquet")
+def _segmented(task):    return _has(RELEASE_CUT, task, "*_seg*.parquet")
+
+
+def _build(task, date, episodes=(), **_):
+    ep = ["--episodes", *episodes] if episodes else []
+    # `twm.react_preprocess`, not `react_preprocess`: the latter only imports
+    # with cwd=twm/, which is how the old run_stages invoked it. Every other
+    # stage here runs from the repo root, and a module path that resolves in
+    # one and not the other is how a stage dies on its first line.
+    d = ["--date", date] if date else []
+    return [[sys.executable, "-m", "twm.react_preprocess", "build",
+             "--task", task, *d, "--with-depth", *ep]]
+
+
+def _force(task=None, workers: int = 2, **_):
+    return [[sys.executable, "-m", "force_recovery.batch_worker", str(i), str(workers)]
+            for i in range(workers)]
+
+
+def _export(**_):
+    return [[sys.executable, "-m", "force_recovery.export_force_columns", "export"]]
+
+
+def _curate(task, **_):
+    return [[sys.executable, "-m", "twm.react_preprocess", "curate", "--task", task]]
+
+
+def _zup(task, **_):
+    return [[sys.executable, str(TWM / "scripts" / "convert_release_zup.py"),
+             "--task", task]]
+
+
+def _segment(task, **_):
+    return [[sys.executable, "-m", "twm.react_preprocess", "segment", "--task", task,
+             "--src", str(RELEASE_ZUP), "--out", str(RELEASE_CUT),
+             "--detect-root", str(RELEASE)]]
+
+
+def _index(task, **_):
+    """The CUT tree's own indices. Cutting creates new publishing units, and
+    an episode in episodes.jsonl but absent from splits.json is read as TRAIN
+    by `ReactVideoDataset._split_filter` — a silent training leak."""
+    return [[sys.executable, "-m", "twm.react_preprocess", "curate",
+             "--task", task, "--root", str(RELEASE_CUT)],
+            [sys.executable, str(TWM / "scripts" / "build_splits.py"),
+             "--root", str(RELEASE_CUT / task), "--seed", "0"]]
+
+
+def _indexed(task):
+    return (RELEASE_CUT / task / "splits.json").is_file()
+
+
+def _verify(**_):
+    # The CUT tree — the one `publish` uploads. Certifying the uncut tree and
+    # shipping the cut one means every check answered about files nobody gets.
+    return [[sys.executable, "-m", "twm.pipeline_guard"],
+            [sys.executable, str(TWM / "scripts" / "certify_release.py"),
+             "--src", str(RELEASE_CUT), "--since", SCOPE_SINCE]]
+
+
+def _publish(**_):
+    # The CUT tree: the Hub holds segments, and uploading the uncut tree
+    # beside them would put `episode_001` and `episode_001_seg00` in one
+    # folder with the same frames counted twice.
+    return [[sys.executable, str(TWM / "scripts" / "build_release_publish.py"),
+             "--src", str(RELEASE_CUT), "--no_delete"]]
+
+
+STAGES: tuple[Stage, ...] = (
+    Stage("build", "source H5 -> videos + parquet (with depth)",
+          None, _built, _build),
+    Stage("force", "per-row normal force from the tactile frames",
+          "build", _forced, _force),
+    Stage("export", "force columns into the published parquet",
+          "force", _exported, _export),
+    Stage("curate", "bad_frames / segments / episodes indices",
+          "export", _curated, _curate),
+    # The cut must come after force recovery AND the frame conversion, so that
+    # every column those added is carried through by the same row slice; see
+    # `react_preprocess.segment`.
+    Stage("zup", "rotate the release from the recorded Y-up to Z-up",
+          "curate", _zupped, _zup),
+    Stage("segment", "cut each episode down to its publishable spans",
+          "zup", _segmented, _segment),
+    Stage("index", "the cut tree's own bad_frames / segments / splits",
+          "segment", _indexed, _index),
+    Stage("verify", "pipeline invariants + release certification",
+          "index", lambda task: True, _verify),
+    Stage("publish", "upload to the Hub (runs the gates again itself)",
+          "verify", lambda task: True, _publish),
+)
+
+BY_NAME = {s.name: s for s in STAGES}
+
+
+def plan(skip: Sequence[str] = (), until: str | None = None) -> list[Stage]:
+    """The stages to run, in order, minus `skip`, stopping after `until`.
+
+    An unknown name raises rather than being ignored: a typo in `--skip` that
+    silently did nothing would run a stage the operator believed was skipped.
+    """
+    unknown = set(skip) - set(BY_NAME)
+    if unknown:
+        raise KeyError(f"unknown stage(s): {', '.join(sorted(unknown))}; "
+                       f"known: {', '.join(BY_NAME)}")
+    if until is not None and until not in BY_NAME:
+        raise KeyError(f"unknown stage: {until}")
+    out = []
+    for s in STAGES:
+        if s.name not in skip:
+            out.append(s)
+        if until is not None and s.name == until:
+            break
+    return out
+
+
+@dataclass(frozen=True)
+class Coverage:
+    """How much of a stage's input it has actually processed."""
+    stage: str
+    done: int
+    total: int
+    missing: list[str]
+
+    @property
+    def complete(self) -> bool:
+        return self.total > 0 and self.done >= self.total
+
+
+def _episodes_in(root: Path, task: str) -> set[str]:
+    d = root / task / "meta"
+    if not d.is_dir():
+        return set()
+    # date/episode, not episode: the recorder restarts numbering every day, so
+    # `episode_000` exists under many dates. Keying on the stem alone collapsed
+    # 47 motherboard files into 18 names, which reads as a two-thirds-done
+    # stage — and would hide a genuinely two-thirds-done one just as well.
+    return {f"{p.parent.name}/{p.stem.rsplit('_seg', 1)[0]}"
+            for p in d.rglob("episode_*.parquet")
+            if p.parent.name >= SCOPE_SINCE}
+
+
+def coverage(stage_name: str, task: str) -> Coverage:
+    """Which of the source episodes this stage has produced output for.
+
+    "Produced something" is not "produced everything". `_zupped` returned True
+    on finding ONE parquet, so a Z-up tree built from 29 of 72 episodes read as
+    done and the cut ran on the stale half. Counted, not sampled.
+    """
+    src = _episodes_in(RELEASE, task)
+    out_root = {"zup": RELEASE_ZUP, "segment": RELEASE_CUT,
+                "index": RELEASE_CUT}.get(stage_name, RELEASE)
+    out = _episodes_in(out_root, task)
+    missing = set(src) - set(out)
+    if stage_name == "segment" and missing:
+        # An episode the cut deliberately dropped produced nothing BY DESIGN —
+        # 110 frames cannot yield a 20 s span. That is a result, not an
+        # omission. The cut already writes what it dropped; this reads that
+        # record instead of re-deriving the rule.
+        missing -= _deliberately_dropped(task)
+    missing = sorted(missing)
+    return Coverage(stage_name, len(src) - len(missing), len(src), missing)
+
+
+def _deliberately_dropped(task: str) -> set[str]:
+    """Episodes the cut examined and published nothing from, per its own log."""
+    import json
+    p = RELEASE_CUT / task / "segment_provenance.json"
+    if not p.is_file():
+        return set()
+    try:
+        doc = json.loads(p.read_text())
+    except (OSError, ValueError):
+        return set()
+    return {str(d.get("episode", "")) for d in doc.get("dropped_spans", [])}
+
+
+def blocked(stage: Stage, task: str) -> str | None:
+    """Why `stage` cannot start for `task`, or None.
+
+    Checks the PREREQUISITE's output, not the stage's own — the point is to
+    refuse before doing work, not to discover it afterwards.
+    """
+    if stage.needs is None:
+        return None
+    prereq = BY_NAME[stage.needs]
+    if not prereq.produced(task):
+        return (f"{stage.name} needs {prereq.name} ({prereq.what}), which has "
+                f"produced nothing for {task}")
+    # Partial output is the dangerous case: it looks done and is not.
+    if prereq.name in ("zup", "segment"):
+        cov = coverage(prereq.name, task)
+        if not cov.complete:
+            head = ", ".join(cov.missing[:3])
+            more = "" if len(cov.missing) <= 3 else f" and {len(cov.missing)-3} more"
+            return (f"{stage.name} needs {prereq.name}, which covers only "
+                    f"{cov.done}/{cov.total} of {task} — missing {head}{more}")
+    return None
+
+
+def status(task: str) -> list[tuple[str, bool]]:
+    """(stage, has produced something) for every stage, for one task."""
+    return [(s.name, bool(s.produced(task))) for s in STAGES]
+
+
+def run_all(tasks: Sequence[str] = ("motherboard", "pushT"),
+            skip: Sequence[str] = (), until: str | None = None,
+            log=print, **kw) -> int:
+    """Walk the plan for each task. Returns 0, or the first non-zero exit.
+
+    A stage graph nobody runs is a diagram. This is the part that runs it, and
+    it is the only place that decides what to do when a stage refuses: stop.
+    Carrying a failure downstream is how a half-built Z-up tree got cut and a
+    force-less parquet reached the publish gate.
+
+    `publish` uploads every task in one commit, so it runs once, after the
+    per-task stages are through.
+    """
+    plan_ = plan(skip=skip, until=until)
+    per_task = [s for s in plan_ if s.name != "publish"]
+    # STAGE-major, not task-major. `verify` certifies every task in one run, so
+    # running one task's whole chain first put verify ahead of the other task's
+    # index — and it died on a bad_frames.json no stage had yet been given the
+    # chance to write.
+    for stage in per_task:
+        if stage.name == "verify":
+            log(f"\n### verify (all tasks) — {stage.what}")
+            rc = stage.run(task=tasks[0], **kw)
+            log(f"### verify exit {rc}")
+            if rc:
+                return rc
+            continue
+        for task in tasks:
+            why = blocked(stage, task)
+            if why:
+                log(f"[阻塞] {task}/{stage.name}: {why}")
+                return 1
+            log(f"\n### {task} / {stage.name} — {stage.what}")
+            rc = stage.run(task=task, **kw)
+            log(f"### {task}/{stage.name} exit {rc}")
+            if rc:
+                return rc
+    if any(s.name == "publish" for s in plan_):
+        stage = BY_NAME["publish"]
+        log(f"\n### publish — {stage.what}")
+        rc = stage.run(task=tasks[0], **kw)
+        log(f"### publish exit {rc}")
+        return rc
+    return 0

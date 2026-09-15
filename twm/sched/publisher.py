@@ -89,9 +89,13 @@ def main() -> int:
         return 0
     for task, segs in pending.items():
         print(f"[{task}] {len(segs)} 段待发布: {', '.join(n for _, n in segs)}")
-    # verify everything in the cut tree, then publish; upload_new itself skips
-    # incomplete segments and routes the old wrist camera away from data/
-    rc = subprocess.run([PYT, str(PUB / "check_sync.py"), str(CUT)],
+    # Verify ONLY what is about to be published. Checking the whole tree made
+    # the cost of shipping one new segment grow with everything already
+    # shipped, and every segment here has already passed this same check.
+    only = Path("/tmp/publish_only.txt")
+    only.write_text("".join(f"{task}/{d}/{n}\n"
+                            for task, segs in pending.items() for d, n in segs))
+    rc = subprocess.run([PYT, str(PUB / "check_sync.py"), str(CUT), str(only)],
                         capture_output=True, text=True)
     tail = rc.stdout.strip().splitlines()[-3:]
     print("\n".join("  " + t for t in tail))

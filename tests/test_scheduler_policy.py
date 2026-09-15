@@ -128,3 +128,18 @@ def test_a_suspended_worker_holding_a_claim_is_eventually_resumed():
     d = decide(S(idle_pct=15, cpu_backlog=20, cpu_workers=LIM.cpu_min,
                  cpu_suspended=2, disk_running=6, disk_paused=0), LIM)
     assert d.add_cpu == 1
+
+
+def test_a_probe_is_judged_against_the_rate_just_before_it():
+    """Not against an all-time high. The high-water mark was set while force
+    workers were also reading; once they finished, probes were compared with a
+    bar from a different workload and always reverted — four builds stayed
+    suspended at 23-40% idle with nothing else to run."""
+    # 54 MB/s after the probe vs 53 just before it: kept.
+    d = decide(S(probing_disk=True, read_mbs=54, best_read_mbs=53), LIM)
+    assert not d.pause_disk
+
+
+def test_the_worker_pool_never_exceeds_the_backlog():
+    d = decide(S(idle_pct=40, cpu_workers=2, cpu_backlog=2), LIM)
+    assert d.add_cpu == 0
