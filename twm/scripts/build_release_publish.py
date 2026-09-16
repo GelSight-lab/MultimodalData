@@ -190,9 +190,21 @@ def check_calibration_epoch(task_root, epoch_root, sessions,
     for date in dates:
         if since and date < since:
             continue          # not being published; its epoch is not this run's claim
-        epoch = sessions.get(date)
+        # ASK THE RESOLVER. `session_epoch` is the definition, and since
+        # 2026-09-15 it answers for an undeclared session dated on or after
+        # CURRENT_EPOCH. Reading CALIB_SESSIONS directly re-decided a question
+        # the resolver had already been taught — and refused two sessions that
+        # resolve fine.
+        if sessions is not None:
+            epoch = sessions.get(date)
+        else:
+            from twm.calib_epoch import session_epoch
+            try:
+                epoch = session_epoch(task_root.name, date)
+            except KeyError:
+                epoch = None
         if epoch is None:
-            bad.append(f"{date}: no epoch declared in CALIB_SESSIONS — the "
+            bad.append(f"{date}: no calibration epoch resolves for it — the "
                        f"dataset would ship data its own toolbox raises on")
             continue
         for cam in ("left", "middle", "right"):
@@ -409,10 +421,10 @@ def main():
     from react_toolbox.calib_epoch import CALIB_SESSIONS
     wrong = []
     for task in tasks:
+        # None, not a pre-filtered dict: the gate resolves each date through
+        # `session_epoch`, which knows the current-epoch default.
         wrong += [f"{task}/{m}" for m in check_calibration_epoch(
-            STAGE / task, REPO_ROOT / "calibration",
-            {d: e for (t, d), e in CALIB_SESSIONS.items() if t == task},
-            since=args.since)]
+            STAGE / task, REPO_ROOT / "calibration", None, since=args.since)]
     if wrong:
         for w in wrong[:20]:
             print("   ", w)
