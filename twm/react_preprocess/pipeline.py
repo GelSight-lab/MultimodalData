@@ -107,9 +107,22 @@ def _encode_rgb_single_pass(f, source, video_dir: Path) -> dict:
     128 KB -> 2 MB: 32.0 -> 30.3 MB/s aggregate, i.e. nothing). No bytes were
     being wasted for a bigger readahead to recover.
 
-    Not yet the default. It changes the core build path and the difference is
-    invisible in the output, so it wants a full session's worth of evidence
-    before it becomes what every build does.
+    THE DEFAULT since 2026-09-16, on the evidence it asked for. Measured on
+    rope/2026-09-14/episode_001 — a real 8 GB recording of 1989 frames, both
+    paths run end to end:
+
+        two-pass     352 s
+        single-pass  253 s        1.39x
+
+        7 of 7 videos byte-for-byte identical
+        14 of 14 parquet columns identical, schema metadata identical
+
+    `object_pose` looked different and is not: rope tracks no object, the
+    column is all-NaN on both sides, and `==` says nan != nan. Use
+    `equal_nan=True` when re-measuring, or the next A/B reads as a regression.
+
+    The two-pass path stays. It is the reference this equivalence was measured
+    against, and `--single-pass/--no-single-pass` still chooses.
     """
     from contextlib import ExitStack
 
@@ -253,7 +266,7 @@ def _write_detect_sidecar(path: Path, source, tactile, extra_meta=None) -> None:
 
 def build_episode(h5_path: Path, task: str, force: bool = False,
                   with_depth: bool = False, encode_video: bool = True,
-                  auto_repair: bool = True, single_pass: bool = False) -> BuildReport:
+                  auto_repair: bool = True, single_pass: bool = True) -> BuildReport:
     """Build every published artefact for one source recording.
 
     A recording that will not open is diagnosed and, for the one signature

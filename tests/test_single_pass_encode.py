@@ -181,9 +181,18 @@ def test_a_recording_with_no_wrist_camera_encodes_the_three_views(patched):
                                "view_right.mp4"]
 
 
-def test_it_is_off_by_default(monkeypatch):
-    """It reorders the core build path and its effect is invisible in the
-    output, so it stays opt-in until a full session has been built with it."""
+def test_both_paths_stay_reachable():
+    """This asserted `off by default` while the single-pass path waited for
+    evidence. It has it now — 352 s against 253 s on a real 8 GB recording,
+    with 7 of 7 videos byte-identical and every parquet column equal — so the
+    default moved.
+
+    What still matters is that NEITHER path disappears: the per-stream one is
+    the reference the equivalence was measured against, and the only way to
+    re-measure it on a future recording.
+    """
     import inspect
-    sig = inspect.signature(pipeline.build_episode)
-    assert sig.parameters["single_pass"].default is False
+    from twm.react_preprocess import pipeline
+    assert inspect.signature(pipeline.build_episode).parameters["single_pass"].default is True
+    for name in ("_encode_rgb_single_pass", "_encode_cameras", "_encode_wrist"):
+        assert hasattr(pipeline, name), f"{name} was removed"

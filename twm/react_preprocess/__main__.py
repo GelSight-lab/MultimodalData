@@ -196,7 +196,11 @@ def main(argv=None) -> int:
     b.add_argument("--with-depth", action="store_true")
     b.add_argument("--meta-only", action="store_true",
                    help="recompute parquet without re-encoding video")
-    b.add_argument("--single-pass", action="store_true",
+    b.add_argument("--no-single-pass", dest="single_pass",
+                   action="store_false",
+                   help="the per-stream path: the reference the single-pass\n"
+                        "equivalence was measured against")
+    b.add_argument("--single-pass", action="store_true", default=True,
                    help="encode every colour stream from one traversal of "
                           "the recording instead of one per stream. Same "
                           "output, 1.8x faster: the recording interleaves "
