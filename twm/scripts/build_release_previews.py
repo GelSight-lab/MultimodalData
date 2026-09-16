@@ -22,7 +22,8 @@ import build_episode_previews as BEP
 from react_preprocess import previews
 
 
-def make_renderer(task: str, clip_s: float, speed: float):
+def make_renderer(task: str, clip_s: float, speed: float,
+                  force_root: Path | None = None):
     """Bind the renderer to one task's calibration epoch.
 
     `_load_proj_calibs(task)` resolves the epoch through `calib_epoch` and
@@ -56,9 +57,15 @@ def make_renderer(task: str, clip_s: float, speed: float):
             raise ValueError(
                 f"{job['date']}/{job['episode']}: plan says trim {want}, "
                 f"release parquet says {got}")
+        # Passed explicitly, always. `build_one_preview` falls back to its
+        # module-level FORCE_ROOT -- the production tree -- when this is None,
+        # and a preview whose force numbers came from the wrong tree looks
+        # exactly like one that didn't. That is the runbook's "never render v8
+        # labels over v7 values", and the force writer's own environment does
+        # not reach this process.
         BEP.build_one_preview(job["h5"], job["out"], clip_s, speed,
                               project_cams, glc, grc, dx=dx, dy=dy, dz=dz,
-                              window_start=want)
+                              window_start=want, force_root=force_root)
 
     return render, len(BEP._load_proj_calibs(task)[0])
 
@@ -91,6 +98,11 @@ def main() -> int:
                          "processes can share one task without rendering the "
                          "same episode twice (the renderer sits at half a core)")
     ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--force-root", default=None,
+                    help="force-recovery tree the overlays read (default: the "
+                         "production tree). Point this at a candidate run's "
+                         "force/ directory when reprocessing, or the preview "
+                         "labels a new estimate with the old values.")
     args = ap.parse_args()
 
     from pathlib import Path as _P
@@ -107,8 +119,11 @@ def main() -> int:
                   f"world_offset={j['world_offset']}")
         return 0
 
-    render, n_cams = make_renderer(args.task, args.clip_s, args.speed)
-    print(f"[previews] projection cameras: {n_cams}", flush=True)
+    froot = _P(args.force_root) if args.force_root else None
+    render, n_cams = make_renderer(args.task, args.clip_s, args.speed,
+                                   force_root=froot)
+    print(f"[previews] projection cameras: {n_cams}, "
+          f"force={froot or 'production default'}", flush=True)
 
     results = previews.build_task(args.task, render, stage_root=stage,
                                   overwrite=args.overwrite, jobs=jobs)
