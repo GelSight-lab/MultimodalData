@@ -228,6 +228,16 @@ def main() -> int:
         force_src = None
     else:
         force_src = Path(a.force_src)
+    # Stage the epoch the sessions DECLARE before converting. The source tree
+    # carried whatever was last put there by hand — motherboard had
+    # epoch_2026-05-12 while publishing September — and a hand fix to the CUT
+    # tree is overwritten the next time this runs. Derived, not maintained.
+    from twm.react_preprocess.segment import stage_calibration
+    try:
+        epoch = stage_calibration(src, a.task)
+        print(f"  calibration staged from epoch {epoch}", flush=True)
+    except (ValueError, FileNotFoundError) as e:
+        print(f"  calibration NOT staged: {e}", flush=True)
     n = convert_tree(src, dst, a.task, force_src=force_src)
     print(f"{src} -> {dst}")
     print(f"  {n['parquet']} parquet ({n['cols']} pose columns), "

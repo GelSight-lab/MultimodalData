@@ -376,6 +376,72 @@ def cut_episode(task: str, date: str, episode: str, spans,
 
 # ── one task ─────────────────────────────────────────────────────────────────
 
+EPOCH_ROOT = Path(__file__).resolve().parents[1] / "calibration"
+
+
+def stage_calibration(task_root, task: str, epoch_root=None, sessions=None,
+                      since: str | None = "2026-09-10") -> str:
+    """Put the epoch the sessions DECLARE into the task's release tree.
+
+    `copy_calibration` carries whatever is in `release/<task>/calibration/`
+    forward. Nothing put the right thing there: on 2026-09-16 motherboard
+    staged epoch_2026-05-12 and pushT epoch_2026-06-26 while both published
+    September sessions, and rope had none at all. The publish gate catches the
+    mismatch, but only at publish — and a fix applied to the CUT tree by hand
+    held for one day, until segment re-ran and copied the stale source forward.
+
+    So this is DERIVED, not maintained. Idempotent: the files are rebuilt from
+    the epoch every time, so a re-run repairs instead of rotating twice.
+    """
+    import json
+    import shutil
+    import numpy as np
+    from twm.calibration_frame import to_zup
+    from twm.calib_epoch import session_epoch
+
+    task_root = Path(task_root)
+    epoch_root = Path(epoch_root) if epoch_root is not None else EPOCH_ROOT
+    meta = task_root / "meta"
+    dates = sorted({p.name for p in meta.iterdir() if p.is_dir()}) \
+        if meta.is_dir() else []
+    if since:
+        dates = [d for d in dates if d >= since]
+    if sessions is not None:
+        epochs = {sessions[d] for d in dates if d in sessions}
+    else:
+        epochs = {session_epoch(task, d) for d in dates}
+    if not epochs:
+        raise ValueError(f"{task}: no in-scope session declares an epoch")
+    if len(epochs) > 1:
+        raise ValueError(
+            f"{task}: its sessions declare more than one epoch {sorted(epochs)} "
+            f"— one tree cannot ship two sets of extrinsics beside one set of "
+            f"poses")
+    epoch = epochs.pop()
+    src = epoch_root / f"epoch_{epoch}"
+    if not src.is_dir():
+        raise FileNotFoundError(f"{task} declares epoch {epoch}, missing: {src}")
+
+    dst = task_root / "calibration"
+    if dst.exists():
+        shutil.rmtree(dst)
+    shutil.copytree(src, dst)
+    for f in sorted(dst.glob("T_*.json")):
+        d = json.loads(f.read_text())
+        if "T_mocap_to_cam" in d:
+            to_zup(f)
+        else:
+            # The gel transform is in the rigid body's own frame; the world
+            # rotation does not touch it.
+            d["up_axis"] = "n/a (rigid-body frame)"
+            f.write_text(json.dumps(d, indent=1))
+    for f in sorted(dst.glob("T_mocap_to_cam_*.npy")):
+        np.save(f, np.asarray(
+            json.loads(f.with_suffix(".json").read_text())["T_mocap_to_cam"],
+            float))
+    return epoch
+
+
 def copy_calibration(src_root: Path, out: Path) -> int:
     """Carry the calibration into the cut tree.
 
