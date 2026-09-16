@@ -10,7 +10,7 @@ So the deletion is DECLARED (config.RAW_DELETED) and the resolvers raise.
 """
 import pytest
 
-from twm.calib_epoch import CALIB_SESSIONS
+from twm.calib_epoch import CALIB_SESSIONS, session_epoch
 from twm.react_preprocess.config import (H5_ROOTS, RAW_DELETED, RAW_DELETED_ON,
                                          deleted_note)
 from twm.react_preprocess.h5io import discover
@@ -56,7 +56,14 @@ def test_every_live_session_declares_a_calibration_epoch():
         for d in sorted(p for p in root.glob("*") if p.is_dir()):
             if not list(d.glob("episode_*.h5")):
                 continue
-            if (task, d.name) not in CALIB_SESSIONS:
+            # RESOLVES, not "is in the table": since 2026-09-15 a session on
+            # or after CURRENT_EPOCH resolves without an entry.
+            try:
+                session_epoch(task, d.name)
+                continue
+            except KeyError:
+                pass
+            if True:
                 undeclared.append(f"{task}/{d.name}")
     assert not undeclared, (
         f"recorded but undeclared: {undeclared} — add them to "

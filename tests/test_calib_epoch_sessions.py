@@ -45,10 +45,18 @@ def test_epoch_and_check_follow_the_session_too():
 
 
 def test_an_undeclared_session_raises_instead_of_falling_back():
-    """Falling back to the task default is how a session silently ships
-    through the wrong extrinsics."""
-    with pytest.raises(KeyError, match="2027-01-01"):
-        calib_dir("motherboard", date="2027-01-01")
+    """Falling back to the TASK default is how a session silently ships
+    through another session's extrinsics.
+
+    The example is a date BEFORE the current solve. Since 2026-09-15 a session
+    dated on or after CURRENT_EPOCH resolves to it without a table entry —
+    the recorder ran on that solve, which is a fact about the rig, not a guess
+    from the calendar. For anything older the calendar decides nothing, and
+    pushT's 2026-06-18 belonging to the June-26 solve, measured eight days
+    LATER, is why.
+    """
+    with pytest.raises(KeyError, match="2026-07-01"):
+        calib_dir("motherboard", date="2026-07-01")
 
 
 def test_every_declared_session_names_a_real_epoch_directory():
@@ -111,8 +119,9 @@ def test_a_path_with_no_date_still_falls_back_to_the_task_default():
 
 def test_a_path_whose_session_is_undeclared_raises():
     from twm.calib_epoch import calib_dir_for_path
-    with pytest.raises(KeyError, match="2027-03-04"):
-        calib_dir_for_path("/data/motherboard/2027-03-04/episode_000.h5")
+    # Before the current solve: after it, the session resolves by default.
+    with pytest.raises(KeyError, match="2026-07-04"):
+        calib_dir_for_path("/data/motherboard/2026-07-04/episode_000.h5")
 
 
 def test_cam_calib_accepts_an_epoch_name_as_an_escape_hatch():
