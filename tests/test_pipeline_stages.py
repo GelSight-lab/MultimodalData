@@ -70,7 +70,11 @@ def test_publish_is_last_and_needs_the_verification():
 
 def test_a_plan_skips_what_it_is_told_to_and_keeps_the_rest_in_order():
     plan = PS.plan(skip={"build", "force"})
-    assert [s.name for s in plan] == ["curate", "export", "zup", "segment",
+    # export goes with force: it exists to write the force columns, and
+    # without the npz it fails on its first episode after everything ahead of
+    # it has run. The operator paused force estimation pending a new
+    # algorithm, not to salvage half of it.
+    assert [s.name for s in plan] == ["curate", "zup", "segment",
                                       "index", "verify", "publish"]
 
 

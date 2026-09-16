@@ -25,6 +25,24 @@ MIN_SEGMENT_FRAMES = 16
 UP_AXIS_BUILT = "y"
 
 
+
+def force_flag(parquet) -> bool:
+    """Does this published parquet carry the force channel?
+
+    Recorded in `episodes.jsonl` so a session published WITHOUT force says so.
+    146 segments on the Hub carry it; a reader joining a force-free one against
+    them gets NaN or a KeyError depending on the loader, and nothing in the
+    data would explain why. An absence that is written down is a fact; one that
+    is not is a hole.
+    """
+    import pyarrow.parquet as _pq
+    from twm.dataset_layout import FORCE_COLUMNS
+    try:
+        names = set(_pq.read_schema(str(parquet)).names)
+    except Exception:                                    # noqa: BLE001
+        return False
+    return bool(set(FORCE_COLUMNS) & names)
+
 def _sidecar_arrays(path: Path) -> tuple[dict, dict]:
     import torch
 
@@ -207,6 +225,11 @@ def build_task(task: str, stage_root: Path = STAGE_ROOT,
             "world_frame_offset": cm.get("world_frame_offset_applied", [0.0, 0.0, 0.0]),
             "n_segments": n_seg,
             "total_bad_frames": report["total_bad_frames"],
+            # Whether this unit carries the force channel. Recorded because the
+            # absence has to be a FACT a reader can act on: 146 published
+            # segments have it, and one that does not gives NaN or a KeyError
+            # depending on the loader, with nothing in the data saying why.
+            "force": force_flag(out_dir / "meta" / date / f"{stem}.parquet"),
             # Which wrist camera, not whether: the Arducam and USB pairs are
             # different optics. None means the session predates them.
             "wrist_camera": cm.get("wrist_camera"),

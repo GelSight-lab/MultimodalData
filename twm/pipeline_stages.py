@@ -210,7 +210,7 @@ STAGES: tuple[Stage, ...] = (
                    "experiment — no stage builds it and it is not in git; "
                    "restore it from the data disk"),)),
     Stage("curate", "bad_frames / segments / episodes indices",
-          "force", _curated, _curate),
+          "build", _curated, _curate),
     # The cut must come after force recovery AND the frame conversion, so that
     # every column those added is carried through by the same row slice; see
     # `react_preprocess.segment`.
@@ -221,7 +221,7 @@ STAGES: tuple[Stage, ...] = (
                    "no stage builds it and it is not in git; restore it from "
                    "the data disk"),)),
     Stage("zup", "rotate the release from the recorded Y-up to Z-up",
-          "export", _zupped, _zup),
+          "curate", _zupped, _zup),
     Stage("segment", "cut each episode down to its publishable spans",
           "zup", _segmented, _segment),
     Stage("index", "the cut tree's own bad_frames / segments / splits",
@@ -241,6 +241,13 @@ def plan(skip: Sequence[str] = (), until: str | None = None) -> list[Stage]:
     An unknown name raises rather than being ignored: a typo in `--skip` that
     silently did nothing would run a stage the operator believed was skipped.
     """
+    # export exists to write the force columns; without the npz it fails on
+    # its first episode, after everything ahead of it has run. Skipping force
+    # therefore skips it too — the operator paused force estimation because a
+    # new algorithm is coming, not to salvage half of it.
+    skip = set(skip)
+    if "force" in skip:
+        skip.add("export")
     unknown = set(skip) - set(BY_NAME)
     if unknown:
         raise KeyError(f"unknown stage(s): {', '.join(sorted(unknown))}; "

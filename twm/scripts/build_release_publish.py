@@ -247,6 +247,23 @@ def check_calibration_present(stage, tasks) -> list[str]:
     return bad
 
 
+def _force_declared_absent(task_root, key: str) -> bool:
+    """Does `episodes.jsonl` say this unit ships without the force channel?"""
+    p = Path(task_root) / "episodes.jsonl"
+    if not p.is_file():
+        return False
+    for line in p.read_text().splitlines():
+        if not line.strip():
+            continue
+        try:
+            row = json.loads(line)
+        except ValueError:
+            continue
+        if row.get("episode") == key:
+            return row.get("force") is False
+    return False
+
+
 def force_overlay_plan(stage, force_stage, tasks, since: str = SCOPE_SINCE):
     """Which force-tree files may be uploaded over the tree being published.
 
@@ -280,10 +297,18 @@ def force_overlay_plan(stage, force_stage, tasks, since: str = SCOPE_SINCE):
             forced = force_stage / task / local.relative_to(stage / task)
             if forced.is_file():
                 files.append(forced)
+            elif _force_declared_absent(stage / task, f"{date}/{local.stem}"):
+                # DECLARED absent. The operator paused force estimation on
+                # 2026-09-16 pending a new algorithm, and `episodes.jsonl`
+                # records `force: false`. An absence written down is a fact a
+                # reader can act on; refusing it would block a correct publish.
+                continue
             else:
                 missing.append(
-                    f"{task}/{date}/{local.stem}: no force columns, and no "
-                    f"force-tree file at the same path can supply them")
+                    f"{task}/{date}/{local.stem}: no force columns, no "
+                    f"force-tree file at the same path, and episodes.jsonl "
+                    f"does not declare `force: false` — an undeclared absence "
+                    f"is the residue of a run that half-finished")
     return files, missing
 
 

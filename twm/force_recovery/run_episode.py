@@ -29,6 +29,7 @@ import numpy as np
 import pyarrow.parquet as pq
 
 from .depth_force import DepthForceEstimator
+from . import calib_free as CF
 
 # Overridable by env, matching `react_preprocess.config`, which parameterises
 # exactly these paths. They were hardcoded here, and `export_force_columns`
@@ -78,6 +79,8 @@ def _reference_rows(intensity: np.ndarray, is_new: np.ndarray,
 #     times a single N-per-mm3 constant (that path scored rho 0.297 and mapped
 #     a true 0.16-8 N range onto 0.01-103 N).
 # v5: force comes from the calibration-free reconstruction.
+# v6: calibration-free contact threshold is recalibrated from dI=8 to dI=4
+#     so PushT light-contact frames are retained instead of zeroed.
 #
 # It lives HERE, with the function that writes the npz. It used to live in
 # `batch_worker`, which stamped it by re-reading and re-writing the whole
@@ -86,7 +89,7 @@ def _reference_rows(intensity: np.ndarray, is_new: np.ndarray,
 # directly, produced 72 files with no version at all. `export_force_columns`
 # reads a missing key as 0 and REFUSES anything below the minimum, so promoting
 # those would have made every episode unexportable.
-PIPELINE_VERSION = 5
+PIPELINE_VERSION = 6
 
 
 def process_side(task: str, date: str, ep: str, side: str, *,
@@ -201,10 +204,10 @@ def process_side(task: str, date: str, ep: str, side: str, *,
         # `shift` is gone: there is no constant any more. The alignment is a
         # per-row map, and `source_frame` in the npz carries it row by row.
         "trim": trim, "tactile_timestamped": bool(align.timestamped),
-        # thresholds now live in stages(): |dI|>8 for the valid mask and
-        # depth>0.05 mm for the contact mask
+        # thresholds now live in stages()/calib_free: |dI| for the valid mask
+        # and depth>0.05 mm for the LUT geometry contact mask
         "contact_threshold_mm": 0.05,
-        "valid_mask_dI": 8.0,
+        "valid_mask_dI": float(CF.VALID_DI),
         # which reconstruction produced which column
         "force_reconstruction": _FORCE_RECON,
         "geometry_reconstruction": "stages (LUT, millimetres)",

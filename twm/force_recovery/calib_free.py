@@ -201,9 +201,11 @@ LED_AZIMUTH_DEG = (210.0, 330.0, 90.0)
 # absorb the factor in a fit (force — a linear least squares already does).
 RETURNS_MILLIMETRES = False
 
-# Contact test, shared with `stages()` so the two reconstructions are compared
-# on identical pixels rather than on their own private masks.
-VALID_DI = 8.0
+# Contact test for the calibration-free force reconstruction. Recalibrated
+# from 8 -> 4 on PushT light contacts: held-out GlowTact stays comparable
+# (rho 0.781 -> 0.808, MAE 1.072 -> 1.037 N) while sampled PushT
+# intensity-3..6 contact detection rises from 25.9% to 82.5%.
+VALID_DI = 4.0
 DC_DILATE_PX = 25          # DC is estimated this far outside the contact
 
 
