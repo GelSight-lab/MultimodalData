@@ -25,10 +25,7 @@ import hdf5plugin  # noqa
 import numpy as np
 import torch
 
-H5_ROOTS = {
-    "motherboard": Path("/media/yxma/Disk1/twm/data/motherboard"),
-    "pushT":       Path("/media/yxma/Disk1/twm/data/pushT"),
-}
+from twm.react_preprocess.config import H5_ROOTS  # derived from TASKS; copies go stale
 STAGE = Path("/media/yxma/Disk1/twm/release")
 W, H, CHUNK = 640, 480, 128
 CAM_DEPTH = {0: "depth_right", 1: "depth_left", 2: "depth_middle"}

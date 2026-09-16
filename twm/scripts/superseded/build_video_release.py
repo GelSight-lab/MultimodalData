@@ -37,10 +37,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import torch
 
-H5_ROOTS = {
-    "motherboard": Path("/media/yxma/Disk1/twm/data/motherboard"),
-    "pushT":       Path("/media/yxma/Disk1/twm/data/pushT"),
-}
+from twm.react_preprocess.config import H5_ROOTS  # derived from TASKS; copies go stale
 STAGE_ROOT = Path("/media/yxma/Disk1/twm/release")
 
 W, H = 640, 480

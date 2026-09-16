@@ -38,11 +38,17 @@ WORLD_OFFSET = {("motherboard", "2026-05-19"): (0.23, 0.0, 0.175)}
 DATA_ROOT = Path(os.environ.get("REACT_DATA_ROOT", "/media/yxma/Disk1/twm/data"))
 STAGE_ROOT = Path(os.environ.get("REACT_STAGE_ROOT", "/media/yxma/Disk1/twm/release"))
 
-H5_ROOTS = {
-    "motherboard": DATA_ROOT / "motherboard",
-    "pushT": DATA_ROOT / "pushT",
-    "rope": DATA_ROOT / "rope",
-}
+# DERIVED from the scheduler's task list, not restated. This was a fourth copy
+# of it, and the invariant that forbids restating the list only recognised
+# literal tuples — a dict's keys walked straight past it. `toy` was added to
+# TASK_INDEX and TASKS, the build stage produced its argv, and the CLI rejected
+# the name after everything ahead of it had already been built.
+def _h5_roots():
+    from twm.pipeline_stages import TASKS
+    return {t: DATA_ROOT / t for t in TASKS}
+
+
+H5_ROOTS = _h5_roots()
 
 # Sessions that predate the multi-camera rig and are not published.
 EXCLUDE_DATES = {"2026-03-23"}

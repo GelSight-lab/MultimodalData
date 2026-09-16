@@ -89,11 +89,17 @@ def test_an_unknown_stage_name_is_refused_rather_than_ignored(tmp_path):
 
 # ── the three failures this exists to prevent ───────────────────────────────
 
-def test_the_build_always_asks_for_depth(monkeypatch):
-    """Ten hours of building were thrown away because --with-depth was left
-    off and nothing downstream noticed until the layout check."""
+def test_the_depth_channel_is_off_and_that_is_a_decision(monkeypatch):
+    """Ten hours of building were once thrown away because --with-depth was
+    left off by ACCIDENT and nothing noticed until the layout check. The
+    operator turned it off deliberately on 2026-09-16 — it is the largest
+    single cost in this stage — so what must hold now is the opposite of the
+    original assertion, and the distinction is the point: the flag still
+    exists, it is simply not asked for.
+    """
     cmds = PS.BY_NAME["build"].commands(task="pushT", date="2026-09-12")
-    assert any("--with-depth" in c for c in cmds)
+    assert cmds, "the build stage produced no command at all"
+    assert not any("--with-depth" in [str(x) for x in c] for c in cmds)
 
 
 def test_export_is_blocked_when_its_predecessor_has_produced_nothing(monkeypatch):
