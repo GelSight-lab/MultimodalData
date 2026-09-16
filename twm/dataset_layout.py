@@ -30,10 +30,38 @@ DEPTH_FILES = ("depth_left.mkv", "depth_middle.mkv", "depth_right.mkv")
 WRIST_FILES = ("wrist_left.mp4", "wrist_right.mp4")
 CAM_CALIB = ("T_mocap_to_cam_left", "T_mocap_to_cam_middle", "T_mocap_to_cam_right")
 GEL_CALIB = ("T_gel_to_rigid_left.json", "T_gel_to_rigid_right.json")
-FORCE_COLUMNS = ("force_left_normal_n", "force_left_penetration_mm",
-                 "force_left_target_pose", "force_left_source_frame",
-                 "force_right_normal_n", "force_right_penetration_mm",
-                 "force_right_target_pose", "force_right_source_frame")
+# The force channel has two halves and they are not the same kind of thing.
+#
+# MEASURED: the estimated newtons, and the tactile frame each number came
+# from. Required whenever a task declares a force channel at all.
+#
+# DERIVED: a control policy computed at an ASSUMED stiffness -- penetration is
+# force/k and the target pose is the observed pose displaced by it. Optional,
+# because v8 measures to 15 N while the shipped k = 2 N/mm caps the exporter's
+# gel-thickness gate at 8.5 N, and the operator chose on 2026-09-16 to publish
+# the measurement and withhold the policy rather than invent a stiffness.
+#
+# Optional but ALL-OR-NOTHING: a target_pose without the penetration it was
+# displaced by is a half-written export, not a deliberate choice.
+FORCE_MEASURED = ("force_left_normal_n", "force_left_source_frame",
+                  "force_right_normal_n", "force_right_source_frame")
+FORCE_DERIVED = ("force_left_penetration_mm", "force_left_target_pose",
+                 "force_right_penetration_mm", "force_right_target_pose")
+FORCE_COLUMNS = FORCE_MEASURED + FORCE_DERIVED
+
+
+def missing_force_columns(cols) -> list:
+    """Which force columns a parquet still owes, given what it has.
+
+    Empty for a force-only export and for a full one; non-empty for an episode
+    with no force at all, and for a partially written derived half.
+    """
+    have = set(cols)
+    missing = [c for c in FORCE_MEASURED if c not in have]
+    present_derived = [c for c in FORCE_DERIVED if c in have]
+    if present_derived:
+        missing += [c for c in FORCE_DERIVED if c not in have]
+    return missing
 INDEX_FILES = ("episodes.jsonl", "segments.json", "bad_frames.json", "splits.json")
 
 
@@ -194,7 +222,7 @@ def check_layout(root, date: str, *, require_force: bool = True,
                 f"every older published folder, but no known consumer reads "
                 f"them (react_preprocess.meta.add_index_columns adds them)")
         if require_force:
-            missing = [c for c in FORCE_COLUMNS if c not in cols]
+            missing = missing_force_columns(cols)
             if missing:
                 rep.fail("force columns",
                          f"{ep}: parquet has no {missing[0]} — the force export "

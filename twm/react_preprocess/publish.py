@@ -83,7 +83,20 @@ def parquet_operations(stage_root: Path, tasks=TASKS) -> list:
     return ops
 
 
-def check_no_column_loss(ops: list, repo: str = HF_REPO) -> list[str]:
+def lost_columns(published: set, local: set, *, allow_dropping=frozenset()) -> list:
+    """Columns the published file has that the replacement does not, minus the
+    ones the operator has explicitly approved withdrawing.
+
+    The approval is PER COLUMN and not a mode switch. A blanket "this run is
+    allowed to shrink the schema" flag would have let the original defect
+    through -- the rebuild that silently deleted the force channel was, from
+    its own point of view, also just writing fewer columns.
+    """
+    return sorted(set(published) - set(local) - set(allow_dropping))
+
+
+def check_no_column_loss(ops: list, repo: str = HF_REPO,
+                         allow_dropping=frozenset()) -> list[str]:
     """A parquet may not replace a published one that has columns it lacks.
 
     The six force columns are not produced by this pipeline. `build` writes 19
@@ -121,21 +134,22 @@ def check_no_column_loss(ops: list, repo: str = HF_REPO) -> list[str]:
                             f"rather than overwriting blind")
             continue
         local = set(pq.read_schema(str(op.path_or_fileobj)).names)
-        lost = sorted(published - local)
+        lost = lost_columns(published, local, allow_dropping=allow_dropping)
         if lost:
             problems.append(
                 f"{op.path_in_repo}: would drop {lost} — the published file "
                 f"has columns this one does not. Re-run "
                 f"force_recovery.export_force_columns and publish the "
-                f"superset instead")
+                f"superset instead, or name the columns in allow_dropping if "
+                f"the withdrawal is intended")
     return problems
 
 
 def publish(ops: list, message: str, repo: str = HF_REPO, dry_run: bool = False,
-            check_columns: bool = True):
+            check_columns: bool = True, allow_dropping=frozenset()):
     """Push one commit to the dataset repo."""
     if check_columns:
-        problems = check_no_column_loss(ops, repo)
+        problems = check_no_column_loss(ops, repo, allow_dropping)
         if problems:
             raise SystemExit("refusing to publish — column loss:\n  "
                              + "\n  ".join(problems[:10]))
