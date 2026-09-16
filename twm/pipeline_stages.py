@@ -133,7 +133,12 @@ def _build(task, date=None, episodes=(), **_):
     for d, eps in sorted(wanted.items()):
         ep = ["--episodes", *eps] if eps else []
         out.append([sys.executable, "-m", "twm.react_preprocess", "build",
-                    "--task", task, "--date", d, "--with-depth", *ep])
+                    # No --with-depth: the operator turned the depth channel
+                    # off on 2026-09-16. It is the largest single cost in this
+                    # stage (a second lossless FFV1 stream per camera). The
+                    # flag still exists — leaving it off by ACCIDENT is what
+                    # cost ten hours once — it is simply not asked for.
+                    "--task", task, "--date", d, *ep])
     return out
 
 

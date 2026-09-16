@@ -28,7 +28,14 @@ class VideoWriter:
                "-f", "rawvideo", "-pix_fmt", pix_fmt,
                "-s", f"{width}x{height}", "-r", str(fps), "-i", "-"]
         if codec == "libx264":
-            cmd += ["-c:v", "libx264", "-profile:v", "high444", "-preset", "medium",
+            # `fast`, not `medium`. Measured on 300 real frames against the raw
+            # pixels: medium 74 fps / PSNR 48.14 dB, fast 105 fps / 47.96 dB,
+            # same file size. 0.18 dB for 40 % of the time. `veryfast` buys
+            # 2.9x for 1.82 dB and was NOT taken — the gel gradients are the
+            # force estimator's input and nothing shows 46 dB leaves them
+            # intact. `ultrafast` is slower AND 3x larger: it drops motion
+            # estimation, so the write cost overtakes the CPU it saves.
+            cmd += ["-c:v", "libx264", "-profile:v", "high444", "-preset", "fast",
                     "-crf", CRF, "-pix_fmt", "yuv444p", "-movflags", "+faststart"]
         elif codec == "ffv1":
             cmd += ["-c:v", "ffv1", "-level", "3", "-pix_fmt", "gray16le"]
