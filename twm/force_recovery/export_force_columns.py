@@ -272,13 +272,23 @@ def build_side(task: str, date: str, ep: str, side: str, table: pa.Table,
             f"whose force differs from the previous row -- the forward fill "
             f"assumed by this export does not hold")
 
-    penetration = penetration_mm(force, stiffness)        # N / (N/mm) = mm
-    n_hat = press_direction(task, side, pose)
-    target = pose.copy()
     contact = force > 0.0
-    target[contact, :3] += (penetration[contact, None] / 1000.0
-                            ) * n_hat[contact]            # mm -> m
-    # no-contact rows are left as a byte copy of the observed pose
+    # FORCE-ONLY. `stiffness is None` means the operator chose to publish the
+    # measurement without the control policy layered on it. Both derived
+    # columns are functions of k, so with no k there is nothing to derive --
+    # and nothing computed here that the 4.25 mm gate could refuse. Expressing
+    # it as an absent k rather than a "skip these columns" flag is what makes
+    # that structural: there is no path on which the derived columns are
+    # written from a stiffness nobody supplied.
+    if stiffness is None:
+        penetration = target = n_hat = None
+    else:
+        penetration = penetration_mm(force, stiffness)    # N / (N/mm) = mm
+        n_hat = press_direction(task, side, pose)
+        target = pose.copy()
+        target[contact, :3] += (penetration[contact, None] / 1000.0
+                                ) * n_hat[contact]        # mm -> m
+        # no-contact rows are left as a byte copy of the observed pose
 
     diag = {
         "side": side,
@@ -295,32 +305,46 @@ def build_side(task: str, date: str, ep: str, side: str, table: pa.Table,
         "force_max_n": float(force.max()),
         "force_p50_contact_n": float(np.percentile(force[contact], 50))
         if contact.any() else 0.0,
-        "penetration_p50_mm": float(np.percentile(penetration, 50)),
-        "penetration_p95_mm": float(np.percentile(penetration, 95)),
-        "penetration_max_mm": float(penetration.max()),
         "gel_max_depth_p95_mm": float(np.percentile(max_depth, 95)),
         "gel_max_depth_max_mm": float(max_depth.max()),
-        "identity_max_abs_dev": float(
-            np.abs(target[~contact] - pose[~contact]).max())
-        if (~contact).any() else 0.0,
-        "direction": direction_agreement(pose[:, :3] * 1000.0, n_hat, force),
     }
     columns = {
         f"force_{side}_normal_n": pa.array(force.astype(np.float32)),
-        f"force_{side}_penetration_mm": pa.array(
-            penetration.astype(np.float32)),
-        f"force_{side}_target_pose": _list_column(target),
         f"force_{side}_source_frame": pa.array(source_frame.astype(np.int32)),
     }
+    if stiffness is not None:
+        diag |= {
+            "penetration_p50_mm": float(np.percentile(penetration, 50)),
+            "penetration_p95_mm": float(np.percentile(penetration, 95)),
+            "penetration_max_mm": float(penetration.max()),
+            "identity_max_abs_dev": float(
+                np.abs(target[~contact] - pose[~contact]).max())
+            if (~contact).any() else 0.0,
+            "direction": direction_agreement(
+                pose[:, :3] * 1000.0, n_hat, force),
+        }
+        columns |= {
+            f"force_{side}_penetration_mm": pa.array(
+                penetration.astype(np.float32)),
+            f"force_{side}_target_pose": _list_column(target),
+        }
+    # The sidecar names what was WRITTEN, taken from here rather than from a
+    # second hardcoded list -- that list said normal_n/penetration_mm/
+    # target_pose and had never mentioned source_frame at all.
+    diag["columns"] = sorted(columns)
+    diag["stiffness_n_per_mm"] = stiffness
     return columns, diag
 
 
-def _field_meta(name: str, stiffness: float) -> dict:
+def _field_meta(name: str, stiffness: float | None) -> dict:
     common = {
         "twm.source": "force_recovery/<task>/<date>/<episode>_<side>.npz "
                       "(force_recovery.run_episode)",
-        "twm.stiffness_n_per_mm": repr(stiffness),
     }
+    # Only the columns DERIVED from k carry k. Stamping it on a force-only
+    # export would assert a provenance the numbers do not have.
+    if stiffness is not None:
+        common["twm.stiffness_n_per_mm"] = repr(stiffness)
     if name.endswith("_normal_n"):
         common |= {"twm.units": "N",
                    "twm.desc": "estimated normal force, >= 0; exactly 0 on "
@@ -349,7 +373,7 @@ def _field_meta(name: str, stiffness: float) -> dict:
     return common
 
 
-def export_episode(task: str, date: str, ep: str, stiffness: float,
+def export_episode(task: str, date: str, ep: str, stiffness: float | None,
                    root: Path = EXPORT_ROOT) -> dict:
     src = STAGE_ROOT / task / "meta" / date / f"{ep}.parquet"
     table = pq.read_table(str(src))
@@ -413,14 +437,12 @@ def export_episode(task: str, date: str, ep: str, stiffness: float,
 
     sidecar = {**header, "task": task, "date": date, "episode": ep,
                "rows": table.num_rows, "sides": diags,
-               "columns": [f"force_{s}_{c}" for s in SIDES
-                           for c in ("normal_n", "penetration_mm",
-                                     "target_pose")]}
+               "columns": sorted(c for d in diags for c in d["columns"])}
     (dst.parent / f"{ep}.force.json").write_text(json.dumps(sidecar, indent=2))
     return sidecar
 
 
-def run_export(stiffness: float = STIFFNESS_N_PER_MM,
+def run_export(stiffness: float | None = STIFFNESS_N_PER_MM,
                root: Path = EXPORT_ROOT) -> dict:
     episodes = _episodes()
     have = {p.stem for p in FORCE_ROOT.glob("*/*/*.npz")}
@@ -517,45 +539,56 @@ def verify(root: Path = EXPORT_ROOT) -> dict:
             if len(raw) == t.num_rows and np.array_equal(
                     raw.astype(np.float32), col.astype(np.float32)):
                 aligned += 1
-            pen = np.asarray(t[f"force_{side}_penetration_mm"].to_numpy(),
-                             np.float64)
             pose = np.array(t[f"sensor_{side}_pose"].to_pylist(), np.float64)
-            tgt = np.array(t[f"force_{side}_target_pose"].to_pylist(),
-                           np.float64)
+            # A FORCE-ONLY export has no k-derived columns, so every check
+            # built on them is checking data that does not exist. Read the
+            # presence off the table rather than off a flag: the file is the
+            # authority on what was written, and a flag that disagreed with it
+            # would report on columns nobody shipped.
+            derived = f"force_{side}_penetration_mm" in t.column_names
+            free = col == 0.0
+            if derived:
+                pen = np.asarray(t[f"force_{side}_penetration_mm"].to_numpy(),
+                                 np.float64)
+                tgt = np.array(t[f"force_{side}_target_pose"].to_pylist(),
+                               np.float64)
+                # DexForce consistency: an impedance controller at k sitting on
+                # the observed pose with this target exerts exactly the force.
+                roundtrip.append(float(np.abs(
+                    k * np.linalg.norm(tgt[:, :3] - pose[:, :3], axis=1)
+                    * 1000.0 - col).max()))
+                ident_rows += int(free.sum())
+                if free.any():
+                    ident_dev.append(
+                        float(np.abs(tgt[free] - pose[free]).max()))
+                quat_dev.append(float(np.abs(tgt[:, 3:] - pose[:, 3:]).max()))
+                penets.append(pen)
             is_new = np.asarray(t[f"tactile_{side}_is_new"].to_numpy(), bool)
 
-            # DexForce consistency: an impedance controller at k sitting on
-            # the observed pose with this target exerts exactly the force.
-            roundtrip.append(float(np.abs(
-                k * np.linalg.norm(tgt[:, :3] - pose[:, :3], axis=1) * 1000.0
-                - col).max()))
-
-            free = col == 0.0
-            ident_rows += int(free.sum())
-            if free.any():
-                ident_dev.append(float(np.abs(tgt[free] - pose[free]).max()))
-            quat_dev.append(float(np.abs(tgt[:, 3:] - pose[:, 3:]).max()))
             dup = np.zeros(len(col), bool)
             dup[1:] = ~is_new[1:]
             dup_rows += int(dup.sum())
             dup_held += int((dup[1:] & (col[1:] == col[:-1])).sum())
 
             forces.append(col)
-            penets.append(pen)
-            ep_stats.append({
+            st = {
                 "id": f"{task}/{date}/{ep}_{side}",
                 "p50": float(np.percentile(col, 50)),
                 "p95": float(np.percentile(col, 95)),
                 "max": float(col.max()),
                 "no_contact_frac": float(free.mean()),
-                "pen_p95_mm": float(np.percentile(pen, 95)),
-                "pen_max_mm": float(pen.max()),
-            })
-            n_hat = press_direction(task, side, pose)
-            dirs.append(direction_agreement(pose[:, :3] * 1000.0, n_hat, col))
+            }
+            if derived:
+                st |= {"pen_p95_mm": float(np.percentile(pen, 95)),
+                       "pen_max_mm": float(pen.max())}
+                n_hat = press_direction(task, side, pose)
+                dirs.append(
+                    direction_agreement(pose[:, :3] * 1000.0, n_hat, col))
+            ep_stats.append(st)
 
     force = np.concatenate(forces)
-    pen = np.concatenate(penets)
+    force_only = not penets
+    pen = np.concatenate(penets) if penets else np.zeros(0)
     depth = np.concatenate(gel_depths)
     strong = force > 0.5
     k_gel = force[strong] / np.maximum(depth[strong], 1e-6)
@@ -581,11 +614,16 @@ def verify(root: Path = EXPORT_ROOT) -> dict:
             np.array([e["p95"] for e in ep_stats]), [0, 50, 100]),
         "per_side_max_min_med_max": _pct(
             np.array([e["max"] for e in ep_stats]), [0, 50, 100]),
-        "penetration_p50_p95_p99_max_mm": _pct(pen, [50, 95, 99, 100]),
-        "penetration_over_gel_thickness_frac": float(
-            (pen > GEL_THICKNESS_MM).mean()),
-        "sides_with_p95_over_gel": int(sum(
-            e["pen_p95_mm"] > GEL_THICKNESS_MM for e in ep_stats)),
+        "force_only": force_only,
+        "penetration_p50_p95_p99_max_mm": (
+            None if force_only else _pct(pen, [50, 95, 99, 100])),
+        # None, not 0.0: "no penetration column was written" and "every
+        # penetration is inside the gel" are different findings, and the gate
+        # must not read the first as the second.
+        "penetration_over_gel_thickness_frac": (
+            None if force_only else float((pen > GEL_THICKNESS_MM).mean())),
+        "sides_with_p95_over_gel": (None if force_only else int(sum(
+            e["pen_p95_mm"] > GEL_THICKNESS_MM for e in ep_stats))),
         "gel_stiffness_implied_n_per_mm_p5_p25_p50_p75_p95": _pct(
             k_gel, [5, 25, 50, 75, 95]),
         # Minimum stiffness that keeps a penetration inside the gel. These are
@@ -622,7 +660,9 @@ def verify(root: Path = EXPORT_ROOT) -> dict:
         "force_at_ceiling_frac": float((force >= force.max() - 0.01).mean()),
         "identity_rows_checked": ident_rows,
         "identity_max_abs_dev": float(max(ident_dev)) if ident_dev else 0.0,
-        "identity_pass": bool(ident_dev and max(ident_dev) == 0.0),
+        # Force-only writes no target pose, so there is no identity to hold.
+        "identity_pass": True if force_only else bool(
+            ident_dev and max(ident_dev) == 0.0),
         "quaternion_max_abs_dev": float(max(quat_dev)),
         "roundtrip_max_abs_err_n": float(max(roundtrip)),
         "duplicate_rows": dup_rows,
@@ -729,8 +769,12 @@ def _gate(report: dict) -> int:
         fails.append("no-contact rows do not leave the pose identical")
     if not report.get("alignment_pass", False):
         fails.append(f"row alignment {report.get('alignment_rate', 0)*100:.1f}%")
+    # None means force-only: no penetration column exists, so the gel-thickness
+    # gate has nothing to police. Absent data must not read as a violation --
+    # nor as a pass for a run that DID derive targets, which is why this
+    # distinguishes None from 0.0 rather than defaulting.
     frac = report.get("penetration_over_gel_thickness_frac", 0.0)
-    if frac > 0:
+    if frac is not None and frac > 0:
         fails.append(
             f"{frac*100:.2f}% of rows command a target more than "
             f"{GEL_THICKNESS_MM} mm past the surface — the gel cannot be "
@@ -749,10 +793,19 @@ def main() -> int:
     ap.add_argument("command", choices=["export", "verify", "digest"])
     ap.add_argument("--stiffness", type=float, default=STIFFNESS_N_PER_MM,
                     help="N/mm used for penetration = force / k")
+    ap.add_argument("--force-only", action="store_true",
+                    help="publish the measurement without the control policy: "
+                         "force_<side>_normal_n and force_<side>_source_frame "
+                         "only, no penetration_mm and no target_pose. Use when "
+                         "no stiffness has been approved for the force range "
+                         "actually measured -- v8 reaches 15 N, and at the "
+                         "shipped k=2 N/mm the 4.25 mm gel gate caps usable "
+                         "force at 8.5 N.")
     ap.add_argument("--root", type=Path, default=EXPORT_ROOT)
     args = ap.parse_args()
+    k = None if args.force_only else args.stiffness
     if args.command == "export":
-        m = run_export(args.stiffness, args.root)
+        m = run_export(k, args.root)
         print(f"\nwrote {m['n_episodes']} episodes / "
               f"{m['n_sensor_sides']} sensor-sides / {m['total_rows']} rows "
               f"to {args.root}")
