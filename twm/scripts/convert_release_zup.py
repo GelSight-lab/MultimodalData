@@ -174,6 +174,17 @@ def convert_tree(src: Path, dst: Path, task: str,
         shutil.copytree(cs, cd)
         for f in sorted(cd.glob("T_mocap_to_cam_*.json")):
             j = json.loads(f.read_text())
+            # ALREADY Z-UP: carry it through. `stage_calibration` writes the
+            # declared epoch already converted and stamped, and rotating it
+            # again is a net 180 degrees that every projection is blind to —
+            # the same invisibility that made `to_zup` refuse a second
+            # rotation. This path went around that refusal by rotating inline.
+            #
+            # Measured 2026-09-16: rope's staged calibration matched no epoch
+            # in any form and sat 1.2733 from motherboard's and pushT's, which
+            # had been rotated once. The publish gate caught it.
+            if j.get("up_axis") == "z":
+                continue
             T = np.asarray(j["T_mocap_to_cam"], float)
             T[:3, :3] = T[:3, :3] @ YUP_TO_ZUP.T
             j["T_mocap_to_cam"] = T.tolist()
