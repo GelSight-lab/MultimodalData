@@ -91,8 +91,8 @@ separately as `data/validation`.
 | Task | Segments | Source recordings | Dates | Duration | Flagged frames |
 |---|---|---|---|---|---|
 | **motherboard** | 25 | 12 | 2026-09-11/12 | 93.9 min | 0.30 % |
-| **pushT** | 59 | 22 | 2026-09-10/11/12 | 62.9 min | 0.05 % |
-| **rope** | 23 | 8 | 2026-09-11 | 43.8 min | 0.16 % |
+| **pushT** | 68 | 23 | 2026-09-10/11/12/15 | 73.9 min | 0.04 % |
+| **rope** | 53 | 16 | 2026-09-11/14/15 | 79.9 min | 0.15 % |
 
 Segments and source recordings are reported separately on purpose: 25 segments
 is not 25 independent recordings, and reading it that way overstates the
@@ -148,8 +148,8 @@ to buy an independence that a short-horizon world model does not need.
 | Task | test | guard | train | intervals |
 |---|---|---|---|---|
 | motherboard | 11.9 % | 9.4 % | 78.8 % | 271 |
-| pushT | 12.1 % | 9.6 % | 78.3 % | 119 |
-| rope | 12.2 % | 9.6 % | 78.2 % | 60 |
+| pushT | 12.0 % | 9.5 % | 78.5 % | 133 |
+| rope | 12.1 % | 9.6 % | 78.3 % | 109 |
 
 **`guard` is the part that leaks if you ignore it.** A training window of span
 S starting shortly BEFORE a held-out interval `[a, b]` still contains its
