@@ -202,7 +202,13 @@ def build_cache(recon: str | None = None) -> None:
 def _load(recon: str | None = None):
     c = cache_for(recon or FORCE_RECONSTRUCTION)
     if not c.exists():
-        raise SystemExit(f"run `build` first ({c} missing)")
+        raise SystemExit(
+            f"{c} is missing. This is the fitted-features cache — the "
+            f"gel-indentation geometry measured against newtons in the "
+            f"calibration experiment — NOT a pipeline product: no stage builds "
+            f"it, and it is not in git. Restore it from the data disk or "
+            f"re-run the calibration fit. (The old message said 'run build "
+            f"first', which produces nothing of the kind.)")
     rows = json.loads(c.read_text())
     a = lambda k: np.array([r[k] for r in rows])          # noqa: E731
     return rows, a

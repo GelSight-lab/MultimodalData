@@ -1,0 +1,45 @@
+"""The force stage's fitted-features cache is an ASSET, not a pipeline product.
+
+`force_recovery/feature_cache/glowtact_round_mm.json` holds the measurements
+from an August calibration experiment — gel-indentation geometry against
+newtons. No stage produces it, it is not in git, and it lives on the data
+disk. Without it the force stage exits on its first episode.
+
+Nobody noticed, because on this machine the file has been there since August.
+A fresh checkout, another machine, or a deleted cache, and the chain dies four
+stages in — after the build has spent hours — with:
+
+    run `build` first (…/glowtact_round_mm.json missing)
+
+which sends the reader to a stage that does not produce it.
+
+Two things follow: the message must name what is actually missing and where it
+comes from, and the scheduler must refuse BEFORE the build rather than after.
+"""
+import pytest
+
+import twm.pipeline_stages as PS
+
+
+def test_the_force_stage_declares_its_asset(tmp_path, monkeypatch):
+    monkeypatch.setattr(PS, "FORCE_ROOT", tmp_path / "force_recovery")
+    why = PS.blocked(PS.BY_NAME["force"], "rope")
+    assert why and "glowtact" in why, (
+        f"the force stage did not refuse a missing fitted-features cache: {why}")
+
+
+def test_the_refusal_says_where_the_asset_comes_from(tmp_path, monkeypatch):
+    monkeypatch.setattr(PS, "FORCE_ROOT", tmp_path / "force_recovery")
+    why = PS.blocked(PS.BY_NAME["force"], "rope")
+    assert "build" not in why.split("glowtact")[0].lower() or "not" in why.lower(), \
+        f"the message still sends the reader to `build`, which does not produce it: {why}"
+
+
+def test_a_present_asset_does_not_block(tmp_path, monkeypatch):
+    root = tmp_path / "force_recovery"
+    (root / "feature_cache").mkdir(parents=True)
+    (root / "feature_cache" / "glowtact_round_mm.json").write_text("[]")
+    (root / "rope").mkdir()
+    (root / "rope" / "x.npz").write_bytes(b"")
+    monkeypatch.setattr(PS, "FORCE_ROOT", root)
+    assert PS.blocked(PS.BY_NAME["force"], "rope") is None

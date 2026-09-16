@@ -21,7 +21,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 from matplotlib.patches import Patch  # noqa: E402
 
-ORDER = ["motherboard", "pushT", "rope", "validation"]
+ORDER = ["motherboard", "pushT", "rope", "toy", "validation"]
 _PAD = 0.35          # category-axis padding; see `panel`
 COL = {"motherboard": "#2F6FB5", "pushT": "#C8622B", "rope": "#3F8F5B",
        "validation": "#7A5AA8"}

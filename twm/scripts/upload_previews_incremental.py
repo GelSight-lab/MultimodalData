@@ -23,10 +23,11 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from twm.pipeline_stages import TASKS  # one list; copies are how a task falls out
 
 CUT_ROOT = Path("/media/yxma/Disk1/twm/release_cut")
 REPO = "yxma/React"
-TASKS = ("motherboard", "pushT", "rope")
+TASKS = TASKS
 
 
 def is_finished(path: Path) -> bool:

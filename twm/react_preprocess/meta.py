@@ -23,7 +23,7 @@ import pyarrow.parquet as pq
 # It lived in four places. Two were stale — `dataset_prep` had no `rope` and
 # read the map with `.get(task, 0)`, so a rope episode published through it was
 # stamped task_index=0, which is motherboard.
-TASK_INDEX = {"motherboard": 0, "pushT": 1, "rope": 2}
+TASK_INDEX = {"motherboard": 0, "pushT": 1, "rope": 2, "toy": 3}
 
 
 def task_index(task: str) -> int:

@@ -57,7 +57,7 @@ SCOPE_SINCE = "2026-09-10"
 # bad_frames.json, no segments.json and no splits.json. The last of those made
 # every rope segment read as TRAIN, because `_split_filter` treats an unknown
 # key that way.
-TASKS = ("motherboard", "pushT", "rope")
+TASKS = ("motherboard", "pushT", "rope", "toy")
 
 
 @dataclass(frozen=True)
@@ -78,6 +78,9 @@ class Stage:
     needs: str | tuple[str, ...] | None = None
     produced: Callable[[str], bool] = field(default=lambda task: True, repr=False)
     argv: Callable[..., list[list[str]]] = field(default=lambda **kw: [], repr=False)
+    # Assets the stage needs that NO stage produces. Callables, because the
+    # roots are monkeypatched in tests and must be read at call time.
+    assets: tuple = ()
 
     def commands(self, **kw) -> list[list[str]]:
         return self.argv(**kw)
@@ -196,14 +199,22 @@ STAGES: tuple[Stage, ...] = (
     Stage("build", "source H5 -> videos + parquet (with depth)",
           None, _built, _build),
     Stage("force", "per-row normal force from the tactile frames",
-          "build", _forced, _force),
+          "build", _forced, _force,
+          assets=((lambda: FORCE_ROOT / "feature_cache" / "glowtact_round_mm.json",
+                   "the fitted-features cache measured in the calibration "
+                   "experiment — no stage builds it and it is not in git; "
+                   "restore it from the data disk"),)),
     Stage("curate", "bad_frames / segments / episodes indices",
           "force", _curated, _curate),
     # The cut must come after force recovery AND the frame conversion, so that
     # every column those added is carried through by the same row slice; see
     # `react_preprocess.segment`.
     Stage("export", "force columns into the published parquet",
-          ("force", "curate"), _exported, _export),
+          ("force", "curate"), _exported, _export,
+          assets=((lambda: FORCE_ROOT / "lut_calibration" / "glowtact_lut.npz",
+                   "the depth lookup table the force reconstruction reads — "
+                   "no stage builds it and it is not in git; restore it from "
+                   "the data disk"),)),
     Stage("zup", "rotate the release from the recorded Y-up to Z-up",
           "export", _zupped, _zup),
     Stage("segment", "cut each episode down to its publishable spans",
@@ -327,6 +338,15 @@ def blocked(stage: Stage, task: str) -> str | None:
     Checks the PREREQUISITE's output, not the stage's own — the point is to
     refuse before doing work, not to discover it afterwards.
     """
+    # Assets the stage needs that NO stage produces. The force estimator reads
+    # a fitted-features cache measured in an August calibration experiment; it
+    # is not in git and no stage builds it. Without this check the chain dies
+    # four stages in, AFTER the build has spent hours, with a message that
+    # sends the reader to `build`.
+    for asset, what in stage.assets:
+        if not asset().exists():
+            return (f"{stage.name} needs {asset()}, which no stage produces — "
+                    f"{what}")
     if stage.needs is None:
         return None
     names = (stage.needs,) if isinstance(stage.needs, str) else stage.needs

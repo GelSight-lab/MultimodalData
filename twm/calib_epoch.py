@@ -40,6 +40,8 @@ dataset already publishes.
 """
 from __future__ import annotations
 
+import os as _os
+
 import json
 import re
 from functools import lru_cache
@@ -48,7 +50,15 @@ from pathlib import Path
 import numpy as np
 
 REPO = Path(__file__).resolve().parent
-RELEASE = Path("/media/yxma/Disk1/twm/release")
+# `REACT_RELEASE` already redirects `calib_dir`; the index read below used a
+# constant fixed at import, so a sandbox could redirect every root and still
+# have this reach into the production tree. One fact, one mechanism.
+RELEASE = Path(_os.environ.get("REACT_RELEASE", "/media/yxma/Disk1/twm/release"))
+
+
+def _release_root() -> Path:
+    """Read at CALL time: tests set the variable after this module is imported."""
+    return Path(_os.environ.get("REACT_RELEASE", str(RELEASE)))
 
 # Which on-disk directory holds each task's epoch. The mapping is the thing
 # worth naming; the directory names themselves are historical accidents.
@@ -251,8 +261,6 @@ def calib_dir(task: str, *, date: str | None = None,
     extrinsics: a wrong calibration does not look wrong, it looks like a
     slightly miscalibrated rig, which is how it shipped unnoticed once.
     """
-    import os as _os
-
     def _ok(d: Path) -> Path:
         """Refuse a tree in the wrong convention instead of returning it.
 
@@ -420,7 +428,7 @@ def check_epoch(task: str, date: str | None = None) -> None:
 @lru_cache(maxsize=None)
 def _episodes(task: str) -> dict:
     """`episodes.jsonl` keyed by its own `episode` field, `<date>/<episode>`."""
-    p = RELEASE / task / "episodes.jsonl"
+    p = _release_root() / task / "episodes.jsonl"
     if not p.exists():
         return {}
     return {r["episode"]: r for r in

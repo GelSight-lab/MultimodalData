@@ -36,7 +36,15 @@ def test_every_scheduled_task_can_resolve_its_calibration_epoch():
     from pathlib import Path
     sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "twm"))
     from react_toolbox.calib_epoch import CALIB_SESSIONS
+    from react_toolbox.calib_epoch import session_epoch
+    from pathlib import Path
     for task in PS.TASKS:
-        dates = {d for (t, d), _ in CALIB_SESSIONS.items() if t == task
-                 and d >= PS.SCOPE_SINCE}
-        assert dates, f"{task} has no in-scope session declaring an epoch"
+        d = Path(PS.DATA_ROOT) / task
+        dates = sorted({p.name for p in d.iterdir()
+                        if p.is_dir() and p.name >= PS.SCOPE_SINCE}) \
+            if d.is_dir() else []
+        # Since 2026-09-15 a session dated on or after CURRENT_EPOCH resolves
+        # without a table entry — the recorder ran on that solve. What must
+        # hold is that every in-scope session RESOLVES, declared or not.
+        for date in dates:
+            assert session_epoch(task, date), f"{task}/{date} resolves to nothing"

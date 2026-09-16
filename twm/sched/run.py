@@ -24,6 +24,7 @@ from pathlib import Path
 sys.path.insert(0, "/home/yxma/MultimodalData")
 from twm.sched.policy import Decision, Limits, State, decide  # noqa: E402
 from twm.sched import publisher  # noqa: E402
+from twm.pipeline_stages import TASKS  # one list; copies are how a task falls out
 
 FORCE_LOG = Path("/tmp/force_logs")
 FORCE_POOL = ("/tmp/claude-1004/-home-yxma-MultimodalData/"
@@ -101,7 +102,7 @@ def backlog() -> int:
     so the two cannot disagree.
     """
     n = 0
-    for task in ("motherboard", "pushT", "rope"):
+    for task in TASKS:
         rel = Path(f"/media/yxma/Disk1/twm/release/{task}")
         for pq_path in rel.glob("meta/2026-09-*/episode_*.parquet"):
             date, ep = pq_path.parent.name, pq_path.stem

@@ -45,7 +45,7 @@ _SEG = re.compile(r"_seg\d+$")
 # earlier session (2026-09-09), which carries different wrist cameras and a
 # different calibration epoch, so it is drawn on its own axes.
 ERAS = {
-    "new_era": ["motherboard", "pushT", "rope"],
+    "new_era": ["motherboard", "pushT", "rope", "toy"],
     "old_era": ["validation"],
 }
 

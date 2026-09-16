@@ -17,13 +17,14 @@ import re
 import subprocess
 import sys
 from pathlib import Path
+from twm.pipeline_stages import TASKS  # one list; copies are how a task falls out
 
 sys.path.insert(0, "/home/yxma/MultimodalData")
 PUB = Path("/tmp/claude-1004/-home-yxma-MultimodalData/"
            "d734563d-9427-48c6-a0e9-fe7c75ba0ddf/scratchpad/pub")
 CUT = Path("/media/yxma/Disk1/twm/release_cut")
 PYT = "/home/yxma/miniconda3/envs/twm/bin/python"
-TASKS = ("motherboard", "pushT", "rope")
+TASKS = TASKS
 
 
 def published() -> set[tuple[str, str, str]]:
