@@ -39,7 +39,27 @@ def test_a_present_asset_does_not_block(tmp_path, monkeypatch):
     root = tmp_path / "force_recovery"
     (root / "feature_cache").mkdir(parents=True)
     (root / "feature_cache" / "glowtact_round_mm.json").write_text("[]")
+    (root / "feature_cache" / "glowtact_round_8_15_di4.json").write_text("[]")
+    (root / "lut_calibration").mkdir()
+    (root / "lut_calibration" / "glowtact_lut.npz").write_bytes(b"")
     (root / "rope").mkdir()
     (root / "rope" / "x.npz").write_bytes(b"")
     monkeypatch.setattr(PS, "FORCE_ROOT", root)
     assert PS.blocked(PS.BY_NAME["force"], "rope") is None
+
+
+@pytest.mark.parametrize('missing', [
+    'feature_cache/glowtact_round_8_15_di4.json',
+    'lut_calibration/glowtact_lut.npz',
+])
+def test_v8_force_stage_requires_tail_and_geometry_assets(tmp_path, monkeypatch, missing):
+    for rel in ['feature_cache/glowtact_round_mm.json',
+                'feature_cache/glowtact_round_8_15_di4.json',
+                'lut_calibration/glowtact_lut.npz']:
+        if rel != missing:
+            path = tmp_path/rel
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(b'asset')
+    monkeypatch.setattr(PS, 'FORCE_ROOT', tmp_path)
+    why = PS.blocked(PS.BY_NAME['force'], 'rope')
+    assert why and missing in why

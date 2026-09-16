@@ -13,9 +13,10 @@ Only rows flagged ``tactile_<side>_is_new`` are reconstructed; duplicated
 rows reuse the previous estimate, which is exact (identical pixels give an
 identical estimate) and cuts the work by ~3.6x on legacy recordings.
 
-Reference (no-contact) frames for calibration are the 15 lowest-intensity
-fresh rows of the episode, spread apart in time; the estimator's median/MAD
-calibration tolerates a minority of them being lightly in contact.
+Select up to 15 low-intensity fresh rows, spaced at least 30 rows apart,
+then use the first 12 in temporal order for a median reference image.
+Leave-one-out reference residuals set the contact-area noise floor. The pool
+is assumed to approximate unloaded contact; this is not a force-zero label.
 """
 from __future__ import annotations
 
@@ -74,6 +75,32 @@ def _reference_rows(intensity: np.ndarray, is_new: np.ndarray,
     return np.array(sorted(picked))
 
 
+def reference_stack(frames, index_map, intensity, is_new) -> np.ndarray:
+    """Raw reference images selected through the authoritative capture map."""
+    index_map = np.asarray(index_map, np.int64)
+    if len(index_map) != len(intensity) or len(is_new) != len(intensity):
+        raise ValueError("Reference alignment length mismatch")
+    rows = _reference_rows(np.asarray(intensity), np.asarray(is_new))[:12]
+    if not len(rows):
+        raise ValueError("No fresh frames available for a reference")
+    indices = index_map[rows]
+    if np.any((indices < 0) | (indices >= len(frames))):
+        raise ValueError("Reference alignment points outside the recording")
+    return np.stack([np.asarray(frames[int(i)]) for i in indices])
+
+
+def reference_noise_area(cropped_stack: np.ndarray) -> float:
+    """Leave-one-out reference residual area; assumes the pool is unloaded."""
+    from .lut_calibration import MM_PER_PIXEL
+
+    images = np.asarray(cropped_stack, np.float32)
+    if len(images) < 2:
+        raise ValueError("At least two reference frames are required")
+    areas = [CF.contact_mask(im - np.median(np.delete(images, i, axis=0), axis=0)).sum()
+             for i, im in enumerate(images)]
+    return float(np.quantile(areas, 0.9) * MM_PER_PIXEL ** 2)
+
+
 # Bump whenever the estimator OR its calibration changes; stale npz rerun.
 # v4: force comes from stages() + react_calib instead of the v1 MLP estimator
 #     times a single N-per-mm3 constant (that path scored rho 0.297 and mapped
@@ -89,7 +116,9 @@ def _reference_rows(intensity: np.ndarray, is_new: np.ndarray,
 # directly, produced 72 files with no version at all. `export_force_columns`
 # reads a missing key as 0 and REFUSES anything below the minimum, so promoting
 # those would have made every episode unexportable.
-PIPELINE_VERSION = 6
+# v7: train-only gain field and continuous low-contact evidence ramp.
+# v8: measured 8-15 N tail, retaining the v7 low-score map and contact gate.
+PIPELINE_VERSION = 8
 
 
 def process_side(task: str, date: str, ep: str, side: str, *,
@@ -122,6 +151,7 @@ def process_side(task: str, date: str, ep: str, side: str, *,
     # scored rho 0.297 on GlowTact `round` and mapped a true 0.16-8 N range
     # onto 0.01-103 N. See react_calib for the held-out numbers.
     from .react_calib import (CALIBRATION_NAME,
+                              F_MAX_N,
                               FORCE_RECONSTRUCTION as _FORCE_RECON,
                               fit as _fit_calib)
     predict_force = _fit_calib(report=False)
@@ -145,8 +175,10 @@ def process_side(task: str, date: str, ep: str, side: str, *,
         from .debug_gallery import stages
         from .lut_calibration import crop
 
-        ref = np.median(np.stack([crop(frames[src(int(r))]).astype(np.float32)
-                                  for r in ref_rows[:12]]), 0)
+        ref_images = np.stack([crop(image).astype(np.float32) for image in
+                               reference_stack(frames, idx_map, inten, is_new)])
+        ref = np.median(ref_images, 0)
+        noise_area = reference_noise_area(ref_images)
 
         # Force from `react_calib.force_stages` (the calibration-free solve,
         # 0.812 held-out rho against the LUT's 0.763 on the same presses and
@@ -186,7 +218,7 @@ def process_side(task: str, date: str, ep: str, side: str, *,
                 img = crop(frames[last_idx]).astype(np.float32)
                 st_mm = stages(img, ref)
                 ft = st_mm["feats"]
-                last = (predict_force(force_stages(img, ref)),
+                last = (predict_force(force_stages(img, ref), noise_area_mm2=noise_area),
                         ft["vol"], ft["area"], ft["maxd"])
             src_idx[row] = last_idx
             for key, value in zip(FIELDS, last):
@@ -208,6 +240,10 @@ def process_side(task: str, date: str, ep: str, side: str, *,
         # and depth>0.05 mm for the LUT geometry contact mask
         "contact_threshold_mm": 0.05,
         "valid_mask_dI": float(CF.VALID_DI),
+        "reference_noise_area_mm2": noise_area,
+        "force_calibration_max_n": F_MAX_N,
+        "force_calibration_ceiling_n": predict_force.force_ceiling_n,
+        "absolute_force_validated_on_react": False,
         # which reconstruction produced which column
         "force_reconstruction": _FORCE_RECON,
         "geometry_reconstruction": "stages (LUT, millimetres)",

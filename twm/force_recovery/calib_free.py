@@ -217,7 +217,9 @@ def led_matrix(azimuth_deg=LED_AZIMUTH_DEG) -> np.ndarray:
 
 def contact_mask(dI: np.ndarray) -> np.ndarray:
     import cv2
-    mag = cv2.GaussianBlur(np.abs(dI).max(2), (5, 5), 1.5)
+    mag = np.maximum(np.maximum(np.abs(dI[..., 0]), np.abs(dI[..., 1])),
+                     np.abs(dI[..., 2]))
+    mag = cv2.GaussianBlur(mag, (5, 5), 1.5)
     m = (mag > VALID_DI).astype(np.uint8)
     m = cv2.morphologyEx(m, cv2.MORPH_OPEN, np.ones((3, 3), np.uint8))
     return m.astype(bool)
@@ -261,7 +263,8 @@ def channel_gains(dI: np.ndarray, azimuth_deg=LED_AZIMUTH_DEG,
 
 def gradients(dI: np.ndarray, azimuth_deg=LED_AZIMUTH_DEG,
               remove_dc: bool = True, gains: bool = False,
-              ref_img: np.ndarray | None = None
+              ref_img: np.ndarray | None = None, *,
+              valid: np.ndarray | None = None
               ) -> tuple[np.ndarray, np.ndarray]:
     """Surface gradient from the signed RGB difference image.
 
@@ -296,7 +299,7 @@ def gradients(dI: np.ndarray, azimuth_deg=LED_AZIMUTH_DEG,
         # construction; whatever is measured there is illumination drift
         # between the frame and the reference. Left in, Poisson integrates it
         # into a global tilt — the dome.
-        m = contact_mask(dI)
+        m = contact_mask(dI) if valid is None else valid
         far = cv2.dilate(m.astype(np.uint8),
                          np.ones((DC_DILATE_PX, DC_DILATE_PX), np.uint8)) == 0
         if far.sum() > 100:
@@ -340,7 +343,7 @@ def display_gain(gx: np.ndarray, gy: np.ndarray, target: float = 0.45) -> float:
 def reconstruct(img: np.ndarray, ref: np.ndarray,
                 azimuth_deg=LED_AZIMUTH_DEG, scale: float = 1.0,
                 normalize: bool = False, solver: str = "auto",
-                gains: bool = False) -> dict:
+                gains: bool = False, *, include_normals: bool = True) -> dict:
     """Surface height with no per-sensor calibration — SHAPE, not millimetres.
 
     `normalize=True` divides by the frame's own peak, giving 0..1. That is the
@@ -350,28 +353,40 @@ def reconstruct(img: np.ndarray, ref: np.ndarray,
     magnitude between frames carries the force signal.
 
     See RETURNS_MILLIMETRES.
+    `include_normals=False` omits the diagnostic normal map, not force inputs.
     """
-    from .poisson import integrate, poisson_dirichlet, poisson_neumann
+    from .poisson import integrate, poisson_dirichlet, poisson_neumann, free_boundary_ok
 
     dI = img.astype(np.float32) - ref.astype(np.float32)
     valid = contact_mask(dI)
-    gx, gy = gradients(dI, azimuth_deg, gains=gains, ref_img=ref)
-    gx = np.where(valid, gx, 0.0)
-    gy = np.where(valid, gy, 0.0)
-    if solver == "auto":
-        depth, used = integrate(gx, gy, valid, ref=ref)
-    elif solver == "neumann":
-        depth, used = poisson_neumann(gx, gy), "neumann"
+    has_contact = valid.any()
+    if not has_contact:
+        # Masked gradients are identically zero; either solver returns zero.
+        gx = np.zeros(valid.shape, np.float64)
+        gy = np.zeros_like(gx)
+        depth = np.zeros_like(gx)
+        if solver == "auto":
+            used = "neumann-detrended" if free_boundary_ok(ref) else "dirichlet-marker-gel"
+        else:
+            used = "neumann" if solver == "neumann" else "dirichlet"
     else:
-        depth, used = poisson_dirichlet(gx, gy), "dirichlet"
-    if valid.any() and np.median(depth[valid]) < 0:
+        gx, gy = gradients(dI, azimuth_deg, gains=gains, ref_img=ref, valid=valid)
+        gx = np.where(valid, gx, 0.0)
+        gy = np.where(valid, gy, 0.0)
+        if solver == "auto":
+            depth, used = integrate(gx, gy, valid, ref=ref)
+        elif solver == "neumann":
+            depth, used = poisson_neumann(gx, gy), "neumann"
+        else:
+            depth, used = poisson_dirichlet(gx, gy), "dirichlet"
+    if has_contact and np.median(depth[valid]) < 0:
         depth = -depth
     d = np.maximum(depth, 0.0) * scale
     if normalize:
         d = d / max(float(d.max()), 1e-12)
     from .poisson import contact_truncated
-    return {"dI": dI, "valid": valid, "gx": gx, "gy": gy, "depth": d,
-            "normals": normals(gx, gy), "solver": used,
+    result = {"dI": dI, "valid": valid, "gx": gx, "gy": gy, "depth": d,
+            "solver": used,
             # True when the contact reaches the frame edge: the free boundary
             # has extrapolated a surface it could not see, and a sizeable
             # minority of such frames come out deeper than the gel is thick.
@@ -381,6 +396,9 @@ def reconstruct(img: np.ndarray, ref: np.ndarray,
             "truncated": contact_truncated(valid),
             "units": "relative (peak = 1)" if normalize
                      else "arbitrary (scale not recovered)"}
+    if include_normals:
+        result["normals"] = normals(gx, gy)
+    return result
 
 
 def flat_gel_leak(depth: np.ndarray, valid: np.ndarray) -> float:

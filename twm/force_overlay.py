@@ -53,9 +53,9 @@ from twm.tactile_align import LEGACY_SHIFT
 # centre, so the dot and the pose axes cannot disagree about the sensor.
 #
 # Force -> radius. F_FULL is the force at which the dot reaches R_MAX; it is
-# the top of the band the React episodes actually occupy, not a per-clip
-# autoscale, so a dot means the same thing in every video.
-F_FULL_N = 8.0
+# the configured calibration range, not a measured React operating range or
+# per-clip autoscale, so a dot means the same thing in every video.
+F_FULL_N = 15.0
 R_MIN_PX = 3.0
 # Sized for a 320x240 camera thumbnail, not the old 240 px tactile tile: at
 # full scale the disc spans 44 px, ~14% of the view's width. The previous
@@ -194,7 +194,7 @@ def draw_force_halo(canvas: np.ndarray, xy: tuple[float, float],
 
 
 def draw_legend(panel: np.ndarray, x: int, y: int,
-                marks=(0.5, 2.0, 8.0)) -> None:
+                marks=(0.5, 5.0, 15.0)) -> None:
     """Scale key drawn with the SAME `radius_px`, so it cannot drift.
 
     Circles share a vertical CENTRE and labels share a BASELINE. Hanging each

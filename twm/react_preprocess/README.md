@@ -13,6 +13,12 @@ python -m react_preprocess verify-flags --task pushT --against h5
 
 ## Pipeline
 
+For the v8 normal-force migration, follow the
+[force reprocessing runbook](../force_recovery/RUNBOOK.md) before rebuilding
+segments. Force estimation covers 0-15 N; force-informed target export has a
+separate stiffness-policy check. Do not treat a raw tactile rebuild as a force
+recalibration or reuse cached force previews.
+
 ```
 recording.h5
    │  h5io      read timestamps/poses, resolve tactile↔camera alignment

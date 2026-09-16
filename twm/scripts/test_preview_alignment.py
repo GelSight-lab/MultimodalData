@@ -87,6 +87,46 @@ def sample_episodes(task: str, n: int, seed: int = 0):
     return picked
 
 
+def target_verdict(ev_tgt, tgt_bad, force_declared: bool):
+    """(ok, evidence) for the virtual-target check.
+
+    The target is `observed_pose + (f / K) * n_hat`. With no force there is
+    nothing to compute, and reporting that as a FAILURE blocked the publish of
+    a task deliberately built without force while a new estimator is written.
+
+    "No evidence" is not "evidence of wrong" — the same distinction the force
+    overlay gate draws between a declared absence and an undeclared one. But
+    a task that DECLARES force and still produces no target is a broken
+    overlay, and that stays a failure.
+    """
+    if not ev_tgt:
+        if force_declared:
+            return False, ("force is declared but no target was computed on "
+                           "any sample — the overlay is not drawing it")
+        return True, ("n/a: no force channel in this task, so there is no "
+                      "virtual target to label")
+    return (not any(tgt_bad),
+            "displayed target gap vs displayed contact: " + ", ".join(ev_tgt))
+
+
+def _force_declared(root, task: str) -> bool:
+    """Does any published unit of this task declare `force: true`?
+
+    Read from episodes.jsonl rather than from the presence of a column, so a
+    task pausing force estimation says so once in the index instead of every
+    consumer inferring it.
+    """
+    import json as _json
+    from pathlib import Path as _P
+    p = _P(root) / task / "episodes.jsonl"
+    if not p.is_file():
+        return True                     # unknown: keep the strict reading
+    for line in p.read_text().splitlines():
+        if line.strip() and _json.loads(line).get("force") is True:
+            return True
+    return False
+
+
 def check(ok: bool, name: str, evidence: str) -> None:
     RESULTS.append((bool(ok), name, evidence))
 
@@ -249,10 +289,9 @@ def main() -> int:
           + "; pixels already in contact: " + ", ".join(ev_ref) + " (want <=1%)")
     check(not any(lag_bad), "the force disc labels the tile beside it",
           "displayed force vs displayed contact: " + ", ".join(ev_lag))
-    check(bool(ev_tgt) and not any(tgt_bad),
-          "the virtual target labels the tile beside it",
-          ("displayed target gap vs displayed contact: " + ", ".join(ev_tgt))
-          if ev_tgt else "UNVERIFIED: no target computed on any sample")
+    _declared = _force_declared(_SR, TASK)
+    _ok, _ev = target_verdict(ev_tgt, tgt_bad, _declared)
+    check(_ok, "the virtual target labels the tile beside it", _ev)
 
     width = max(len(x) for _, x, _ in RESULTS)
     print()

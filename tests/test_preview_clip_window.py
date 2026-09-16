@@ -46,3 +46,12 @@ def test_renderer_is_told_where_the_segment_starts(monkeypatch):
             "out": Path("/x/out.mp4"), "world_offset": (0.0, 0.0, 0.0),
             "parquet": Path("/x/seg.parquet"), "trim_offset": 9000})
     assert seen["window_start"] == 9000
+
+
+def test_disabling_virtual_targets_does_not_guess_the_pose_frame(monkeypatch):
+    def undeclared(*args):
+        raise ValueError('undeclared coordinate frame')
+    monkeypatch.setattr(BEP, '_release_poses', undeclared)
+    assert BEP.preview_targets('toy', 'date', 'episode', Path('/x'), enabled=False) == {}
+    with pytest.raises(ValueError, match='undeclared'):
+        BEP.preview_targets('toy', 'date', 'episode', Path('/x'))

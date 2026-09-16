@@ -37,7 +37,7 @@ from .run_episode import OUT_ROOT
 # trace). A copy in each of those places is how the site went on advertising
 # "LUT v2, GlowTact-calibrated" after that map had been replaced.
 CALIBRATION_NAME = ("react_calib (calibration-free recon + gain field + "
-                    "clip correction)")
+                    "clip correction + continuous contact + anchored 0-15 N tail v8)")
 
 # WHICH RECONSTRUCTION THE FORCE CHANNEL IS COMPUTED FROM
 #
@@ -75,7 +75,7 @@ def force_stages(img, ref, recon: str | None = None) -> dict:
     if recon == "calibfree":
         from . import calib_free as CF
         from .lut_calibration import MM_PER_PIXEL
-        r = CF.reconstruct(img, ref)
+        r = CF.reconstruct(img, ref, include_normals=False)
         d = np.clip(r["depth"], 0, None)
         # THE CONTACT MASK, NOT A FRACTION OF THE PEAK.
         #
@@ -100,6 +100,7 @@ def force_stages(img, ref, recon: str | None = None) -> dict:
             "contact": st["depth"] > 0.05, "recon": recon}
 
 CACHE = OUT_ROOT / "feature_cache" / "glowtact_round_mm.json"
+TAIL_CACHE = OUT_ROOT / "feature_cache" / "glowtact_round_8_15_di4.json"
 
 
 def cache_for(recon: str):
@@ -142,9 +143,18 @@ def feature_vector(depth, mask) -> dict:
     maxd = float(np.percentile(d, 99.8))
     return {"vol": float(d[m].sum() * px), "vol2": float((d[m] ** 2).sum() * px),
             "maxd": maxd, "area": area, "h1": float(np.sqrt(area) * maxd)}
-# The React clips span roughly 0-8 N; calibrating past that would fit the
-# isotonic tail on presses the deployment never sees.
-F_MAX_N = 8.0
+# Preserve the approved low-force fit; only the high-score tail uses >8 N labels.
+BASE_MAX_N = 8.0
+F_MAX_N = 15.0
+
+
+def contact_weight(area_mm2: float, noise_area_mm2: float = 0.0) -> float:
+    """Continuous evidence ramp; not a calibrated contact probability."""
+    if not np.isfinite([area_mm2, noise_area_mm2]).all():
+        raise ValueError("Contact areas must be finite")
+    floor = max(30 * MM_PER_PIXEL ** 2, noise_area_mm2)
+    full = max(1.0, floor + 0.5)
+    return float(np.clip((area_mm2 - floor) / (full - floor), 0, 1))
 
 
 def _basis(x, y):
@@ -164,9 +174,13 @@ def _with_clip(X, area_mm2, cx, cy):
     return np.column_stack([X, X[:, 0] * c, c])
 
 
-def build_cache(recon: str | None = None) -> None:
+def build_cache(recon: str | None = None, *, tail: bool = False) -> None:
     """Recompute GlowTact `round` features for one reconstruction."""
     from PIL import Image
+    from . import calib_free as CF
+
+    if tail and ((recon or FORCE_RECONSTRUCTION) != 'calibfree' or CF.VALID_DI != 4):
+        raise ValueError('The v8 tail cache requires calibration-free reconstruction with dI=4')
 
     ref = crop(np.asarray(Image.open(GLOWTACT / "round" / "initial.jpg")
                           .convert("RGB"))).astype(np.float32)
@@ -177,7 +191,8 @@ def build_cache(recon: str | None = None) -> None:
         if not m:
             continue
         f = float(m["f"])
-        if not (0.15 < f <= F_MAX_N):
+        low, high = (BASE_MAX_N, F_MAX_N) if tail else (0.15, BASE_MAX_N)
+        if not (low < f <= high):
             continue
         img = crop(np.asarray(Image.open(p).convert("RGB"))).astype(np.float32)
         st = force_stages(img, ref, recon)
@@ -194,7 +209,8 @@ def build_cache(recon: str | None = None) -> None:
                      "cy": float((yy * w).sum() / w.sum())})
         if (i + 1) % 200 == 0:
             print(f"  {i+1}/{len(files)} -> {len(rows)} kept", flush=True)
-    out = cache_for(recon or FORCE_RECONSTRUCTION)
+    out = TAIL_CACHE if tail else cache_for(recon or FORCE_RECONSTRUCTION)
+    out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(rows))
     print(f"{len(rows)} frames -> {out}")
 
@@ -214,12 +230,41 @@ def _load(recon: str | None = None):
     return rows, a
 
 
+def tail_holdout_mask(keys, base_keys, base_holdout):
+    """Extend the original position split without leaking any old test position."""
+    unseen = np.setdiff1d(np.unique(keys), np.unique(base_keys))
+    additional = unseen[np.random.default_rng(0).permutation(len(unseen))[:len(unseen)//3]]
+    return np.isin(keys, list(base_holdout) + additional.tolist())
+
+
+def extend_isotonic(base, scores, forces):
+    """Append measured high-load knots without changing the approved low curve."""
+    from sklearn.isotonic import IsotonicRegression
+
+    scores, forces = np.asarray(scores, float), np.asarray(forces, float)
+    if (scores.shape != forces.shape or scores.ndim != 1 or
+            not np.isfinite(scores).all() or not np.isfinite(forces).all() or
+            np.any((forces <= BASE_MAX_N) | (forces > F_MAX_N))):
+        raise ValueError('Tail requires finite measured forces in (8, 15] N')
+    selected = scores > base.X_thresholds_[-1]
+    if np.unique(scores[selected]).size < 2 or forces[selected].max() < 14:
+        raise ValueError('Insufficient high-force support above the old score ceiling')
+    tail = IsotonicRegression(y_min=base.y_thresholds_[-1], y_max=F_MAX_N,
+                             out_of_bounds='clip').fit(scores[selected], forces[selected])
+    return IsotonicRegression(out_of_bounds='clip').fit(
+        np.r_[base.X_thresholds_, tail.X_thresholds_],
+        np.r_[base.y_thresholds_, tail.y_thresholds_])
+
+
 def fit(report: bool = True, holdout: bool = False,
-        recon: str | None = None):
+        recon: str | None = None, *, legacy: bool = False, extend_range: bool = True):
     """Fit the newton scale; returns predict(stages_dict) -> N.
 
     Held out by PRESS POSITION, not at random: neighbouring frames of one press
     are near-duplicates, so a random split would score its own training data.
+    `extend_range=False` reproduces v7. Legacy and LUT fits never append the
+    calibration-free tail. Extended holdouts include all high-load test cases,
+    including those below the join, and paired v7 values in `before_pred`.
     """
     from scipy.stats import spearmanr
     from sklearn.isotonic import IsotonicRegression
@@ -229,11 +274,20 @@ def fit(report: bool = True, holdout: bool = False,
     f, cx, cy, z = a("f"), a("cx"), a("cy"), a("z")
     X0 = np.column_stack([a(k) for k in FEATURES])
 
+    key = np.round(a("x"), 1) * 1000 + np.round(a("y"), 1)
+    uniq = np.unique(key)
+    rng = np.random.default_rng(0)
+    hold = set(uniq[rng.permutation(len(uniq))[:max(len(uniq) // 3, 1)]])
+    te = np.array([k in hold for k in key])
+    tr = ~te
+
     # spatial gain field u(x,y): the LED falloff makes the same press read
     # differently across the pad. Fitted on depth vs commanded z, as before.
     PHI = _basis(cx / 100, cy / 100)
-    w, *_ = np.linalg.lstsq(np.hstack([PHI * z[:, None], -PHI]), a("maxd"),
-                            rcond=None)
+    gain_rows = np.ones(len(f), bool) if legacy else tr
+    w, *_ = np.linalg.lstsq(
+        np.hstack([PHI * z[:, None], -PHI])[gain_rows],
+        a("maxd")[gain_rows], rcond=None)
     gain = w[:6]
 
     def u_at(px, py):
@@ -251,33 +305,57 @@ def fit(report: bool = True, holdout: bool = False,
                                     X0[:, 2] * u, X0[:, 3], X0[:, 4] * u]),
                    a("area"), cx, cy)
 
-    key = np.round(a("x"), 1) * 1000 + np.round(a("y"), 1)   # press position
-    uniq = np.unique(key)
-    rng = np.random.default_rng(0)
-    hold = set(uniq[rng.permutation(len(uniq))[:max(len(uniq) // 3, 1)]])
-    te = np.array([k in hold for k in key])
-    tr = ~te
-
     wl, *_ = np.linalg.lstsq(X[tr], f[tr], rcond=None)
     iso = IsotonicRegression(out_of_bounds="clip").fit(X[tr] @ wl, f[tr])
+    base_iso = iso
+    tail_info = None
+    high_held = None
+    if extend_range and not legacy and recon == FORCE_RECONSTRUCTION:
+        if not TAIL_CACHE.exists():
+            raise FileNotFoundError(f'{TAIL_CACHE}: run python -m twm.force_recovery.react_calib build-tail')
+        high = json.loads(TAIL_CACHE.read_text())
+        h = lambda k: np.array([r[k] for r in high])
+        hu = u_at(h('cx'), h('cy'))
+        HX = _with_clip(np.column_stack([h('vol')*hu, h('vol2')*hu**2,
+                         h('maxd')*hu, h('area'), h('h1')*hu]), h('area'), h('cx'), h('cy'))
+        hs = HX @ wl
+        ht = tail_holdout_mask(np.round(h('x'), 1)*1000+np.round(h('y'), 1), key, hold)
+        iso = extend_isotonic(base_iso, hs[~ht], h('f')[~ht])
+        hw = np.array([contact_weight(v) for v in h('area')[ht]])
+        high_held = {'pred': iso.predict(hs[ht])*hw, 'f': h('f')[ht],
+                     'clip': _clip_fraction(h('area'), h('cx'), h('cy'))[ht],
+                     'cx': h('cx')[ht], 'cy': h('cy')[ht],
+                     'before_pred': base_iso.predict(hs[ht])*hw, 'score': hs[ht]}
+        tail_info = {'n_samples': len(high), 'n_train': int((~ht).sum()),
+                     'n_heldout': int(ht.sum()),
+                     'n_tail_fit': int(np.sum((~ht) & (hs > base_iso.X_thresholds_[-1]))),
+                     'join_score': float(base_iso.X_thresholds_[-1]),
+                     'join_force_n': float(base_iso.y_thresholds_[-1]),
+                     'support_max_score': float(iso.X_thresholds_[-1]),
+                     'training_label_max_n': float(h('f')[~ht].max())}
     # The held-out arrays are returned on request so a diagnostic can slice
     # them (in-view vs clipped, say) WITHOUT re-implementing the fit. A
     # diagnostic that rebuilds the model it is diagnosing measures its own
     # copy.
-    held = {"pred": iso.predict(X[te] @ wl), "f": f[te],
+    contact_weights = (np.ones(te.sum()) if legacy else
+                       np.array([contact_weight(v) for v in a("area")[te]]))
+    held = {"pred": iso.predict(X[te] @ wl) * contact_weights, "f": f[te],
             "clip": _clip_fraction(a("area"), cx, cy)[te],
-            "cx": cx[te], "cy": cy[te]}
+            "cx": cx[te], "cy": cy[te], 'score': X[te] @ wl,
+            'before_pred': base_iso.predict(X[te] @ wl) * contact_weights}
+    if high_held is not None:
+        held = {k: np.r_[v, high_held[k]] for k, v in held.items()}
     if report:
-        p = iso.predict(X[te] @ wl)
-        rho = spearmanr(p, f[te]).statistic
-        sh = spearmanr(p, rng.permutation(f[te])).statistic
-        print(f"  n={len(f)} ({tr.sum()} fit / {te.sum()} held-out by position)")
-        print(f"  held-out rho={rho:.3f}  MAE={np.abs(p - f[te]).mean():.3f} N"
+        p = held["pred"]
+        rho = spearmanr(p, held['f']).statistic
+        sh = spearmanr(p, rng.permutation(held['f'])).statistic
+        print(f"  base n={len(f)} ({tr.sum()} fit / {te.sum()} held-out); tail={tail_info}")
+        print(f"  held-out rho={rho:.3f}  MAE={np.abs(p - held['f']).mean():.3f} N"
               f"  shuffled control={sh:+.3f}")
         print(f"  predicts {p.min():.2f}-{p.max():.2f} N "
-              f"for a true {f[te].min():.2f}-{f[te].max():.2f} N")
+              f"for a true {held['f'].min():.2f}-{held['f'].max():.2f} N")
 
-    def predict(st: dict) -> float:
+    def predict(st: dict, *, noise_area_mm2: float = 0.0) -> float:
         """`st` must come from `force_stages`, not from `stages`.
 
         Checked at runtime rather than by convention. The weights below were
@@ -292,7 +370,11 @@ def fit(report: bool = True, holdout: bool = False,
                 f"reconstruction, but this calibration was fitted on "
                 f"{recon!r} — call react_calib.force_stages(recon=...)")
         ft = st["feats"]
-        if ft["area"] < 1.0:
+        if not np.isfinite([ft[k] for k in FEATURES]).all():
+            raise ValueError("Nonfinite force features")
+        weight = (float(ft["area"] >= 1.0) if legacy else
+                  contact_weight(ft["area"], noise_area_mm2))
+        if weight == 0:
             return 0.0
         d = st["depth"]
         mm = st.get("contact")
@@ -302,6 +384,10 @@ def fit(report: bool = True, holdout: bool = False,
             return 0.0
         yy, xx = np.nonzero(mm)
         ww = d[mm]
+        if not np.isfinite(ww).all():
+            raise ValueError("Nonfinite contact depth")
+        if ww.sum() <= 1e-12:
+            return 0.0
         uu = float(u_at(float((xx * ww).sum() / ww.sum()),
                         float((yy * ww).sum() / ww.sum()))[0])
         # (centroid reused below for the clipping correction)
@@ -310,12 +396,47 @@ def fit(report: bool = True, holdout: bool = False,
         v = np.array([ft["vol"] * uu, ft["vol2"] * uu ** 2, ft["maxd"] * uu,
                       ft["area"], ft["h1"] * uu])
         v = _with_clip(v[None, :], [ft["area"]], [pcx], [pcy])[0]
-        return float(max(0.0, iso.predict([float(v @ wl)])[0]))
+        return float(np.clip(iso.predict([float(v @ wl)])[0], 0, F_MAX_N) * weight)
+
+    predict.force_ceiling_n = float(iso.y_thresholds_[-1])
+    predict.tail_info = tail_info
 
     return (predict, held) if holdout else predict
 
 
 HOLDOUT_JSON = OUT_ROOT / "feature_cache" / "react_holdout.json"
+
+
+def range_report() -> dict:
+    """Paired v7/v8 errors, including high loads whose scores never reach the tail."""
+    import hashlib
+
+    model, held = fit(report=False, holdout=True)
+    result = {'calibration': CALIBRATION_NAME, 'output_range_n': [0, F_MAX_N],
+              'fitted_ceiling_n': model.force_ceiling_n, 'tail': model.tail_info,
+              'react_force_ground_truth': False, 'measured_zero_force_labels': False,
+              'position_split': 'Original low-range split retained; one third of new positions held out',
+              'low_range_max_prediction_change_n': float(np.max(np.abs(
+                  held['pred'][held['f'] <= 8]-held['before_pred'][held['f'] <= 8]))),
+              'high_force_below_join_count': int(np.sum((held['f'] > 8) &
+                  (held['score'] <= model.tail_info['join_score']))), 'bands': []}
+    for label, selected in [('0-1', held['f'] < 1),
+                            ('1-4', (held['f'] >= 1) & (held['f'] < 4)),
+                            ('4-8', (held['f'] >= 4) & (held['f'] <= 8)),
+                            ('8-12', (held['f'] > 8) & (held['f'] < 12)),
+                            ('12-15', held['f'] >= 12),
+                            ('0-8', held['f'] <= 8), ('8-15', held['f'] > 8),
+                            ('all', np.ones(len(held['f']), bool))]:
+        result['bands'].append({'range_n': label, 'n': int(selected.sum()),
+            'v7_mae_n': float(np.mean(np.abs(held['before_pred'][selected]-held['f'][selected]))),
+            'v8_mae_n': float(np.mean(np.abs(held['pred'][selected]-held['f'][selected])))})
+    result['heldout'] = {k: v.tolist() for k, v in held.items()}
+    result['cache_sha256'] = {str(p): hashlib.sha256(p.read_bytes()).hexdigest()
+                              for p in (CACHE, TAIL_CACHE)}
+    path = OUT_ROOT/'feature_cache'/'react_range15_holdout.json'
+    path.write_text(json.dumps(result, indent=2))
+    print(path)
+    return result
 
 
 def holdout_report() -> dict:
@@ -344,7 +465,7 @@ def holdout_report() -> dict:
 
     out, held = {}, {}
     for arm in ("calibfree", "lut"):
-        _predict, h = fit(report=False, holdout=True, recon=arm)
+        _predict, h = fit(report=False, holdout=True, recon=arm, extend_range=False)
         held[arm] = (np.asarray(h["pred"]), np.asarray(h["f"]))
         out[arm] = {"rho": float(spearmanr(h["pred"], h["f"]).statistic),
                     "mae_n": float(np.abs(h["pred"] - h["f"]).mean()),
@@ -407,6 +528,10 @@ if __name__ == "__main__":
     cmd = sys.argv[1] if len(sys.argv) > 1 else "fit"
     if cmd == "build":
         build_cache()
+    elif cmd == "build-tail":
+        build_cache(tail=True)
+    elif cmd == 'range-report':
+        range_report()
     elif cmd == "holdout":
         holdout_report()
     else:

@@ -233,7 +233,8 @@ def preview_reference(h5file, side: str, task: str, date: str, ep: str):
     import numpy as np
 
     from force_recovery.lut_calibration import crop
-    from force_recovery.run_episode import STAGE_ROOT, _reference_rows
+    from force_recovery.run_episode import STAGE_ROOT, reference_stack
+    from twm.react_preprocess.h5io import open_episode
     from twm.tactile_align import gel_lag_frames
 
     frames = h5file[f"gelsight/{side}/frames"]
@@ -248,10 +249,8 @@ def preview_reference(h5file, side: str, task: str, date: str, ep: str):
     t = pq.read_table(str(p))
     inten = np.asarray(t[f"tactile_{side}_intensity"].to_numpy())
     is_new = np.asarray(t[f"tactile_{side}_is_new"].to_numpy())
-    trim = int(np.asarray(t["source_h5_frame"].to_numpy())[0])
-    rows = _reference_rows(inten, is_new)
-    stack = np.stack([np.asarray(frames[min(trim + int(r) + lag, n - 1)])
-                      for r in rows[:12]])
+    align = open_episode(Path(h5file.filename), task).align[side]
+    stack = reference_stack(frames, align.index_map, inten, is_new)
     # uint8 back out: the panel builder differences raw frames, and `crop` is
     # applied downstream by whoever needs it — this must stay the same dtype
     # and shape as the `frames[i]` it replaces.
@@ -310,6 +309,10 @@ def _parquet_trim_and_rows(task, date, ep, parquet=None):
             f"the episode.")
     t = pq.read_table(str(f), columns=["source_h5_frame"])
     return int(_np.asarray(t["source_h5_frame"].to_numpy())[0]), t.num_rows
+
+
+class UndeclaredPoseFrame(ValueError):
+    pass
 
 
 def _release_poses(task: str, date: str, ep: str) -> dict:
@@ -371,7 +374,7 @@ def _release_poses(task: str, date: str, ep: str) -> dict:
     # which reads as a calibration error rather than a frame bug. There is no
     # third place this is written, so there is nothing left to fall back to.
     if got is None:
-        raise ValueError(
+        raise UndeclaredPoseFrame(
             f"{task}/{date}/{ep}: nothing declares which up_axis the release "
             f"poses are in — neither the parquet's twm.world_frame metadata nor "
             f"the episodes.jsonl row. Guessing puts the DexForce target "
@@ -381,6 +384,13 @@ def _release_poses(task: str, date: str, ep: str) -> dict:
     if got == "y":
         return out                      # already the frame this renderer uses
     return {k: _cp(v, to_zup=False) for k, v in out.items()}
+
+
+def preview_targets(task, date, episode, force_root, *, enabled=True):
+    if not enabled:
+        return {}
+    return load_targets(task, date, episode, force_root,
+                        _release_poses(task, date, episode))
 
 
 def _flagged_intervals(task: str, date: str, ep: str) -> list[tuple[int, int, str]]:
@@ -453,7 +463,10 @@ def build_one_preview(h5_path: Path, out_mp4: Path,
                       project_cams, gel_center_left, gel_center_right,
                       dx: float = 0.0, dy: float = 0.0, dz: float = 0.0,
                       proj_up_axis: str = "y",
-                      press_axes=None, window_start: int | None = None) -> None:
+                      press_axes=None, window_start: int | None = None,
+                      force_root: Path | None = None,
+                      frame_transform=None, show_virtual_targets: bool = True) -> None:
+    force_root = FORCE_ROOT if force_root is None else Path(force_root)
     output_fps = SOURCE_FPS * speed
     n_frames_target = int(round(clip_s * SOURCE_FPS))   # e.g. 30s * 30fps = 900
     task_name = h5_path.parent.parent.name
@@ -491,7 +504,7 @@ def build_one_preview(h5_path: Path, out_mp4: Path,
         # Which raw gel frame each published row was computed from. `gel_lag`
         # still applies on legacy recordings, where the raw stream itself is
         # shifted; the two corrections are independent and compose.
-        gel_src = _gel_source_frames(task_name, date_name, h5_path.stem)
+        gel_src = _gel_source_frames(task_name, date_name, h5_path.stem, force_root)
         if gel_src:
             print(f"    gel frames follow force source_frame "
                   f"({'/'.join(sorted(gel_src))})", flush=True)
@@ -503,13 +516,12 @@ def build_one_preview(h5_path: Path, out_mp4: Path,
                                      h5_path.stem)
 
         calib_note = calib_describe(task_name, date_name, h5_path.stem)
-        forces = load_forces(task_name, date_name, h5_path.stem, FORCE_ROOT)
+        forces = load_forces(task_name, date_name, h5_path.stem, force_root)
         # The DexForce virtual target, row-aligned with `forces` by
         # construction (same arrays, same indices) rather than by a second
         # lookup that has to agree with the first.
-        targets = load_targets(task_name, date_name, h5_path.stem, FORCE_ROOT,
-                               _release_poses(task_name, date_name,
-                                              h5_path.stem))
+        targets = preview_targets(task_name, date_name, h5_path.stem, force_root,
+                                  enabled=show_virtual_targets)
 
         panels = []
         overlay_errors = 0
@@ -626,6 +638,8 @@ def build_one_preview(h5_path: Path, out_mp4: Path,
             if frame_forces:
                 draw_legend(panel, 4 * GS_THUMB_W + 26, ROW2_Y + 96)
 
+            if frame_transform is not None:
+                panel = frame_transform(panel, f_idx_int)
             panels.append(panel)
 
     if overlay_errors:

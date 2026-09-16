@@ -84,6 +84,7 @@ def observation_features(img, ref, stage):
 
 
 def load_features(family="round"):
+    """Historical <=8 N search cache; full-range experiments use load_full_range."""
     ROOT.mkdir(parents=True, exist_ok=True)
     cache = ROOT / f"{family}_v{FEATURE_VERSION}_di{CF.VALID_DI:g}.joblib"
     if cache.exists():
@@ -91,10 +92,10 @@ def load_features(family="round"):
     directory = CNC_MINI_26 / family
     ref = crop(np.asarray(Image.open(directory / "initial.jpg").convert("RGB"))).astype(np.float32)
     rows, data = [], {k: [] for k in ("basic", "geometry", "image", "combined")}
-    baseline = RC.fit(report=False) if family != "round" else None
+    baseline = RC.fit(report=False, extend_range=False) if family != "round" else None
     for path in sorted(directory.glob("*.jpg")):
         match = PAT.search(path.name)
-        if not match or not 0.15 < float(match["f"]) <= RC.F_MAX_N:
+        if not match or not 0.15 < float(match["f"]) <= RC.BASE_MAX_N:
             continue
         img = crop(np.asarray(Image.open(path).convert("RGB"))).astype(np.float32)
         stage = RC.force_stages(img, ref)
@@ -237,7 +238,7 @@ def main():
     pred = np.maximum(model.predict(data[feature][test]), 0)
     # Preserve the production no-contact gate in the headline evaluation.
     pred[np.array([r["area"] < 1 for r in rows])[test]] = 0
-    _, historical = RC.fit(report=False, holdout=True)
+    _, historical = RC.fit(report=False, holdout=True, extend_range=False)
     np.testing.assert_allclose(target[test], historical["f"])
     report = {"feature_version": FEATURE_VERSION, "valid_di": CF.VALID_DI,
               "selection": "4-fold GroupKFold on historical training positions only",

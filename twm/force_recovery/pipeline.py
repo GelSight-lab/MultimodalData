@@ -1,34 +1,14 @@
-"""The stable public API: GelSight frame -> depth -> normal force -> action.
+"""LUT geometry and force-informed virtual-target utilities.
 
-Everything else in this package is either a study that produced a published
-number, a site builder, or a dataset adapter. This module is the one place a
-caller should need to import, and it is deliberately thin — it re-exports the
-functions that are actually load-bearing and documents where they live, so
-nobody has to rediscover that the reconstruction core sits in a module called
-``debug_gallery``.
+For production React force reconstruction use ``run_episode.process_side``
+or ``batch_worker``. The v8 predictor consumes ``react_calib.force_stages``
+(calibration-free features), NOT this module's ``reconstruct`` LUT output.
+``force_from_depth`` is retained for historical evaluation models only.
 
-    from force_recovery.pipeline import reconstruct, force_from_depth, \
-        virtual_target, STIFFNESS_N_PER_MM
-
-    st = reconstruct(img, ref)          # dI -> LUT -> valid mask -> Poisson
-    f  = force_from_depth(st, model)    # calibrated newtons
-    p  = virtual_target(pose, f, n_hat) # DexForce-style position target
-
-WHAT THE NUMBERS MEAN (measured, see task_plan.md for the evidence):
-
-* The reconstruction is accurate for SHALLOW contact and degrades outside the
-  calibrated slope range: against exact per-pixel ground truth, MAE is 11 um
-  at a 0.3 mm press and 281 um at 2.25 mm, with the peak-depth ratio falling
-  1.00 -> 0.55. Quote no accuracy figure without its press depth.
-* Force interpolates well and extrapolates badly for the same reason: fitting
-  on the low half of a force range and predicting the high half drops rho
-  0.968 -> 0.552, because the isotonic stage clips outside its training range
-  (the predicted range collapses to 5% of the true one).
-* Force calibration is per-group. Stiffness/gel differences are absorbed into
-  fitted weights, so a rho is a within-group rank correlation, NOT evidence of
-  a transferable absolute-newton scale across sensors.
-
-LAYOUT OF THE REST OF THE PACKAGE — see ARCHITECTURE.md for the full map.
+``reconstruct`` returns nominal millimetre geometry; its depth calibration
+does not validate an absolute-newton scale on React. ``virtual_target`` uses
+an assumed stiffness, not measured indentation. See README.md for the v8
+model contract and RUNBOOK.md for batch processing and export restrictions.
 """
 from __future__ import annotations
 
@@ -64,11 +44,11 @@ def feature_vector(st: dict) -> np.ndarray:
 
 
 def force_from_depth(st: dict, model) -> float:
-    """Calibrated normal force [N] for one reconstructed frame.
+    """Historical evaluation helper, not the deployed React v8 predictor.
 
     `model` is a fitted (weights, isotonic) pair from one of the evaluation
-    modules. Kept as an argument rather than a global because the calibration
-    is per-dataset and per-indenter group — see the module docstring.
+    modules, calibrated per dataset and indenter group. For current force
+    inference use `react_calib.fit` with `react_calib.force_stages` instead.
     """
     w, iso = model
     if st["feats"]["area"] < 1.0:            # no measurable contact
@@ -82,11 +62,10 @@ def penetration_mm(force_n, k_n_per_mm: float = STIFFNESS_N_PER_MM):
     Zero force gives exactly zero penetration (not NaN), so a no-contact frame
     yields a target pose identical to the observed one.
 
-    At the shipped k = 1 N/mm this is knowingly soft: p95 = 5.78 mm and 8.84%
-    of the 480,080 exported samples exceed the 4.25 mm gel. k = 1.4 puts p95
-    inside the gel, k = 1.7 the maximum. The data ships at 1 N/mm because the
-    stiffness is a declared assumption a consumer may override, not a fact —
-    but a consumer treating the target as a reachable pose should raise it.
+    This is a virtual F/k displacement, not measured gel indentation. The
+    current shared assumption is 2 N/mm: 15 N gives 7.5 mm. The export gate
+    rejects displacement above 4.25 mm, so full-range v8 action export needs
+    an explicit policy decision. This function does not clip displacement.
     """
     return np.asarray(force_n, dtype=float) / float(k_n_per_mm)
 
@@ -97,8 +76,8 @@ def virtual_target(pose_mm, force_n, normal_hat,
 
         target = observed + (F / k) * n_hat
 
-    The action stays a pose, so it composes with the existing pose actions and
-    an impedance controller reproduces the demonstrated force at deployment.
+    Force reproduction depends on the controller and effective contact
+    stiffness; the virtual target alone does not guarantee it.
     Free space is untouched: F = 0 -> target == observed, exactly.
     """
     pose = np.asarray(pose_mm, dtype=float)

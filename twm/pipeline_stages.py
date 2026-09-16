@@ -208,7 +208,13 @@ STAGES: tuple[Stage, ...] = (
           assets=((lambda: FORCE_ROOT / "feature_cache" / "glowtact_round_mm.json",
                    "the fitted-features cache measured in the calibration "
                    "experiment — no stage builds it and it is not in git; "
-                   "restore it from the data disk"),)),
+                   "restore it from the data disk"),
+                  (lambda: FORCE_ROOT / "feature_cache" / "glowtact_round_8_15_di4.json",
+                   "the v8 measured 8-15 N calibration cache; restore the "
+                   "reviewed asset from the data disk"),
+                  (lambda: FORCE_ROOT / "lut_calibration" / "glowtact_lut.npz",
+                   "the LUT used for the geometry columns written with force; "
+                   "restore it from the data disk"))),
     Stage("curate", "bad_frames / segments / episodes indices",
           "build", _curated, _curate),
     # The cut must come after force recovery AND the frame conversion, so that

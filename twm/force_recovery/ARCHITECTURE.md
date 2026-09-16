@@ -1,26 +1,31 @@
 # force_recovery — module map
 
-44 modules, ~12.6k lines. Most of them are studies that each produced a
-published number; only a small core runs in the pipeline. This file says which
-is which, so nobody has to read the import graph again.
+Most modules are research studies or site builders. The production force
+path and the separate geometry path are listed below.
 
-**Start here:** `pipeline.py` — the stable public API (reconstruct → force →
-action) and the measured caveats that go with any number it produces.
+**Start here:** [README.md](README.md) for the v8 algorithm and Python API;
+[RUNBOOK.md](RUNBOOK.md) for dataset reprocessing. `run_episode.process_side`
+owns aligned episode inference; `batch_worker` is the batch entry point.
 
 ## Core (imported by many; changing these changes results)
 
 | module | role | imported by |
 |---|---|---|
-| `debug_gallery.py` | **`stages()` — the reconstruction core**: dI → LUT → valid mask → `fast_poisson` → depth + features | 8 |
+| `react_calib.py` | v8 force predictor: calibration-free features, contact gate, spatial correction and bounded 0-15 N map | production force and reviews |
+| `calib_free.py` | Calibration-free reconstruction; its depth is not in millimetres | `react_calib` |
+| `batch_worker.py` | Input-parquet discovery, sharded processing and version-based resume | batch CLI |
+| `debug_gallery.py` | `stages()`: separate LUT geometry, valid mask, Poisson depth and geometry features | geometry writers and studies |
 | `lut_calibration.py` | LUT definition, sphere self-calibration (`a² = d(2R−d)`), `crop`, `MM_PER_PIXEL` | 11 |
 | `run_episode.py` | batch force estimation over release episodes; roots (`DATA_ROOT`, `STAGE_ROOT`, `OUT_ROOT`) | 24 |
 | `marker_removal.py` | marker-dot inpainting for the **depth/3D path only** (never the force features) | 5 |
 | `o3d_view.py` | Open3D mesh rendering, halo-pedestal removal, content crop | 4 |
 | `dexforce.py` | force → virtual position target | 5 |
 | `evaluate.py` | shared evaluation helpers | 5 |
-| `pipeline.py` | public API façade over the above | — |
+| `pipeline.py` | LUT geometry facade, historical force helper and shared virtual-target utilities; not the v8 force API | geometry and actions |
+| `export_force_columns.py` | Force/target parquet export and acceptance gates; requires a full-range action-policy decision | release export |
+| `task_review.py` | Seven-window v7/v8 comparison; window-only NPZs are not production files | review CLI |
 
-> **Naming debt, deliberately not fixed:** the reconstruction core lives in
+> **Naming debt, deliberately not fixed:** the LUT reconstruction core lives in
 > `debug_gallery.py` because that module was written first as a diagnostic.
 > Eight modules import `stages` from there. `pipeline.reconstruct` re-exports
 > it so new code need not know; moving the definition would be a wide,
@@ -67,11 +72,11 @@ action) and the measured caveats that go with any number it produces.
 
 ```bash
 # reconstruction workbench (needs a display for Open3D)
-xvfb-run -a -s "-screen 0 1400x1000x24" python -m force_recovery.recon_study glowtact
-python -m force_recovery.force_eval_all          # all datasets + shuffle controls
-python -m force_recovery.improvement_study all   # the five improvement candidates
-python -m force_recovery.design_guard            # layout gate, exits non-zero on regression
-python -m force_recovery.test_units
+xvfb-run -a -s "-screen 0 1400x1000x24" python -m twm.force_recovery.recon_study glowtact
+python -m twm.force_recovery.force_eval_all          # all datasets + shuffle controls
+python -m twm.force_recovery.improvement_study all   # the five improvement candidates
+python -m twm.force_recovery.design_guard            # layout gate, exits non-zero on regression
+python -m twm.force_recovery.test_units
 ```
 
 Data roots are all in `run_episode.py`. Heavy artefacts live under

@@ -69,7 +69,9 @@ def stages(img: np.ndarray, ref: np.ndarray,
                 0, BINS - 1).astype(np.int32)
     g = LUT[q[..., 0], q[..., 1], q[..., 2]].copy()
     observed = CNT[q[..., 0], q[..., 1], q[..., 2]] > 0
-    mag = cv2.GaussianBlur(np.abs(dI).max(2), (5, 5), 1.5)
+    mag = np.maximum(np.maximum(np.abs(dI[..., 0]), np.abs(dI[..., 1])),
+                     np.abs(dI[..., 2]))
+    mag = cv2.GaussianBlur(mag, (5, 5), 1.5)
     valid = mag > 8.0
     valid = cv2.morphologyEx(valid.astype(np.uint8), cv2.MORPH_OPEN,
                              np.ones((3, 3), np.uint8)).astype(bool)
@@ -82,8 +84,11 @@ def stages(img: np.ndarray, ref: np.ndarray,
     # FoTa cnc +0.146; FEATS is left on the clamped solver by the rule because
     # its marker lattice leaves no flat gel to anchor a free boundary on.
     from .poisson import integrate
-    depth, _bc = integrate(g[..., 0], g[..., 1], valid,
-                          ref=ref if bc_ref is None else bc_ref)
+    if valid.any():
+        depth, _bc = integrate(g[..., 0], g[..., 1], valid,
+                              ref=ref if bc_ref is None else bc_ref)
+    else:
+        depth = np.zeros(valid.shape, np.float64)
     if depth[valid].size and np.median(depth[valid]) < 0:
         depth = -depth
     d = np.maximum(depth, 0.0)

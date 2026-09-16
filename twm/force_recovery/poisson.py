@@ -29,6 +29,8 @@ surfaces whose truth is known analytically.
 """
 from __future__ import annotations
 
+from functools import lru_cache
+
 import numpy as np
 
 __all__ = ["poisson_neumann", "poisson_dirichlet", "divergence", "integrate",
@@ -48,6 +50,16 @@ def divergence(gx: np.ndarray, gy: np.ndarray) -> np.ndarray:
     return gxx + gyy
 
 
+@lru_cache(maxsize=4)
+def _neumann_denominator(shape: tuple) -> np.ndarray:
+    m, n = shape
+    y, x = np.meshgrid(np.arange(m), np.arange(n), indexing="ij")
+    denom = (2 * np.cos(np.pi * x / n) - 2) + (2 * np.cos(np.pi * y / m) - 2)
+    denom[0, 0] = 1.0
+    denom.setflags(write=False)
+    return denom
+
+
 def poisson_neumann(gx: np.ndarray, gy: np.ndarray) -> np.ndarray:
     """Height from gradients under a zero-normal-derivative boundary.
 
@@ -62,12 +74,8 @@ def poisson_neumann(gx: np.ndarray, gy: np.ndarray) -> np.ndarray:
         from scipy.fftpack import dctn, idctn
 
     f = divergence(np.asarray(gx, np.float64), np.asarray(gy, np.float64))
-    m, n = f.shape
     fh = dctn(f, type=2, norm="ortho")
-    y, x = np.meshgrid(np.arange(m), np.arange(n), indexing="ij")
-    denom = (2 * np.cos(np.pi * x / n) - 2) + (2 * np.cos(np.pi * y / m) - 2)
-    denom[0, 0] = 1.0
-    zh = fh / denom
+    zh = fh / _neumann_denominator(f.shape)
     zh[0, 0] = 0.0
     z = idctn(zh, type=2, norm="ortho")
     return z - z.mean()
@@ -124,6 +132,18 @@ def free_boundary_ok(ref: np.ndarray | None) -> bool:
     return marker_mask(ref) is None
 
 
+@lru_cache(maxsize=4)
+def _trend_basis(shape: tuple, order: int) -> tuple:
+    gy, gx = np.mgrid[0:shape[0], 0:shape[1]]
+    x, y = gx / shape[1], gy / shape[0]
+    full = [np.ones_like(x), x, y]
+    if order >= 2:
+        full += [x * x, y * y, x * y]
+    for term in full:
+        term.setflags(write=False)
+    return tuple(full)
+
+
 def detrend_flat(z: np.ndarray, flat: np.ndarray, order: int = 1
                  ) -> np.ndarray:
     """Remove a low-order trend fitted on gel that is KNOWN flat.
@@ -146,12 +166,7 @@ def detrend_flat(z: np.ndarray, flat: np.ndarray, order: int = 1
         cols += [x * x, y * y, x * y]
     A = np.stack(cols, axis=1)
     c, *_ = np.linalg.lstsq(A, z[flat], rcond=None)
-    gy, gx_ = np.mgrid[0:z.shape[0], 0:z.shape[1]]
-    X = gx_ / z.shape[1]
-    Y = gy / z.shape[0]
-    full = [np.ones_like(X), X, Y]
-    if order >= 2:
-        full += [X * X, Y * Y, X * Y]
+    full = _trend_basis(z.shape, 2 if order >= 2 else 1)
     return z - sum(ci * fi for ci, fi in zip(c, full))
 
 

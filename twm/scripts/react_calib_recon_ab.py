@@ -77,7 +77,7 @@ def main() -> int:
     files = sorted((GLOWTACT / "round").glob("*.jpg"))
     for p in files:
         m = PAT.search(p.name)
-        if not m or not (0.15 < float(m["f"]) <= RC.F_MAX_N):
+        if not m or not (0.15 < float(m["f"]) <= RC.BASE_MAX_N):
             continue
         img = crop(np.asarray(Image.open(p).convert("RGB"))).astype(np.float32)
         a = _feats(stages(img, ref), absolute_floor=True)
@@ -103,7 +103,7 @@ def main() -> int:
                 json.dump(rows[arm], fh)
                 RC.CACHE = Path(fh.name)
             print(f"== {arm}")
-            _, h = RC.fit(report=True, holdout=True)
+            _, h = RC.fit(report=True, holdout=True, extend_range=False)
             inview = h["clip"] <= 0
             for label, msk in (("fully in view", inview), ("clipped", ~inview)):
                 if msk.sum() >= 12:

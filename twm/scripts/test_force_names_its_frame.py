@@ -51,7 +51,7 @@ def check(ok: bool, name: str, evidence: str) -> None:
 def main() -> int:
     import h5py
 
-    from force_recovery.run_episode import DATA_ROOT, OUT_ROOT
+    from force_recovery.run_episode import DATA_ROOT, OUT_ROOT, PIPELINE_VERSION
 
     npz_path = OUT_ROOT / TASK / DATE / f"{EP}_{SIDE}.npz"
     if not npz_path.exists():
@@ -59,6 +59,11 @@ def main() -> int:
               f"UNVERIFIED: {npz_path} absent")
         return 1
     z = np.load(npz_path, allow_pickle=True)
+    if int(z.get('pipeline_version', 0)) != PIPELINE_VERSION:
+        check(False, "stored force uses the current estimator",
+              "Stale force artifact: reprocess before comparing to current code")
+        _report()
+        return 1
 
     key = "source_frame"
     if key not in z:
@@ -102,11 +107,15 @@ def main() -> int:
             [crop(frames[int(src[int(r)])]).astype(np.float32)
              for r in ref_rows[:12]]), 0)
         rng = np.random.default_rng(0)
-        pick = rng.choice(np.flatnonzero(force > 0.05), size=8, replace=False)
+        candidates = np.flatnonzero(force > 0.05)
+        if not len(candidates):
+            candidates = np.arange(len(force))
+        pick = rng.choice(candidates, size=min(8, len(candidates)), replace=False)
         bad = []
         for row in pick:
             img = crop(frames[int(src[int(row)])]).astype(np.float32)
-            again = float(predict(force_stages(img, ref)))
+            again = float(predict(force_stages(img, ref),
+                                  noise_area_mm2=float(z['reference_noise_area_mm2'])))
             if abs(again - float(force[int(row)])) > 1e-6:
                 bad.append((int(row), again, float(force[int(row)])))
     check(not bad, "the named frame reproduces the stored force",

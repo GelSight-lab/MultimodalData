@@ -35,7 +35,7 @@ from force_recovery.lut_calibration import (BINS, DI_RANGE, GLOWTACT,
                                             MM_PER_PIXEL, PAT, crop)
 from force_recovery.poisson import poisson_dirichlet, poisson_neumann
 
-F_MAX_N = RC.F_MAX_N
+F_MAX_N = RC.BASE_MAX_N
 # The clamped solver suppresses low-frequency drift as a side effect of pinning
 # the border. If that is why it wins here, removing the drift explicitly should
 # let the physically-correct boundary keep its geometry AND the robustness.
@@ -121,7 +121,7 @@ def main() -> int:
             json.dump(rs, fh)
             RC.CACHE = Path(fh.name)
         print(f"== {name}")
-        _, h = RC.fit(report=True, holdout=True)
+        _, h = RC.fit(report=True, holdout=True, extend_range=False)
         from scipy.stats import spearmanr
         inview = h["clip"] <= 0
         for label, m in (("fully in view", inview), ("clipped", ~inview)):
