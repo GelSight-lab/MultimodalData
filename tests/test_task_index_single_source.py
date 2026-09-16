@@ -28,7 +28,19 @@ from twm.react_preprocess.meta import TASK_INDEX, task_index  # noqa: E402
 
 
 def test_every_published_task_is_mapped():
-    assert TASK_INDEX == {"motherboard": 0, "pushT": 1, "rope": 2}
+    """Append-only, stated as the invariant rather than as a snapshot.
+
+    The literal `== {"motherboard": 0, "pushT": 1, "rope": 2}` was the whole
+    assertion until 2026-09-16, when `toy` was appended as 3 -- correctly, and
+    the test failed anyway. A snapshot cannot tell "someone appended a task"
+    from "someone renumbered one", and only the second is the danger: the ints
+    are inside every parquet already downloaded, so renumbering relabels
+    someone's local copy with nothing to warn them.
+    """
+    # The published prefix, frozen. Any new task appends AFTER it.
+    assert [TASK_INDEX[t] for t in ("motherboard", "pushT", "rope")] == [0, 1, 2]
+    # Dense, zero-based, no duplicates: the ints are positions, not labels.
+    assert sorted(TASK_INDEX.values()) == list(range(len(TASK_INDEX)))
 
 
 def test_an_unknown_task_raises_rather_than_defaulting():
@@ -40,6 +52,9 @@ def test_an_unknown_task_raises_rather_than_defaulting():
 
 def test_known_tasks_resolve():
     assert [task_index(t) for t in ("motherboard", "pushT", "rope")] == [0, 1, 2]
+    # every task the scheduler ships must resolve, not just the first three
+    from twm.pipeline_stages import TASKS
+    assert all(isinstance(task_index(t), int) for t in TASKS)
 
 
 @pytest.mark.parametrize("module", ["twm.dataset_prep", "backfill_index_columns",

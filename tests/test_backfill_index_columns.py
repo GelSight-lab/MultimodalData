@@ -40,7 +40,19 @@ def test_segments_sort_after_their_ninth_sibling():
 
 
 def test_task_index_is_append_only():
-    assert TASK_INDEX == {"motherboard": 0, "pushT": 1, "rope": 2}
+    """Append-only, stated as the invariant rather than as a snapshot.
+
+    The literal `== {"motherboard": 0, "pushT": 1, "rope": 2}` was the whole
+    assertion until 2026-09-16, when `toy` was appended as 3 -- correctly, and
+    the test failed anyway. A snapshot cannot tell "someone appended a task"
+    from "someone renumbered one", and only the second is the danger: the ints
+    are inside every parquet already downloaded, so renumbering relabels
+    someone's local copy with nothing to warn them.
+    """
+    # The published prefix, frozen. Any new task appends AFTER it.
+    assert [TASK_INDEX[t] for t in ("motherboard", "pushT", "rope")] == [0, 1, 2]
+    # Dense, zero-based, no duplicates: the ints are positions, not labels.
+    assert sorted(TASK_INDEX.values()) == list(range(len(TASK_INDEX)))
 
 
 def test_columns_match_the_published_dtypes():

@@ -71,9 +71,17 @@ CALIB_DIRS = {
     # also how `calib_dir_for_path` recognises "rope" as a task name at all --
     # without it a rope path resolves to nothing rather than to the right epoch.
     "rope":        REPO / "calibration" / "epoch_2026-09-09",
+    # toy was first recorded 2026-09-14, later still, so the same reasoning
+    # holds: one epoch, and its task default is its only session's epoch. It
+    # is listed for the same second reason rope is -- `session_epoch` already
+    # resolved toy correctly via the CURRENT_EPOCH default, so every reader
+    # that asks about a SESSION was right, and only readers asking for the
+    # task-level default were blind. `build_release_previews.py` draws its
+    # `--task` choices from this map and so refused toy outright.
+    "toy":         REPO / "calibration" / "epoch_2026-09-09",
 }
 EXPECTED_EPOCH = {"motherboard": "2026-05-12", "pushT": "2026-06-26",
-                  "rope": "2026-09-09"}
+                  "rope": "2026-09-09", "toy": "2026-09-09"}
 
 # The epochs themselves, named by the date each was MEASURED.
 EPOCH_DIRS = {

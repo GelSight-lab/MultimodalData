@@ -251,6 +251,8 @@ def test_the_stages_after_build_run_in_an_order_that_works(sandbox, monkeypatch)
             for i in range(1, nrows):          # hold across duplicates
                 if not is_new[i]:
                     wave[i] = wave[i - 1]
+            from twm.force_recovery.run_episode import (
+                PIPELINE_VERSION as _PIPELINE_VERSION)
             np.savez(
                 f,
                 force_normal_n=wave * 3, max_depth_mm=wave * 2,
@@ -258,7 +260,11 @@ def test_the_stages_after_build_run_in_an_order_that_works(sandbox, monkeypatch)
                 source_frame=sf.astype(np.int32),
                 contact_threshold_mm=0.05, trim=0, side=side, task="rope",
                 date="2026-09-20", episode="episode_000",
-                pipeline_version=5,
+                # Taken from the producer, not copied: the literal `5` sat
+                # here until 2026-09-16, when the exporter began refusing
+                # anything below 8 and the smoke test failed on its own
+                # fixture rather than on the pipeline it exists to exercise.
+                pipeline_version=_PIPELINE_VERSION,
                 force_calibration="synthetic (end-to-end smoke test)",
                 force_reconstruction="synthetic",
                 geometry_reconstruction="synthetic",

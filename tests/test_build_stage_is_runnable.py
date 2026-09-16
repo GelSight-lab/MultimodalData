@@ -53,10 +53,18 @@ def test_one_command_per_date(trees):
     assert dates == {"2026-09-14", "2026-09-15"}
 
 
-def test_depth_is_still_asked_for(trees):
-    """A build without --with-depth cost ten hours once; the flag is not
-    optional in the scheduled path."""
-    assert all("--with-depth" in c for c in _cmds())
+def test_the_scheduled_build_does_not_ask_for_depth(trees):
+    """The operator reversed this on 2026-09-16: "以后都先不要处理depth".
+
+    This test used to assert the OPPOSITE -- that `--with-depth` was on every
+    scheduled build -- and by then it contradicted
+    `test_encode_and_depth_policy.py::test_the_build_stage_no_longer_asks_for_depth`
+    outright. Two tests asserting opposite things about one flag means the
+    suite can no longer say what the policy is, so the reversed one is stated
+    here rather than left to fail. The flag itself still exists for whoever
+    wants it; only the SCHEDULED path stopped asking.
+    """
+    assert all("--with-depth" not in c for c in _cmds())
 
 
 def test_nothing_missing_means_nothing_to_run(trees, monkeypatch):
