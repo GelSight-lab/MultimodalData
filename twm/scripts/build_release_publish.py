@@ -316,7 +316,8 @@ def force_overlay_plan(stage, force_stage, tasks, since: str = SCOPE_SINCE):
     return files, missing
 
 
-def check_no_column_loss(api, tasks, published_only: bool = False) -> list[str]:
+def check_no_column_loss(api, tasks, published_only: bool = False,
+                         allow_dropping=frozenset()) -> list[str]:
     """No upload may leave a published parquet with FEWER columns than it has.
 
     THIS PUBLISHER SILENTLY REVERTED THE FORCE CHANNEL. Two staging trees
@@ -337,6 +338,12 @@ def check_no_column_loss(api, tasks, published_only: bool = False) -> list[str]:
     """
     import pyarrow.parquet as pq
     from huggingface_hub import hf_hub_download
+
+    # ONE function decides what counts as loss, shared with
+    # react_preprocess.publish. There were two implementations of this gate and
+    # only THIS one is on the real publish path, so a withdrawal declared to
+    # the other would have been approved nowhere that mattered.
+    from twm.react_preprocess.publish import lost_columns
 
     published = {f.rfilename for f in
                  api.repo_info(REPO, repo_type="dataset").siblings}
@@ -368,13 +375,16 @@ def check_no_column_loss(api, tasks, published_only: bool = False) -> list[str]:
                 forced = FORCE_STAGE / task / local.relative_to(STAGE / task)
                 if forced.exists():
                     want |= set(pq.read_schema(forced).names)
-                lost = want - old
+                # Reversed on purpose: afterwards the question is what the
+                # published file is still MISSING, so a withdrawn column must
+                # not be reported as missing either.
+                lost = lost_columns(want, old, allow_dropping=allow_dropping)
             else:
                 final = set(pq.read_schema(local).names)
                 forced = FORCE_STAGE / task / local.relative_to(STAGE / task)
                 if forced.exists():
                     final |= set(pq.read_schema(forced).names)
-                lost = old - final
+                lost = lost_columns(old, final, allow_dropping=allow_dropping)
             if lost:
                 bad.append(f"{rel}: would DROP {len(lost)} published "
                            f"column(s): {', '.join(sorted(lost)[:6])}")
@@ -396,6 +406,14 @@ def main():
                     help="publish only this task (default: all of them). The "
                          "certification is scoped to it too, so a task that "
                          "has finished does not wait on one that has not.")
+    ap.add_argument("--withdraw-column", action="append", default=[],
+                    metavar="NAME",
+                    help="a published column this run deliberately stops "
+                         "shipping. Repeatable. Naming it IS the audit trail: "
+                         "the column-loss gate refuses every drop that is not "
+                         "named, because the defect it exists for (a publisher "
+                         "silently reverting the force channel) also looked "
+                         "like simply writing fewer columns.")
     ap.add_argument("--dry_run", action="store_true")
     ap.add_argument("--no_delete", action="store_true")
     ap.add_argument("--skip-align", action="store_true",
@@ -422,9 +440,14 @@ def main():
 
     api = HfApi()
 
+    withdraw = frozenset(args.withdraw_column)
+    if withdraw:
+        print(f"[gate] declared withdrawal of {len(withdraw)} published "
+              f"column(s): {', '.join(sorted(withdraw))}", flush=True)
+
     print("[gate] no published column would be lost ...", flush=True)
     tasks = (args.task,) if args.task else TASKS
-    lost = check_no_column_loss(api, tasks)
+    lost = check_no_column_loss(api, tasks, allow_dropping=withdraw)
     if lost:
         for b in lost[:20]:
             print("   ", b)
@@ -664,7 +687,8 @@ def main():
         print("[publish] published toolbox verified: ok", flush=True)
 
         print("[publish] verifying the published columns ...", flush=True)
-        still = check_no_column_loss(api, TASKS, published_only=True)
+        still = check_no_column_loss(api, TASKS, published_only=True,
+                                     allow_dropping=withdraw)
         if still:
             for b in still[:20]:
                 print("   ", b)
