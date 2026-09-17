@@ -72,7 +72,7 @@ def _already_zup(src: Path, parquet: Path) -> bool:
 def _merge_force(t, force_src: Path | None, date: str, name: str):
     """Fold the force channel into the parquet BEFORE the rotation runs.
 
-    `release_force/` is `release/` plus eight columns at the same path, and
+    `release_force/` is `release/` plus the force columns at the same path, and
     the Z-up tree is what gets CUT. Publishing an uncut release uploaded both
     trees over one another so the reader got the union, which is why nothing
     noticed this tree was built from the one WITHOUT the columns. A segment
@@ -82,6 +82,13 @@ def _merge_force(t, force_src: Path | None, date: str, name: str):
     Merged here, ahead of the branch below, so `force_{left,right}_target_pose`
     goes through the same rotation as every other pose — and so an episode
     that is already Z-up gets the columns without being rotated twice.
+
+    How MANY columns is not this function's business: it folds in whatever
+    `force_*` the export tree holds. A force-only export (2026-09-16) ships
+    four -- the measured newtons and their source frame, without the
+    stiffness-derived pair -- and the loop below neither needs nor asserts the
+    other four. `POSE_COLS` names `force_{left,right}_target_pose`, so when
+    they are absent the rotation simply never reaches them.
     """
     if force_src is None:
         return t
@@ -97,8 +104,8 @@ def _merge_force(t, force_src: Path | None, date: str, name: str):
     if ft.num_rows != t.num_rows:
         raise SystemExit(
             f"{date}/{name}: force tree has {ft.num_rows} rows, release has "
-            f"{t.num_rows}. These are meant to be the same rows plus eight "
-            f"columns; refusing to merge mismatched frames.")
+            f"{t.num_rows}. These are meant to be the same rows plus the "
+            f"force columns; refusing to merge mismatched frames.")
     cols, names = list(t.columns), list(t.column_names)
     for c in ft.column_names:
         if c.startswith("force_") and c not in names:
