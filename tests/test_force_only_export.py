@@ -100,13 +100,19 @@ def test_force_only_metadata_does_not_claim_a_stiffness(npz):
 
 
 def test_the_gate_has_nothing_to_check_without_a_stiffness(npz):
-    """The 4.25 mm gate exists to police penetration. With no penetration
-    column there is no gate -- it must not fail on absent data."""
+    """With no derived columns there is nothing for the derived checks to say.
+
+    This used to also assert that a run WITH targets past the gel thickness
+    was refused. That assertion is gone: the operator pointed out on
+    2026-09-16 that k is the arm's impedance stiffness, so F/k is a commanded
+    virtual deflection and not a gel compression, and the gate was comparing a
+    control quantity against sensor geometry. See
+    test_virtual_target_is_not_gel_compression.
+    """
     base = {"identity_pass": True, "alignment_pass": True,
             "alignment_rate": 1.0, "roundtrip_max_abs_err_n": 0.0}
     assert EX._gate({**base, "penetration_over_gel_thickness_frac": None}) == 0
-    # and it must still refuse a run that DID derive targets past the gel
-    assert EX._gate({**base, "penetration_over_gel_thickness_frac": 0.12}) == 1
+    assert EX._gate({**base, "penetration_over_gel_thickness_frac": 0.12}) == 0
 
 
 def test_the_cli_exposes_force_only_and_it_means_no_stiffness(monkeypatch):

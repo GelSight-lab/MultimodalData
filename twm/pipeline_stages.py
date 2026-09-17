@@ -161,12 +161,15 @@ def _force(task=None, workers: int = 2, **_):
 #   "with-targets" also penetration_mm and target_pose, derived at
 #                  dexforce.STIFFNESS_N_PER_M.
 #
-# force-only since 2026-09-16: v8 measures to 15 N and the data reaches 14.99 N
-# with no ceiling saturation, while the shipped k = 2 N/mm caps the exporter's
-# 4.25 mm gel-thickness gate at 8.5 N -- 11.96% of contact frames commanded a
-# target past it. Switching back needs an APPROVED stiffness, shared by the
-# exporter, the pipeline utilities and the previews, or their targets disagree.
-FORCE_COLUMN_POLICY = "force-only"
+# "with-targets" at k = 2 N/mm. This was briefly "force-only" on 2026-09-16,
+# because the exporter refused a virtual deflection larger than the 4.25 mm
+# gel thickness and v8's 15 N range crossed that on 11.96% of contact frames.
+# The operator then pointed out that k is the impedance stiffness of the ARM,
+# so F/k is the deflection the CONTROLLER commands and has nothing to do with
+# how far the gel squashes -- the gate was comparing a control quantity with
+# sensor geometry. The gate is gone and the targets ship; see
+# test_virtual_target_is_not_gel_compression.
+FORCE_COLUMN_POLICY = "with-targets"
 
 
 def _export(**_):

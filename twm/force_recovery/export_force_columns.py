@@ -103,15 +103,23 @@ EXPORT_ROOT = Path("/media/yxma/Disk1/twm/release_force")
 # time anyone read them.  ``verify`` prints the current numbers every run.
 #
 # It is an ASSUMPTION about the deployment controller, not a measured gel
-# property.  What ``verify`` does enforce is the one thing that is not a matter
-# of taste: a commanded target may not sit further past the surface than the
-# gel can be compressed.
+# property -- and it is the stiffness of the ARM, so what it produces is the
+# controller's virtual deflection, not a depth anything is compressed by.
+# `verify` used to reject a deflection larger than the gel is thick, which
+# read F/k as a gel compression and so compared a control quantity against
+# sensor geometry. It no longer does; see `_gate`.
 
 # GelSight Mini elastomer thickness; the hard physical ceiling a penetration
 # interpreted as gel compression may not exceed. Defined in lut_calibration,
 # beside the other sensor geometry, and imported so the reconstruction and the
 # exporter cannot disagree about how thick the gel is.
 from .lut_calibration import GEL_THICKNESS_MM  # noqa: E402
+
+# A commanded virtual deflection larger than this means the stiffness is wrong
+# by orders of magnitude, not that someone pressed hard. Deliberately loose:
+# it exists to catch a k of 0.01 N/mm, not to encode a view about how far an
+# arm may be commanded. Nothing about the gel enters it.
+MAX_SANE_VIRTUAL_DISPLACEMENT_MM = 100.0
 
 SIDES = ("left", "right")
 POSE_DIM = 7
@@ -818,17 +826,26 @@ def _gate(report: dict) -> int:
         fails.append("no-contact rows do not leave the pose identical")
     if not report.get("alignment_pass", False):
         fails.append(f"row alignment {report.get('alignment_rate', 0)*100:.1f}%")
-    # None means force-only: no penetration column exists, so the gel-thickness
-    # gate has nothing to police. Absent data must not read as a violation --
-    # nor as a pass for a run that DID derive targets, which is why this
-    # distinguishes None from 0.0 rather than defaulting.
-    frac = report.get("penetration_over_gel_thickness_frac", 0.0)
-    if frac is not None and frac > 0:
+    # NOT a gel-thickness check. `penetration_mm` is F/k where k is the
+    # IMPEDANCE STIFFNESS OF THE ARM, so it is the virtual deflection the
+    # controller commands -- not a distance anything is squashed by. The gel's
+    # own compression is a separate, separately measured quantity (the LUT
+    # depth field). Comparing the first against GEL_THICKNESS_MM compared a
+    # control quantity with sensor geometry, and it refused 11.96% of contact
+    # frames once v8 raised the range to 15 N: at k = 2 N/mm, 15 N simply IS a
+    # 7.5 mm virtual deflection, which is ordinary for a Franka-class arm.
+    # `penetration_over_gel_thickness_frac` is still reported, as a fact about
+    # the data; it is no longer read as a defect.
+    #
+    # What a wrong k WOULD look like is an absurd commanded displacement, so
+    # that is what is bounded -- a statement about the controller, with no
+    # opinion about the sensor.
+    pen = report.get("penetration_p50_p95_p99_max_mm")
+    if pen is not None and pen[-1] > MAX_SANE_VIRTUAL_DISPLACEMENT_MM:
         fails.append(
-            f"{frac*100:.2f}% of rows command a target more than "
-            f"{GEL_THICKNESS_MM} mm past the surface — the gel cannot be "
-            f"compressed that far, so raise the stiffness "
-            f"(dexforce.STIFFNESS_N_PER_M)")
+            f"max commanded virtual displacement {pen[-1]:.1f} mm exceeds "
+            f"{MAX_SANE_VIRTUAL_DISPLACEMENT_MM} mm — at F/k that implies a "
+            f"stiffness orders of magnitude off, not a deep press")
     err = report.get("roundtrip_max_abs_err_n", 0.0)
     if err is not None and err > 1e-6:
         fails.append(f"k*|dp| != F, max err {err:.2e} N")
