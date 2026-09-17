@@ -280,11 +280,13 @@ def build_side(task: str, date: str, ep: str, side: str, table: pa.Table,
     # it as an absent k rather than a "skip these columns" flag is what makes
     # that structural: there is no path on which the derived columns are
     # written from a stiffness nobody supplied.
+    # n_hat is the pressing direction and needs no stiffness; only the
+    # displacement ALONG it does.
+    n_hat = press_direction(task, side, pose)
     if stiffness is None:
-        penetration = target = n_hat = None
+        penetration = target = None
     else:
         penetration = penetration_mm(force, stiffness)    # N / (N/mm) = mm
-        n_hat = press_direction(task, side, pose)
         target = pose.copy()
         target[contact, :3] += (penetration[contact, None] / 1000.0
                                 ) * n_hat[contact]        # mm -> m
@@ -307,6 +309,7 @@ def build_side(task: str, date: str, ep: str, side: str, table: pa.Table,
         if contact.any() else 0.0,
         "gel_max_depth_p95_mm": float(np.percentile(max_depth, 95)),
         "gel_max_depth_max_mm": float(max_depth.max()),
+        "direction": direction_agreement(pose[:, :3] * 1000.0, n_hat, force),
     }
     columns = {
         f"force_{side}_normal_n": pa.array(force.astype(np.float32)),
@@ -320,8 +323,6 @@ def build_side(task: str, date: str, ep: str, side: str, table: pa.Table,
             "identity_max_abs_dev": float(
                 np.abs(target[~contact] - pose[~contact]).max())
             if (~contact).any() else 0.0,
-            "direction": direction_agreement(
-                pose[:, :3] * 1000.0, n_hat, force),
         }
         columns |= {
             f"force_{side}_penetration_mm": pa.array(
@@ -581,9 +582,13 @@ def verify(root: Path = EXPORT_ROOT) -> dict:
             if derived:
                 st |= {"pen_p95_mm": float(np.percentile(pen, 95)),
                        "pen_max_mm": float(pen.max())}
-                n_hat = press_direction(task, side, pose)
-                dirs.append(
-                    direction_agreement(pose[:, :3] * 1000.0, n_hat, col))
+            # Outside the branch on purpose: does the force rise as the sensor
+            # moves along its pressing direction? That asks nothing of a
+            # stiffness, and it is a check on the very channel force-only
+            # DOES publish -- guarding it away would leave the published half
+            # less verified than the withheld half was.
+            n_hat = press_direction(task, side, pose)
+            dirs.append(direction_agreement(pose[:, :3] * 1000.0, n_hat, col))
             ep_stats.append(st)
 
     force = np.concatenate(forces)
@@ -645,8 +650,12 @@ def verify(root: Path = EXPORT_ROOT) -> dict:
         # `np.percentile(force, 95)` — newtons — and was only ever right
         # because k was 1.0 N/mm and the two were numerically equal. The
         # README quoted it as a penetration.
-        "contact_p95_penetration_mm": float(
-            np.percentile(force[force > 0], 95) / k),
+        # None under force-only: a penetration is force/k and there is no k.
+        # The k_for_*_within_gel figures above survive -- they say what
+        # stiffness WOULD be needed, which is exactly the open question.
+        "contact_p95_penetration_mm": (
+            None if force_only
+            else float(np.percentile(force[force > 0], 95) / k)),
         "contact_frac": float((force > 0).mean()),
         "k_for_max_within_gel": float(force.max() / GEL_THICKNESS_MM),
         # How much of the data sits ON the estimator's upper limit. The
@@ -663,23 +672,42 @@ def verify(root: Path = EXPORT_ROOT) -> dict:
         # Force-only writes no target pose, so there is no identity to hold.
         "identity_pass": True if force_only else bool(
             ident_dev and max(ident_dev) == 0.0),
-        "quaternion_max_abs_dev": float(max(quat_dev)),
-        "roundtrip_max_abs_err_n": float(max(roundtrip)),
+        # Both are properties of the target pose, which force-only does not
+        # write, so nothing was collected. max() of an empty list raises.
+        "quaternion_max_abs_dev": None if force_only else float(max(quat_dev)),
+        "roundtrip_max_abs_err_n": (
+            None if force_only else float(max(roundtrip))),
         "duplicate_rows": dup_rows,
         "duplicate_rows_held": dup_held,
         "duplicate_forward_fill_rate": dup_held / max(dup_rows, 1),
+        # None, not 0.0, when no side yielded usable direction evidence --
+        # a sensor that never moved, or an episode with no contact. This was
+        # unguarded and crashed `_pct` on an empty array; reporting 0.0 would
+        # have been worse, since "no evidence" would have read as "the force
+        # never rose with the pressing motion", which is a failing result.
         "direction_sides_usable": len(used),
-        "direction_rise_positive_frac": float((rise > 0).mean()),
-        "direction_fall_negative_frac": float((fall < 0).mean()),
-        "direction_rise_gt_fall_frac": float((rise > fall).mean()),
-        "direction_corr_p25_p50_p75": _pct(corr, [25, 50, 75]),
-        "direction_corr_positive_frac": float((corr > 0).mean()),
+        "direction_rise_positive_frac": (
+            float((rise > 0).mean()) if len(used) else None),
+        "direction_fall_negative_frac": (
+            float((fall < 0).mean()) if len(used) else None),
+        "direction_rise_gt_fall_frac": (
+            float((rise > fall).mean()) if len(used) else None),
+        "direction_corr_p25_p50_p75": (
+            _pct(corr, [25, 50, 75]) if len(used) else None),
+        "direction_corr_positive_frac": (
+            float((corr > 0).mean()) if len(used) else None),
         "penetration_sweep": {
             str(kk): {
                 "p95_mm": float(np.percentile(force, 95) / kk),
                 "max_mm": float(force.max() / kk),
                 "frac_over_gel": float((force / kk > GEL_THICKNESS_MM).mean()),
-            } for kk in sorted({0.5, 1.0, 1.5, 3.0, 5.6, 15.4, k})},
+            # The shipped k joins the candidates when there IS one. Under
+            # force-only this sweep is the most useful thing in the report --
+            # it is precisely "what would each candidate stiffness give", the
+            # question the withheld columns are waiting on -- so it is kept,
+            # with None simply not a candidate.
+            } for kk in sorted({0.5, 1.0, 1.5, 3.0, 5.6, 15.4}
+                               | ({k} if k is not None else set()))},
     }
     (root / "force_export_verify.json").write_text(json.dumps(
         {**report, "per_side": ep_stats}, indent=2))
@@ -688,7 +716,8 @@ def verify(root: Path = EXPORT_ROOT) -> dict:
 
 def _print(report: dict) -> None:
     k = report["stiffness_n_per_mm"]
-    print(f"\n== export verification (k = {k} N/mm) ==")
+    print(f"\n== export verification "
+          f"({'FORCE-ONLY, no stiffness' if k is None else f'k = {k} N/mm'}) ==")
     print(f"sensor-sides            : {report['n_sensor_sides']}")
     print(f"row alignment           : {report['alignment_pass']}/"
           f"{report['n_sensor_sides']} "
@@ -707,12 +736,20 @@ def _print(report: dict) -> None:
     print("no-contact rows         : %.2f%% (per-side p5/p50/p95 "
           "%.1f/%.1f/%.1f%%)"
           % (100 * report["no_contact_frac_global"], *nc))
-    print("penetration p50/p95/p99/max: %.4f / %.3f / %.3f / %.3f mm"
-          % report["penetration_p50_p95_p99_max_mm"])
-    print(f"  rows over gel thickness {GEL_THICKNESS_MM} mm: "
-          f"{100 * report['penetration_over_gel_thickness_frac']:.2f}%  "
-          f"sides with p95 over it: {report['sides_with_p95_over_gel']}"
-          f"/{report['n_sensor_sides']}")
+    if report.get("force_only"):
+        print("penetration / virtual targets: NOT PUBLISHED (force-only; no "
+              "approved stiffness for the measured range)")
+        print(f"  stiffness that WOULD keep contact p95 inside the "
+              f"{GEL_THICKNESS_MM} mm gel: "
+              f">= {report['k_for_contact_p95_within_gel']:.2f} N/mm, "
+              f"and the max needs >= {report['k_for_max_within_gel']:.2f}")
+    else:
+        print("penetration p50/p95/p99/max: %.4f / %.3f / %.3f / %.3f mm"
+              % report["penetration_p50_p95_p99_max_mm"])
+        print(f"  rows over gel thickness {GEL_THICKNESS_MM} mm: "
+              f"{100 * report['penetration_over_gel_thickness_frac']:.2f}%  "
+              f"sides with p95 over it: {report['sides_with_p95_over_gel']}"
+              f"/{report['n_sensor_sides']}")
     print("  gel stiffness implied by the estimator's own indentation "
           "(F / max_depth_mm, F>0.5 N):")
     print("    p5/p25/p50/p75/p95 = %.1f / %.1f / %.1f / %.1f / %.1f N/mm"
@@ -725,25 +762,37 @@ def _print(report: dict) -> None:
         print(f"    k={kk:>5} N/mm -> p95 {v['p95_mm']:6.3f} mm, "
               f"max {v['max_mm']:7.3f} mm, "
               f"{100 * v['frac_over_gel']:5.2f}% over gel")
-    print(f"identity (no-contact)   : {report['identity_rows_checked']} rows, "
-          f"max |target - observed| = {report['identity_max_abs_dev']:.1e} -> "
-          f"{'PASS' if report['identity_pass'] else 'FAIL'}")
-    print(f"quaternion untouched    : max dev "
-          f"{report['quaternion_max_abs_dev']:.1e}")
-    print(f"roundtrip k*|dp| == F   : max err "
-          f"{report['roundtrip_max_abs_err_n']:.2e} N")
+    # Everything from here to the duplicate-fill line is a property of the
+    # TARGET POSE, which force-only does not write. Printing "0.0" for a
+    # check that never ran would read as a pass.
+    if report.get("force_only"):
+        print("identity / quaternion / roundtrip: n/a (no target pose "
+              "published)")
+    else:
+        print(f"identity (no-contact)   : {report['identity_rows_checked']} "
+              f"rows, max |target - observed| = "
+              f"{report['identity_max_abs_dev']:.1e} -> "
+              f"{'PASS' if report['identity_pass'] else 'FAIL'}")
+        print(f"quaternion untouched    : max dev "
+              f"{report['quaternion_max_abs_dev']:.1e}")
+        print(f"roundtrip k*|dp| == F   : max err "
+              f"{report['roundtrip_max_abs_err_n']:.2e} N")
     print(f"duplicate-frame ffill   : {report['duplicate_rows_held']}/"
           f"{report['duplicate_rows']} "
           f"({100 * report['duplicate_forward_fill_rate']:.2f}%)")
-    print(f"press direction         : {report['direction_sides_usable']} "
-          f"sides usable; v.n>0 on rise "
-          f"{100 * report['direction_rise_positive_frac']:.1f}%, "
-          f"v.n<0 on release "
-          f"{100 * report['direction_fall_negative_frac']:.1f}%, "
-          f"rise>fall {100 * report['direction_rise_gt_fall_frac']:.1f}%")
-    print("  corr(dF, v.n) p25/p50/p75 = %.3f / %.3f / %.3f, positive on "
-          "%.1f%% of sides" % (*report["direction_corr_p25_p50_p75"],
-                               100 * report["direction_corr_positive_frac"]))
+    if not report["direction_sides_usable"]:
+        print("press direction         : no side yielded usable evidence "
+              "(no motion, or no contact)")
+    else:
+        print(f"press direction         : {report['direction_sides_usable']} "
+              f"sides usable; v.n>0 on rise "
+              f"{100 * report['direction_rise_positive_frac']:.1f}%, "
+              f"v.n<0 on release "
+              f"{100 * report['direction_fall_negative_frac']:.1f}%, "
+              f"rise>fall {100 * report['direction_rise_gt_fall_frac']:.1f}%")
+        print("  corr(dF, v.n) p25/p50/p75 = %.3f / %.3f / %.3f, positive on "
+              "%.1f%% of sides" % (*report["direction_corr_p25_p50_p75"],
+                                   100 * report["direction_corr_positive_frac"]))
 
 
 def digest(root: Path = EXPORT_ROOT) -> str:
@@ -781,7 +830,7 @@ def _gate(report: dict) -> int:
             f"compressed that far, so raise the stiffness "
             f"(dexforce.STIFFNESS_N_PER_M)")
     err = report.get("roundtrip_max_abs_err_n", 0.0)
-    if err > 1e-6:
+    if err is not None and err > 1e-6:
         fails.append(f"k*|dp| != F, max err {err:.2e} N")
     for f in fails:
         print(f"  FAIL: {f}")

@@ -125,3 +125,52 @@ def test_the_cli_exposes_force_only_and_it_means_no_stiffness(monkeypatch):
     monkeypatch.setattr(sys, "argv", ["x", "export", "--force-only"])
     assert EX.main() == 0
     assert seen["k"] is None, f"CLI passed stiffness {seen['k']!r}"
+
+
+def test_verify_and_print_survive_a_force_only_report(tmp_path, npz, capsys,
+                                                      monkeypatch):
+    """Five separate crashes hid behind each other here.
+
+    Withholding the derived columns leaves six report fields None and three
+    collection lists empty, and every consumer of them -- the gel-thickness
+    gate, the stiffness sweep, and four format strings in `_print` -- failed
+    one at a time, each only visible once the previous was fixed. The e2e
+    smoke test caught them, but it is marked slow; this pins the same contract
+    directly so the next change does not have to rediscover it.
+    """
+    import json
+    from pathlib import Path
+    import pyarrow.parquet as pq
+
+    root = tmp_path / "release_force"
+    src = tmp_path / "src"
+    (src / "rope" / "meta" / "2026-09-16").mkdir(parents=True)
+    t = _table()
+    pq.write_table(t, str(src / "rope/meta/2026-09-16/episode_000.parquet"))
+    monkeypatch.setattr(EX, "STAGE_ROOT", src)
+    monkeypatch.setattr(EX, "EXPORT_ROOT", root)
+
+    EX.export_episode("rope", "2026-09-16", "episode_000", None, root)
+    (root / "force_export_manifest.json").write_text(json.dumps(
+        {"stiffness_n_per_mm": None, "episodes": []}))
+
+    rep = EX.verify(root)
+    assert rep["force_only"] is True
+    for field in ("penetration_p50_p95_p99_max_mm",
+                  "penetration_over_gel_thickness_frac",
+                  "sides_with_p95_over_gel", "contact_p95_penetration_mm",
+                  "quaternion_max_abs_dev", "roundtrip_max_abs_err_n"):
+        assert rep[field] is None, f"{field} should be absent, got {rep[field]}"
+
+    # the direction diagnostic is NOT stiffness-derived and must survive
+    # a fixture with no sensor motion yields no usable direction evidence;
+    # that must be reported as absent rather than crash or read as a failure
+    assert rep["direction_sides_usable"] == 0
+    assert rep["direction_corr_p25_p50_p75"] is None
+    # the sweep is the most useful thing in a force-only report
+    assert rep["penetration_sweep"], "the candidate-stiffness sweep was dropped"
+
+    EX._print(rep)                       # must not raise on the None fields
+    out = capsys.readouterr().out
+    assert "FORCE-ONLY" in out
+    assert EX._gate(rep) == 0
