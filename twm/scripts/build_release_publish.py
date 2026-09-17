@@ -284,7 +284,11 @@ def force_overlay_plan(stage, force_stage, tasks, since: str = SCOPE_SINCE):
     segment's missing force channel can be caught.
     """
     import pyarrow.parquet as _pq
-    from twm.dataset_layout import FORCE_COLUMNS
+    # The MEASURED half answers "does this file carry the force channel".
+    # Asking for the full superset treated a --force-only export as still
+    # needing an overlay, and sent the gate looking for a force-stage file to
+    # merge onto a parquet that was already complete.
+    from twm.dataset_layout import FORCE_MEASURED
     stage, force_stage = Path(stage), Path(force_stage)
     files, missing = [], []
     for task in tasks:
@@ -292,7 +296,7 @@ def force_overlay_plan(stage, force_stage, tasks, since: str = SCOPE_SINCE):
             date = local.parent.name
             if since and date < since:
                 continue          # not this run's business
-            if set(FORCE_COLUMNS) <= set(_pq.read_schema(local).names):
+            if set(FORCE_MEASURED) <= set(_pq.read_schema(local).names):
                 continue          # already inline
             forced = force_stage / task / local.relative_to(stage / task)
             if forced.is_file():
