@@ -142,8 +142,28 @@ class ReleaseEpisode:
     # ── the force npz ───────────────────────────────────────────────────────
     @property
     def forces(self) -> dict:
+        """`{side: per-row newtons}` for the sides that have force.
+
+        The PARQUET first. It is what a dataset user reads, it is already
+        row-aligned to the video, and since 2026-09-17 every published segment
+        carries `force_<side>_normal_n`.
+
+        The npz lookup below only ever worked for uncut episodes: published
+        units are SEGMENTS (`episode_006_seg00`) while the npz are named for
+        the source recording (`episode_006_left.npz`), so it missed on every
+        segment and returned {} -- and an empty dict is indistinguishable from
+        "this episode has no force channel", so `twm.visualize` played
+        published segments with no force overlay and said nothing.
+        """
         if self._forces is None:
             self._forces = {}
+            for side in ("left", "right"):
+                col = self._column(f"force_{side}_normal_n")
+                if col is not None:
+                    self._forces[side] = np.asarray(col.to_numpy(), dtype=float)
+            if self._forces:
+                return self._forces
+            # No columns: an uncut episode, where the npz is the only source.
             for side in ("left", "right"):
                 p = self.force_root / self.task / self.date / f"{self.episode}_{side}.npz"
                 if p.exists():
