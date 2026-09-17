@@ -579,12 +579,32 @@ def main():
 
     if not args.no_projection:
         from twm.calib_epoch import resolve_calibration
-        # A task name (--cam_calib motherboard) selects a whole epoch; explicit
-        # paths pass through; nothing given infers the epoch from the input
-        # path and raises rather than guessing.
-        args.cam_calib, args.gel_left, args.gel_right = resolve_calibration(
-            args.cam_calib, args.gel_left, args.gel_right, args.path)
-        print(f"calibration epoch: {os.path.dirname(args.cam_calib[0])}")
+        from twm.release_episode import (looks_like_release, resolve as _rel,
+                                         shipped_calibration)
+        shipped = None
+        if args.cam_calib is None and looks_like_release(args.path):
+            # A published episode carries Z-up poses, and the repo epoch's
+            # T_mocap_to_cam is Y-up. convert_release_zup rotates poses and
+            # calibration together, so they pair or they do not: Z-up poses
+            # against the repo extrinsic drift by a rotation, with the same
+            # translation, which reads as "the overlay looks slightly off"
+            # rather than as a failure. Use what shipped beside the data.
+            try:
+                e = _rel(args.path)
+                shipped = shipped_calibration(e.parquet.parents[3], e.task)
+            except Exception:                              # noqa: BLE001
+                shipped = None
+        if shipped is not None:
+            args.cam_calib, args.gel_left, args.gel_right = shipped
+            print(f"calibration: shipped with the release "
+                  f"({os.path.dirname(args.cam_calib[0])})")
+        else:
+            # A task name (--cam_calib motherboard) selects a whole epoch;
+            # explicit paths pass through; nothing given infers the epoch from
+            # the input path and raises rather than guessing.
+            args.cam_calib, args.gel_left, args.gel_right = resolve_calibration(
+                args.cam_calib, args.gel_left, args.gel_right, args.path)
+            print(f"calibration epoch: {os.path.dirname(args.cam_calib[0])}")
 
     # ── Resolve input: a recording, a folder of them, or a published episode ─
     from twm.release_episode import looks_like_release

@@ -248,6 +248,30 @@ def resolve(path, *, root: Path | None = None,
                           force_root=Path(force_root))
 
 
+def shipped_calibration(root, task: str):
+    """The calibration that SHIPS with a release tree, or None.
+
+    `(camera_json_paths, gel_left_json, gel_right_json)`.
+
+    Published poses are Z-up and `convert_release_zup` rotates the poses AND
+    the calibration together -- the shipped matrix equals the repo one composed
+    with the Y->Z rotation -- so the two are interchangeable only in matched
+    pairs. Playing a published episode against the repo epoch pairs Z-up poses
+    with a Y-up extrinsic; the translation is identical either way, so the
+    overlay drifts by a rotation rather than breaking visibly.
+
+    All five files or nothing. Mixing a shipped camera matrix with a repo gel
+    file pairs a Z-up extrinsic with a Y-up one, which is worse than using
+    neither.
+    """
+    d = Path(root) / task / "calibration"
+    cams = sorted(d.glob("T_mocap_to_cam_*.json"))
+    gl, gr = d / "T_gel_to_rigid_left.json", d / "T_gel_to_rigid_right.json"
+    if not cams or not gl.is_file() or not gr.is_file():
+        return None
+    return [str(p) for p in cams], str(gl), str(gr)
+
+
 def looks_like_release(path) -> bool:
     """True when `path` names a published episode rather than a recording."""
     p = Path(path)
