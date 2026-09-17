@@ -433,14 +433,32 @@ def check_epoch(task: str, date: str | None = None) -> None:
             f"puts the projected sensor off the sensor.")
 
 
-@lru_cache(maxsize=None)
 def _episodes(task: str) -> dict:
-    """`episodes.jsonl` keyed by its own `episode` field, `<date>/<episode>`."""
-    p = _release_root() / task / "episodes.jsonl"
+    """`episodes.jsonl` keyed by its own `episode` field, `<date>/<episode>`.
+
+    The cache key includes the RELEASE ROOT. It used to be the task alone,
+    which quietly defeated `_release_root`'s whole point -- that docstring
+    says "Read at CALL time: tests set the variable after this module is
+    imported", and the cache made the first root win forever. Anything that
+    retargets REACT_RELEASE afterwards (a test, a frozen reprocessing input
+    tree) went on reading the production index.
+    """
+    return _episodes_cached(task, str(_release_root()))
+
+
+@lru_cache(maxsize=None)
+def _episodes_cached(task: str, release_root: str) -> dict:
+    p = Path(release_root) / task / "episodes.jsonl"
     if not p.exists():
         return {}
     return {r["episode"]: r for r in
             (json.loads(l) for l in p.read_text().splitlines() if l.strip())}
+
+
+# Callers that used to clear the root-blind cache keep working. The clear is
+# no longer NEEDED -- the root is part of the key -- but removing the name
+# would break them for no gain.
+_episodes.cache_clear = _episodes_cached.cache_clear
 
 
 def release_episodes(task: str) -> set[str]:

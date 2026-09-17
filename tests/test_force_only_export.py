@@ -120,10 +120,11 @@ def test_the_cli_exposes_force_only_and_it_means_no_stiffness(monkeypatch):
     column builder has to interpret a second time."""
     import sys
     seen = {}
-    monkeypatch.setattr(EX, "run_export",
-                        lambda k, root: seen.setdefault("k", k) or
-                        {"n_episodes": 0, "n_sensor_sides": 0, "total_rows": 0})
-    monkeypatch.setattr(EX, "verify", lambda root: {
+    def _fake(k, root, task=None):
+        seen["k"] = k
+        return {"n_episodes": 0, "n_sensor_sides": 0, "total_rows": 0}
+    monkeypatch.setattr(EX, "run_export", _fake)
+    monkeypatch.setattr(EX, "verify", lambda root, task=None: {
         "identity_pass": True, "alignment_pass": True, "alignment_rate": 1.0,
         "roundtrip_max_abs_err_n": 0.0,
         "penetration_over_gel_thickness_frac": None})

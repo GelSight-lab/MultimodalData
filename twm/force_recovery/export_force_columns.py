@@ -195,10 +195,17 @@ def direction_agreement(pose_xyz_mm: np.ndarray, n_hat: np.ndarray,
 # export
 
 
-def _episodes() -> list[tuple[str, str, str]]:
-    """(task, date, episode) for every release meta parquet, sorted."""
+def _episodes(task: str | None = None) -> list[tuple[str, str, str]]:
+    """(task, date, episode) for every release meta parquet, sorted.
+
+    `task` narrows it to one. Per TASK and not per episode on purpose: the
+    missing-npz refusal in `run_export` is what catches a half-finished force
+    run, and narrowing to individual episodes would let a partly computed task
+    through.
+    """
+    pattern = f"{task}/meta/*/*.parquet" if task else "*/meta/*/*.parquet"
     out = []
-    for parquet in sorted(STAGE_ROOT.glob("*/meta/*/*.parquet")):
+    for parquet in sorted(STAGE_ROOT.glob(pattern)):
         out.append((parquet.parts[-4], parquet.parts[-2], parquet.stem))
     return out
 
@@ -452,8 +459,8 @@ def export_episode(task: str, date: str, ep: str, stiffness: float | None,
 
 
 def run_export(stiffness: float | None = STIFFNESS_N_PER_MM,
-               root: Path = EXPORT_ROOT) -> dict:
-    episodes = _episodes()
+               root: Path = EXPORT_ROOT, task: str | None = None) -> dict:
+    episodes = _episodes(task)
     have = {p.stem for p in FORCE_ROOT.glob("*/*/*.npz")}
     missing = [(t, d, e, s) for t, d, e in episodes for s in SIDES
                if f"{e}_{s}" not in have
@@ -513,11 +520,12 @@ def orphan_force_files(root: Path = EXPORT_ROOT,
     return out
 
 
-def verify(root: Path = EXPORT_ROOT) -> dict:
+def verify(root: Path = EXPORT_ROOT, task: str | None = None) -> dict:
     """Re-read the exported parquets and check every claim, with numbers."""
     manifest = json.loads((root / "force_export_manifest.json").read_text())
     k = manifest["stiffness_n_per_mm"]
-    files = sorted(root.glob("*/meta/*/*.parquet"))
+    files = sorted(root.glob(
+        f"{task}/meta/*/*.parquet" if task else "*/meta/*/*.parquet"))
     orphans = set(orphan_force_files(root))
     if orphans:
         print(f"[verify] {len(orphans)} force file(s) whose source episode has "
@@ -868,14 +876,23 @@ def main() -> int:
                          "shipped k=2 N/mm the 4.25 mm gel gate caps usable "
                          "force at 8.5 N.")
     ap.add_argument("--root", type=Path, default=EXPORT_ROOT)
+    ap.add_argument("--task", default=None,
+                    help="export only this task. The whole-tree run refuses if "
+                         "ANY sensor-side lacks an npz, so a finished task "
+                         "cannot otherwise be exported while another is still "
+                         "computing. The refusal still applies within the "
+                         "task asked for.")
     args = ap.parse_args()
     k = None if args.force_only else args.stiffness
     if args.command == "export":
-        m = run_export(k, args.root)
+        m = run_export(k, args.root, task=args.task)
+        # verify the same scope that was just written; a whole-tree verify
+        # after a scoped export walks parquets this run never touched
+
         print(f"\nwrote {m['n_episodes']} episodes / "
               f"{m['n_sensor_sides']} sensor-sides / {m['total_rows']} rows "
               f"to {args.root}")
-        rep = verify(args.root)
+        rep = verify(args.root, task=args.task)
         _print(rep)
         return _gate(rep)
     elif args.command == "verify":
