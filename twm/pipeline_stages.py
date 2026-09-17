@@ -151,8 +151,30 @@ def _force(task=None, workers: int = 2, **_):
              str(i), str(workers)] for i in range(workers)]
 
 
+# WHICH force columns the release publishes. Declared here, beside the stage
+# list, because the scheduled export is the thing that acts on it -- typed into
+# the argv it would be a fact about one command line rather than about the
+# release, and an automated re-run would silently revert the decision.
+#
+#   "force-only"   force_<side>_normal_n + force_<side>_source_frame.
+#                  The MEASUREMENT and its provenance.
+#   "with-targets" also penetration_mm and target_pose, derived at
+#                  dexforce.STIFFNESS_N_PER_M.
+#
+# force-only since 2026-09-16: v8 measures to 15 N and the data reaches 14.99 N
+# with no ceiling saturation, while the shipped k = 2 N/mm caps the exporter's
+# 4.25 mm gel-thickness gate at 8.5 N -- 11.96% of contact frames commanded a
+# target past it. Switching back needs an APPROVED stiffness, shared by the
+# exporter, the pipeline utilities and the previews, or their targets disagree.
+FORCE_COLUMN_POLICY = "force-only"
+
+
 def _export(**_):
-    return [[sys.executable, "-m", "twm.force_recovery.export_force_columns", "export"]]
+    cmd = [sys.executable, "-m", "twm.force_recovery.export_force_columns",
+           "export"]
+    if FORCE_COLUMN_POLICY == "force-only":
+        cmd.append("--force-only")
+    return [cmd]
 
 
 def _curate(task, **_):
