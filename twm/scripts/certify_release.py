@@ -269,6 +269,81 @@ def _parquet_hash(path: Path) -> str:
     return h.hexdigest()
 
 
+def _as_per_check(rec) -> dict:
+    """Upgrade any receipt record to `{"hashes": {check: hash}}`.
+
+    Three formats have existed: a bare hash string (alignment only), then
+    `{"hash": h, "checks": [...]}` with ONE hash shared by every check, and now
+    a hash PER check -- necessary because the checks no longer hash the same
+    thing. Old records are read, never rewritten in place: the upgrade happens
+    the next time a check passes, so a stale entry simply re-certifies once.
+    """
+    if isinstance(rec, str):
+        return {"hashes": {"alignment": rec}}
+    if isinstance(rec, dict):
+        if "hashes" in rec:
+            return {"hashes": dict(rec["hashes"])}
+        h = rec.get("hash")
+        if h:
+            return {"hashes": {c: h for c in rec.get("checks", ["alignment"])}}
+    return {"hashes": {}}
+
+
+def _receipt_hash(rec, check: str):
+    return _as_per_check(rec)["hashes"].get(check)
+
+
+def _evidence_hash(path: Path, check: str) -> str:
+    """Hash of what THIS check reads, not of the whole file.
+
+    A receipt keyed on the file re-runs its check whenever any byte moves. For
+    `alignment` that is too strict in an expensive direction: it reads only
+    `source_h5_frame` and the tactile contact scalars, compares them against
+    the source H5 pixels, and never looks at another column. The 2026-09-16
+    force-only export adds columns to every published parquet, which under a
+    whole-file hash would have re-certified all 173 segments -- 2000 frames per
+    sensor-side out of the source H5, on a seek-bound mechanical disk, about
+    seven hours -- to re-derive an answer that could not have changed.
+
+    The danger runs the other way, so the column set is named explicitly and
+    anything not analysed falls back to the whole file. A check that starts
+    reading a new column must be added here, and the tests in
+    test_receipt_keys_on_evidence spell out what must still invalidate.
+    """
+    if check != "alignment":
+        # previews render from more than these columns and nothing has
+        # established exactly what. Stay conservative.
+        return _parquet_hash(path)
+
+    import pyarrow.parquet as _pq
+    from twm.react_preprocess.backfill import SCALARS
+
+    want = ["source_h5_frame"] + [f"tactile_{side}_{s}"
+                                  for side in ("left", "right")
+                                  for s in SCALARS]
+    try:
+        t = _pq.read_table(str(path))
+    except Exception:                                   # noqa: BLE001
+        # Unreadable: fall back to the strict rule rather than crash the
+        # bookkeeping. The certification itself will fail on this file and say
+        # why; the receipt's job here is only to avoid claiming it passed.
+        return _parquet_hash(path)
+    h = hashlib.sha256()
+    for name in want:
+        # The NAME goes in as well as the bytes, so dropping a column that
+        # `flags_from_scalars` would have used changes the hash rather than
+        # silently shortening the list.
+        h.update(name.encode())
+        if name in t.column_names:
+            arr = t[name].combine_chunks()
+            for buf in arr.buffers():
+                h.update(b"" if buf is None else buf)
+        else:
+            h.update(b"<absent>")
+    h.update(str(t.num_rows).encode())
+    return h.hexdigest()
+
+
 def _published_units(task: str) -> dict[str, Path]:
     """`date/episode` -> parquet, for the in-scope part of the tree."""
     root = RELEASE / task / "meta"
@@ -309,11 +384,7 @@ def needs_certifying(task: str, force: bool = False,
     # per sampled episode.
     out = []
     for k, q in units.items():
-        rec = seen.get(k)
-        if isinstance(rec, str):            # the first receipt format
-            rec = {"hash": rec, "checks": ["alignment"]}
-        if not rec or rec.get("hash") != _parquet_hash(q) \
-                or check not in rec.get("checks", []):
+        if _receipt_hash(seen.get(k), check) != _evidence_hash(q, check):
             out.append(k)
     return sorted(out)
 
@@ -332,14 +403,8 @@ def write_receipt(task: str, passed, check: str = "alignment") -> None:
     for k in passed:
         if k not in units:
             continue
-        h = _parquet_hash(units[k])
-        rec = seen.get(k)
-        if isinstance(rec, str):
-            rec = {"hash": rec, "checks": ["alignment"]}
-        if not rec or rec.get("hash") != h:
-            rec = {"hash": h, "checks": []}
-        if check not in rec["checks"]:
-            rec["checks"].append(check)
+        rec = _as_per_check(seen.get(k))
+        rec["hashes"][check] = _evidence_hash(units[k], check)
         seen[k] = rec
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(json.dumps(seen, indent=1, sort_keys=True))
