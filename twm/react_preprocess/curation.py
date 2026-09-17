@@ -25,6 +25,41 @@ MIN_SEGMENT_FRAMES = 16
 UP_AXIS_BUILT = "y"
 
 
+def tree_up_axis(root) -> str:
+    """Which frame `root`'s poses are in, from the declaration beside the roots.
+
+    Refuses an undeclared tree rather than guessing. A guess here is what put a
+    DexForce target hundreds of mm off for 2026-09-09.
+    """
+    from pathlib import Path as _P
+    from twm.pipeline_stages import TREE_UP_AXIS
+    r = _P(root).resolve()
+    for tree, axis in TREE_UP_AXIS.items():
+        if _P(tree).resolve() == r:
+            return axis
+    raise KeyError(
+        f"{root}: no declared up_axis for this tree. Add it to "
+        f"pipeline_stages.TREE_UP_AXIS -- the pose frame is a property of the "
+        f"tree, and guessing it is how poses ship in the wrong frame.")
+
+
+def row_up_axis(root, key: str, prior: dict) -> str:
+    """The `up_axis` to stamp on one episode row.
+
+    The TREE's declaration wins. The old rule was "an existing row's value wins,
+    because a later stage may have rotated that episode" -- but within one tree
+    every episode shares a frame, and preserving the stored value is precisely
+    what kept `y` on the Z-up cut tree across every re-curate.
+
+    An undeclared tree keeps the old behaviour, so curating a scratch tree is
+    not blocked by a missing declaration.
+    """
+    try:
+        return tree_up_axis(root)
+    except KeyError:
+        return prior.get(key, {}).get("up_axis", UP_AXIS_BUILT)
+
+
 
 def force_flag(parquet) -> bool:
     """Does this published parquet carry the force channel?
@@ -238,11 +273,11 @@ def build_task(task: str, stage_root: Path = STAGE_ROOT,
             "wrist_tone_gamma": cm.get("wrist_tone_gamma", {}),
         })
         # Declared, always. react_preprocess copies poses straight out of the
-        # HDF5, which is Y-up as recorded; an existing row's value wins because
-        # a later stage may have rotated that episode. A row with no up_axis at
-        # all makes every consumer guess, and the guess put the DexForce target
-        # hundreds of mm off for 2026-09-09.
-        rows[-1]["up_axis"] = prior.get(key, {}).get("up_axis", UP_AXIS_BUILT)
+        # Declared, always. The TREE says which frame its poses are in -- see
+        # row_up_axis. A row with no up_axis at all makes every consumer guess,
+        # and the guess put the DexForce target hundreds of mm off for
+        # 2026-09-09.
+        rows[-1]["up_axis"] = row_up_axis(stage_root, key, prior)
 
     total = sum(e["n_frames"] for e in episodes.values())
     bad = sum(e["total_bad_frames"] for e in episodes.values())

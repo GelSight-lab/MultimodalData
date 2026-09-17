@@ -39,6 +39,27 @@ DATA_ROOT = Path("/media/yxma/Disk1/twm/data")
 RELEASE = Path("/media/yxma/Disk1/twm/release")
 RELEASE_ZUP = Path("/media/yxma/Disk1/twm/release_zup")
 RELEASE_CUT = Path("/media/yxma/Disk1/twm/release_cut")
+
+# WHICH FRAME EACH TREE'S POSES ARE IN. Declared beside the roots because it is
+# a property of the tree, not of any one episode in it.
+#
+# It cannot be read off a tree's calibration: `release` ships Z-up calibration
+# beside Y-up poses, so `up_axis` on a calibration file says nothing about the
+# poses. And it cannot be defaulted per episode: `curation` stamped
+# UP_AXIS_BUILT = "y" -- true of the tree react_preprocess builds, false of
+# every tree derived from it -- so release_cut published `up_axis: y` over
+# poses bit-identical to release_zup's Z-up ones.
+#
+# Two things broke on that. Downstream users read the field to decide what to
+# do with the poses. And `_already_zup` reads it to decide whether a tree still
+# needs rotating, so a re-run over a tree claiming "y" rotates Z-up poses a
+# second time -- a net 180 degrees that every projection is blind to, since the
+# conversion rotates the calibration too.
+TREE_UP_AXIS = {
+    RELEASE:     "y",   # react_preprocess copies poses straight out of the H5
+    RELEASE_ZUP: "z",   # convert_release_zup rotated them
+    RELEASE_CUT: "z",   # sliced out of the Z-up tree
+}
 FORCE_ROOT = Path("/media/yxma/Disk1/twm/force_recovery")
 
 # Only sessions from here on are in scope. The 2026-05/06 sessions are already
