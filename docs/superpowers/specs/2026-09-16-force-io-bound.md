@@ -35,9 +35,23 @@ frame i sits on disk between RealSense frame i and depth frame i. Walking the
 gel stream in order therefore strides across the entire file, and filesystem
 readahead pulls in the RealSense chunks adjacent to each gel chunk.
 
-Measured: **7.8 GB read per sensor-side** against ~4.2 GB of compressed gel
-bytes actually needed -- roughly **1.9x read amplification**, all of it
-readahead fetching data no one asked for.
+**CORRECTION (measured later the same evening).** An earlier version of this
+note claimed ~1.9x read amplification from readahead. That number was not
+measured -- it came from dividing 7.8 GB read per sensor-side by a compressed
+gel size ASSUMED from the file's overall compression ratio. Measured directly
+with `/proc/self/io` while reading 150 gel frames strided across a file:
+
+    decompressed          138 MB
+    actually read off disk  99 MB      -> 0.72x
+
+There is **no read amplification**. The disk delivers almost exactly the
+compressed bytes asked for, and `read_ahead_kb` on this volume is 2048 -- so
+readahead is not fetching waste, it simply cannot bridge the gap either.
+
+The cost is SEEKS, not wasted bytes. `rotational = 1`: this is a mechanical
+disk. Consecutive gel frames sit ~6.4 MB apart (47.5 GB uncompressed over 7371
+frames, six other streams between them), so every frame is its own seek and a
+2 MB readahead spans none of it.
 
 Adding workers multiplies the seeking rather than the throughput, which is
 exactly the 1.08x above. Fewer workers would not help either: one worker
@@ -52,15 +66,21 @@ The run was left to finish (~6 h) rather than made faster and less traceable.
 
 ## Worth trying next time, in order of expected value
 
-1. `posix_fadvise(POSIX_FADV_RANDOM)` on the H5 before walking gel frames.
-   It suppresses the readahead that is fetching the RealSense chunks, and on
-   these numbers that is the whole 1.9x. Cheapest change by far; verify the
-   read volume per side drops toward 4.2 GB before trusting it.
+1. **Read both sides in ONE pass — measured 1.34x.** Left and right are
+   separate jobs today, so every file is traversed twice. But gel-left frame i
+   and gel-right frame i were written at the same moment and sit adjacent on
+   disk, so one seek can serve both. Measured on a real recording, 120 frames:
+
+       left only          14.2 s   118.6 ms/frame
+       left + right       21.3 s    88.7 ms/frame per side   -> 1.34x
+
+   This is the same argument that made encoding single-pass.
 2. Record gel to its own file, or write each dataset contiguously. Removes the
-   interleaving at the source rather than working around it.
-3. Read both sides in ONE pass. Left and right are currently separate jobs, so
-   every file is traversed twice; one traversal serving both halves the
-   striding. This is the same change that made encoding single-pass.
+   interleaving at the source, which is what makes the seeks long.
+3. NOT `posix_fadvise(POSIX_FADV_RANDOM)`. An earlier version of this note put
+   it first, on the strength of an amplification figure that turned out to be
+   an assumption rather than a measurement. There is no readahead waste to
+   suppress; see the correction above.
 
 ## What does NOT follow from this
 
