@@ -83,7 +83,7 @@ git commit -m "feat: detect complete mocap anomaly bouts"
 - Modify: `twm/react_preprocess/mocap_repair.py`
 - Modify: `tests/test_mocap_repair.py`
 
-- [ ] **Step 1: Add failing reconstruction tests**
+- [x] **Step 1: Add failing reconstruction tests**
 
 ```python
 def test_majority_wrong_branch_keeps_correct_observations():
@@ -115,27 +115,27 @@ def test_missing_anchor_is_low_and_original_is_preserved():
     assert (result.confidence[:20] == Confidence.LOW).all()
 ```
 
-- [ ] **Step 2: Run new tests and verify RED**
+- [x] **Step 2: Run new tests and verify RED**
 
 Run: `python -m pytest -q tests/test_mocap_repair.py -k 'majority or sixty or medium or missing_anchor'`
 
 Expected: failures for missing trajectory and confidence APIs.
 
-- [ ] **Step 3: Implement robust trajectory reconstruction**
+- [x] **Step 3: Implement robust trajectory reconstruction**
 
 Use median/MAD boundary velocities from up to 15 clean frames per side. Use linear translation when both velocities are statistically zero, otherwise cubic Hermite. Align quaternion signs, map rotations to the left-anchor tangent space with `Rotation.as_rotvec`, fit Hermite there, and map back with `Rotation.from_rotvec`; use shortest-arc SLERP only for ill-conditioned fits. Iteratively classify measured bout rows with episode-local robust residual scales and 20 mm/12 degree hard inlier caps, refitting for at most five iterations. Preserve inlier rows bit-identically and replace only selected outliers.
 
-- [ ] **Step 4: Implement confidence gates and result contract**
+- [x] **Step 4: Implement confidence gates and result contract**
 
 Add `Confidence(IntEnum)` values NONE/LOW/MEDIUM/HIGH and `PoseRepairResult` arrays for pose, repaired, confidence, valid, event IDs, and event evidence. HIGH requires 15 clean frames per side, duration <=60, calibrated task gate, forward/backward disagreement <=10 mm/5 degrees, unique branch, unit finite quaternions, and reconstructed transitions <=50 mm/30 degrees. MEDIUM gets a candidate but remains invalid; LOW preserves raw poses and is invalid.
 
-- [ ] **Step 5: Verify all repair tests**
+- [x] **Step 5: Verify all repair tests**
 
 Run: `python -m pytest -q tests/test_mocap_repair.py tests/test_pose_repair.py tests/test_pose_flicker.py`
 
 Expected: all pass, including unchanged genuine motion and idempotence.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add twm/react_preprocess/mocap_repair.py tests/test_mocap_repair.py
