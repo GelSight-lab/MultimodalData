@@ -119,6 +119,11 @@ existing output untouched. Only verified output atomically replaces the target.
 Choose an `.mp4` destination. Verification checks decodability/count, not semantic
 alignment; that is the source adapter's responsibility.
 
+The default output is H.264 `yuv444p`, retaining the batch preview format.
+For browser-facing clips, pass `pixel_format="yuv420p"`; this requires even
+frame width and height. Odd dimensions raise an error rather than silently
+resizing or cropping the overlay. Frame input is BGR in either mode.
+
 `twm.scripts.build_episode_previews.iter_preview_panels` exposes the existing
 aligned HDF5 preview generator. Its `build_one_preview` wrapper uses this writer.
 Frame transforms must be deterministic because a verification retry re-renders.
@@ -127,6 +132,7 @@ Frame transforms must be deterministic because a verification retry re-renders.
 
 `twm.force_recovery.visualize.overlay_clip` uses the same compositor and verified
 writer. Its HDF5 readers reopen on retry and close on early encoder failure.
+It explicitly selects `yuv420p` to retain the force review website's video format.
 Tactile frames and depth-panel reference images use
 `open_episode(...).align[side].index_map`, matching the estimator's source adapter
 for both timestamped and legacy recordings. A saved NPZ `source_frame` records

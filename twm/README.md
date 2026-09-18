@@ -412,7 +412,8 @@ disagree on exposure; `tune` writes them to both by default.
 headless soak). `twm/data_collection.py` is a thin compatibility facade.
 
 Before merging any change under `twm/`, run `python -m twm.pipeline_guard`
-(must print `14 checks, 0 violation(s)`) and `python -m pytest tests -q`.
+(currently 15 checks; must report `0 violation(s)`) and `python -m pytest -q`
+(both `tests` and embedded `twm` tests).
 
 ---
 
@@ -778,19 +779,31 @@ force-informed position target from it.
 - **Package README:** [`force_recovery/README.md`](force_recovery/README.md) —
   method, the five validation datasets, and the measured limits
 - **Module map:** [`force_recovery/ARCHITECTURE.md`](force_recovery/ARCHITECTURE.md)
-- **Public API:** `force_recovery/pipeline.py`
+- **Episode force API:** `twm.force_recovery.run_episode.process_side`
+- **Geometry and target helpers:** `twm.force_recovery.pipeline`
 
 ```python
-from force_recovery.pipeline import reconstruct, virtual_target, STIFFNESS_N_PER_MM
+from twm.force_recovery.pipeline import reconstruct, virtual_target, STIFFNESS_N_PER_MM
+from twm.force_recovery.export_force_columns import press_direction
 
-st     = reconstruct(img, ref)                 # dI → RGB LUT → Poisson → depth
-target = virtual_target(pose, force_n, n_hat)  # pose + (F/k)·n̂ , k = 1 N/mm
+st = reconstruct(img, ref)  # LUT geometry; not the deployed v8 force predictor
+# pose: (N, 7), xyz in metres followed by xyzw quaternions; force_n: (N,)
+n_hat = press_direction(task, side, pose)  # R(q) @ [0, -1, 0]
+position_mm = pose[:, :3] * 1000.0
+target_mm = virtual_target(position_mm, force_n, n_hat)  # k = 2 N/mm
 ```
 
-Validated on five public force-labelled GelSight datasets with zero training
-frames from this rig (ρ 0.946–0.986 on the four markerless sets, each beside a
-within-group shuffle control). Two limits to read before using the numbers:
-accuracy is depth-dependent (11 µm at a 0.3 mm press, 281 µm at 2.25 mm), and
-the calibration is per-group, so ρ is a rank correlation rather than a
-transferable absolute-newton scale. Details and negative results in the
-package README.
+`virtual_target` returns xyz positions in millimetres, not seven-component
+poses. When assembling a pose target, convert xyz back to metres and retain
+the original orientation.
+
+For deployed v8 force inference, use the episode API, which owns tactile
+alignment, reference selection and duplicate-frame handling. Its predictor uses
+calibration-free features, separately from the LUT geometry above. The configured
+force range is 0–15 N; absolute accuracy on React is not ground-truth validated.
+See the package README for calibration-domain measurements and limitations.
+
+Targets use one shared controller stiffness of 2000 N/m (2 N/mm) and the sensor
+normal, local −Y. `F/k` is a virtual controller displacement, not gel indentation.
+Use the input pose's world frame consistently; do not transform already-Z-up
+poses a second time. These targets alone do not guarantee a realized contact force.

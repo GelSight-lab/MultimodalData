@@ -10,11 +10,16 @@ selection, required assets, isolated batch processing, resuming, validation
 and the conditions for publishing. Do not run a whole-dataset migration from
 the historical research commands.
 
-**Status:** force estimation is ready for a staged reprocessing run. The
-reviewed artifacts are seven 30-second clips, not a completed dataset rebuild.
-Force-informed action export has a separate stiffness-policy decision: the
-current 2 N/mm setting fails the export displacement gate above 8.5 N.
-No stiffness change or whole-dataset publication is included in v8.
+**Controller convention:** virtual targets use the shared **2 N/mm (2000 N/m)**
+stiffness and the sensor's local **−Y** normal, rotated into the pose's world
+frame. `F/k` is a controller displacement, not measured gel compression:
+15 N gives 7.5 mm and is not rejected merely for exceeding gel thickness.
+The exporter retains identity, alignment, round-trip and 100 mm displacement
+sanity checks; these are data checks, not a robot-safety certification.
+
+The linked seven-clip v7/v8 comparison is a historical model review, not proof
+of current dataset coverage or publication. Verify those against the specific
+run's inventory, validation report and remote commit receipt.
 
 - [Four-task v7/v8 video review](https://yxma-react-force-recovery.static.hf.space/task-review-2026-09-16-range15/index.html)
 - [Measured results and limitations](../../docs/superpowers/specs/2026-09-16-force-range-extension-results.md)

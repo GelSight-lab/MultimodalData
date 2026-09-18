@@ -5,8 +5,8 @@ This runbook is for the data processor. Run commands from
 steps produce and validate candidate force NPZ files. They do not modify raw
 HDF5, published parquet, RGB videos or Hugging Face repositories.
 
-Full release publication is a separate step. In particular, resolve the
-force-informed-action stiffness policy in Step 6 before exporting targets.
+Full release publication is a separate step. Check the shared controller and
+pose-frame conventions in Step 6 before exporting targets.
 
 ## 1. Freeze the Inputs and Code
 
@@ -357,34 +357,30 @@ The standalone `test_force_names_its_frame.py` currently defaults to an old
 May episode. It is not the all-task validator for this run. Likewise,
 `task_review verify` validates only its seven curated review windows.
 
-## 6. Decide the Force-Informed Action Policy
+## 6. Verify the Force-Informed Action Convention
 
 Force reconstruction and virtual-target generation are separate operations.
 The latter uses `delta_mm = F_N / k_N_per_mm` along
 `R(q_row) @ [0, -1, 0]`: `press_direction()` uses the `body_y` default in
 `dexforce.gel_axis()`, not the dual-ball calibrated axis. It does not measure
-physical gel indentation. LUT depth is a separate field. Some existing export
-descriptions still name the dual-ball axis; correct that provenance to match
-the approved implementation before publishing new action columns.
+physical gel indentation. LUT depth is a separate field. Export provenance must
+describe the axis actually used; older exports may incorrectly name the
+dual-ball axis. Check their generating code and values, not that label alone.
 
-The current shared constant is `dexforce.STIFFNESS_N_PER_M = 2000`, or
-2 N/mm. The existing exporter treats virtual displacement beyond the 4.25 mm
-gel thickness as a failed gate. Therefore any estimate above 8.5 N fails that
-gate; 15 N would produce a 7.5 mm virtual displacement. This was compatible
-with the old 8 N range and is not compatible with the full v8 range.
+The data owner's confirmed convention uses the shared constant
+`dexforce.STIFFNESS_N_PER_M = 2000`, or **2 N/mm**, throughout exporter,
+`pipeline` helpers and preview targets. Do not silently change stiffness or
+clip force to the old 8.5 N threshold. At 15 N the virtual displacement is
+7.5 mm; the gel's 4.25 mm thickness is not a limit on this controller quantity.
+The exporter reports gel-thickness comparisons for historical diagnostics but
+does not reject a target on that basis.
 
-**Stop action publication until the data owner approves a consistent policy.**
-Do not clip force to 8.5 N, ignore a nonzero export exit code, or silently change
-stiffness. If retaining the existing gate, covering the configured 15 N range
-requires k >= 15/4.25 = 3.53 N/mm; 4 N/mm would give 3.75 mm at 15 N, but is
-only an example, not an approved or measured stiffness. Alternatively, the
-physical interpretation of the virtual-target gate can be reviewed separately.
-
-An approved stiffness change must be shared by the exporter, `pipeline`
-utilities and preview targets, recorded in metadata, and followed by new
-target/round-trip tests and preview review. Passing `--stiffness 4` only to
-the exporter while previews retain 2 N/mm would make their targets disagree.
-This handoff leaves the shared constant at 2 N/mm.
+Export still checks no-contact identity, row alignment, `k * |delta| == F`,
+and a 100 mm maximum virtual-displacement sanity bound. Do not ignore a failed
+exit code. Passing these checks is not a robot-safety certification or proof
+of absolute force accuracy. A future explicit stiffness override must also
+reach every downstream consumer and be recorded in metadata; otherwise preview
+and exported targets disagree.
 
 Export also calls `world_frame.build_declaration()`, which obtains world
 offsets from `<REACT_RELEASE>/<task>/episodes.jsonl`, not `REACT_STAGE_ROOT`.
@@ -396,10 +392,10 @@ indices must be repaired from authoritative preprocessing records in a new
 snapshot; do not accept the reader's zero-offset fallback or point it at a
 changing production tree. Retain the matching calibration files as well.
 
-After these decisions and checks, the existing commands are:
+After these checks, the existing commands are:
 
 ```bash
-# Only after agreeing the action policy and validating input pose conventions.
+# Only after validating input pose conventions and the frozen inventory.
 python -m twm.force_recovery.export_force_columns export --root "$RUN/release_force"
 python -m twm.force_recovery.export_force_columns verify --root "$RUN/release_force"
 ```
@@ -432,12 +428,11 @@ The candidate force NPZs are not a release. After acceptance:
 4. Rebuild per-segment indices/splits and every force-dependent preview.
    `python twm/scripts/build_release_previews.py --task pushT --stage-root "$RUN/release_cut" --overwrite --clip-s 30 --speed 1`
    requests 30-second, normal-speed previews after explicitly wiring the
-   accepted force/calibration roots. The CLI also accepts `motherboard` and
-   `rope`, but currently rejects `toy`: its choices use `CALIB_DIRS`. Treat
-   four-task release preview automation as a downstream integration blocker,
-   not a reason to omit toy. `task_review.render()` demonstrates toy rendering
-   through the canonical `build_one_preview()` API with per-session calibration;
-   its fixed review windows are not a full release-preview replacement.
+   accepted force/calibration roots. Pass `--force-root "$RUN/force"` so overlays
+   read the accepted candidates, not the production default. The CLI accepts
+   `motherboard`, `pushT`, `rope` and `toy`; render each selected task with its
+   per-session calibration. `task_review.render()` has fixed review windows
+   and is not a full release-preview replacement.
 5. Certify the final cut tree, verify the force provenance survived conversion
    and segmentation, decode the videos, and inspect samples from all four tasks.
 6. Upload through the current segmented-release publisher only after approval.
@@ -465,7 +460,7 @@ the segmented main release. Do not rerun a force-disabled release path with
 - Successful worker exit codes and logs with no unhandled failed sides.
 - Full validation report with named-frame checks and per-task/side diagnostics.
 - Reviewed full-episode samples, especially PushT weak and strong contacts.
-- Explicit action-stiffness and pose-frame decision before action export.
+- Verified shared controller stiffness, sensor normal and pose frame before export.
 - New downstream force metadata and previews, not cached old output.
 - Backups, target HF revision, publication approval and rollback location.
 
