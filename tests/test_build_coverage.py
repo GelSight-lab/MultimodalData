@@ -11,6 +11,7 @@ unbuilt ones did not appear anywhere. A scheduler that reports a stage complete
 when half its input has not been touched will walk straight past it and cut,
 index and publish the half.
 """
+import h5py
 import pytest
 
 import twm.pipeline_stages as PS
@@ -23,10 +24,18 @@ def trees(tmp_path, monkeypatch):
                       ("2026-05-11", ("episode_000",))):
         (data / "rope" / date).mkdir(parents=True)
         for e in eps:
-            (data / "rope" / date / f"{e}.h5").write_bytes(b"h5")
+            with h5py.File(data / "rope" / date / f"{e}.h5", "w") as f:
+                for side in ("left", "right"):
+                    f[f"gelsight/{side}/frames"] = [0]
     # only the first was built
     (rel / "rope" / "meta" / "2026-09-14").mkdir(parents=True)
-    (rel / "rope" / "meta" / "2026-09-14" / "episode_000.parquet").write_bytes(b"")
+    meta = rel / "rope" / "meta" / "2026-09-14"
+    videos = rel / "rope" / "videos" / "2026-09-14" / "episode_000"
+    videos.mkdir(parents=True)
+    for side in ("left", "right"):
+        (videos / f"tactile_{side}.mp4").write_bytes(b"encoded stream")
+    (meta / "episode_000._detect.pt").write_bytes(b"sidecar")
+    (meta / "episode_000.parquet").write_bytes(b"parquet")
     monkeypatch.setattr(PS, "DATA_ROOT", data)
     monkeypatch.setattr(PS, "RELEASE", rel)
     monkeypatch.setattr(PS, "SCOPE_SINCE", "2026-09-10")

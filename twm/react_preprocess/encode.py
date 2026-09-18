@@ -64,13 +64,21 @@ class VideoWriter:
 
     def __exit__(self, exc_type, exc, tb):
         close_error = None
+        wait_error = None
         try:
             if self._proc.stdin:
                 self._proc.stdin.close()
-        except BrokenPipeError as error:
+        except Exception as error:
             close_error = error
         finally:
-            rc = self._proc.wait()
+            try:
+                rc = self._proc.wait()
+            except Exception as error:
+                wait_error = error
+        # Ordinary cleanup failures must not hide the frame/encoding error
+        # that caused us to leave the context. Process-control errors escape.
+        if exc_type is None and wait_error is not None:
+            raise RuntimeError(f"ffmpeg wait failed writing {self.path}") from wait_error
         if exc_type is None and (rc != 0 or close_error is not None):
             raise RuntimeError(f"ffmpeg failed ({rc}) writing {self.path}") from close_error
         return False

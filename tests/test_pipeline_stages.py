@@ -124,10 +124,18 @@ def test_the_cut_is_blocked_when_the_zup_tree_is_missing(monkeypatch):
 
 
 def test_a_stage_with_its_prerequisite_satisfied_is_not_blocked(tmp_path, monkeypatch):
+    from twm.react_preprocess.complete import STREAMS
+
     d = tmp_path / "pushT" / "meta" / "2026-09-12"
     d.mkdir(parents=True)
+    video_dir = tmp_path / "pushT/videos/2026-09-12/episode_000"
+    video_dir.mkdir(parents=True)
+    for stream in STREAMS:
+        (video_dir / f"{stream}.mp4").write_bytes(b"encoded stream")
+    (d / "episode_000._detect.pt").write_bytes(b"sidecar")
     (d / "episode_000.parquet").write_bytes(b"x")
     monkeypatch.setattr(PS, "RELEASE", tmp_path)
+    monkeypatch.setattr(PS, "DATA_ROOT", tmp_path / "no-source")
     assert PS.blocked(PS.BY_NAME["force"], "pushT") is None
 
 

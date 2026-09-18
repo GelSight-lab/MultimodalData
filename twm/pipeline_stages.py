@@ -119,7 +119,24 @@ def _has(root: Path, task: str, pattern: str) -> bool:
     return d.is_dir() and any(d.rglob(pattern))
 
 
-def _built(task):        return _has(RELEASE, task, "episode_*.parquet")
+def _build_complete(task: str, key: str) -> bool:
+    """Apply the scheduled build's RGB-on, depth-off artifact requirements."""
+    from .react_preprocess.complete import is_complete
+
+    date, episode = key.split("/", 1)
+    source = DATA_ROOT / task / date / f"{episode}.h5"
+    try:
+        return is_complete(RELEASE, task, date, episode,
+                           source_h5=source if source.is_file() else None,
+                           encode_video=True, with_depth=False)
+    except OSError:
+        # The builder diagnoses/repairs unreadable sources. A scheduler must
+        # keep them pending instead of trusting old output or aborting discovery.
+        return False
+
+
+def _built(task):        return any(_build_complete(task, key)
+                                    for key in _episodes_in(RELEASE, task))
 def _forced(task):       return _has(FORCE_ROOT, task, "*.npz")
 def _exported(task):     return _has(RELEASE, task, "episode_*.parquet")
 def _curated(task):      return (RELEASE / task / "bad_frames.json").is_file()
@@ -135,8 +152,8 @@ def _build(task, date=None, episodes=(), **_):
     operator -- worked. The stage was in the plan and had never run.
 
     With no date it asks `coverage` what is missing and builds exactly that,
-    one command per date. Rebuilding an episode that already has a parquet
-    costs hours and produces the same bytes.
+    one command per date. Only episodes with every required build artifact
+    are skipped; interrupted or metadata-only output remains pending.
 
     `twm.react_preprocess`, not `react_preprocess`: the latter only imports
     with cwd=twm/, which is how the old run_stages invoked it. Every other
@@ -247,7 +264,7 @@ def _publish(**_):
 
 
 STAGES: tuple[Stage, ...] = (
-    Stage("build", "source H5 -> videos + parquet (with depth)",
+    Stage("build", "source H5 -> videos + parquet + detection sidecar",
           None, _built, _build),
     Stage("force", "per-row normal force from the tactile frames",
           "build", _forced, _force,
@@ -371,7 +388,8 @@ def coverage(stage_name: str, task: str) -> Coverage:
            else _episodes_in(RELEASE, task))
     out_root = {"zup": RELEASE_ZUP, "segment": RELEASE_CUT,
                 "index": RELEASE_CUT}.get(stage_name, RELEASE)
-    out = _episodes_in(out_root, task)
+    out = ({key for key in src if _build_complete(task, key)}
+           if stage_name == "build" else _episodes_in(out_root, task))
     missing = set(src) - set(out)
     if stage_name == "segment" and missing:
         # An episode the cut deliberately dropped produced nothing BY DESIGN —

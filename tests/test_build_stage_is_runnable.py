@@ -7,9 +7,9 @@ time. It was only ever run by hand, with a date typed in, which is why nobody
 noticed: the manual path worked and the scheduled one had never executed.
 
 Given no date, it should build exactly what `coverage` says is missing, one
-command per date. Rebuilding an episode that already has a parquet costs hours
-and produces the same bytes.
+command per date. Only an episode with every required build artifact is done.
 """
+import h5py
 import pytest
 
 import twm.pipeline_stages as PS
@@ -22,9 +22,17 @@ def trees(tmp_path, monkeypatch):
                       ("2026-09-15", ("episode_000",))):
         (data / "rope" / date).mkdir(parents=True)
         for e in eps:
-            (data / "rope" / date / f"{e}.h5").write_bytes(b"h5")
+            with h5py.File(data / "rope" / date / f"{e}.h5", "w") as f:
+                for side in ("left", "right"):
+                    f[f"gelsight/{side}/frames"] = [0]
     (rel / "rope" / "meta" / "2026-09-14").mkdir(parents=True)
-    (rel / "rope" / "meta" / "2026-09-14" / "episode_000.parquet").write_bytes(b"")
+    meta = rel / "rope" / "meta" / "2026-09-14"
+    videos = rel / "rope" / "videos" / "2026-09-14" / "episode_000"
+    videos.mkdir(parents=True)
+    for side in ("left", "right"):
+        (videos / f"tactile_{side}.mp4").write_bytes(b"encoded stream")
+    (meta / "episode_000._detect.pt").write_bytes(b"sidecar")
+    (meta / "episode_000.parquet").write_bytes(b"parquet")
     monkeypatch.setattr(PS, "DATA_ROOT", data)
     monkeypatch.setattr(PS, "RELEASE", rel)
     monkeypatch.setattr(PS, "SCOPE_SINCE", "2026-09-10")

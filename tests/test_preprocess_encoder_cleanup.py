@@ -53,6 +53,35 @@ def test_unsupported_pixel_format_is_rejected_before_starting_encoder(tmp_path, 
         encode.VideoWriter(tmp_path / "out.mp4", pix_fmt="gray8")
 
 
+@pytest.mark.parametrize("body_error", [False, True])
+@pytest.mark.parametrize("failure_at", ["close", "wait", "both"])
+def test_ordinary_cleanup_errors_preserve_body_error_and_otherwise_report_context(
+        tmp_path, process, body_error, failure_at):
+    cleanup_error = OSError("cleanup failed")
+    original = ValueError("invalid source frame")
+    if failure_at in ("close", "both"):
+        class FailedClose(io.BytesIO):
+            def close(self):
+                super().close()
+                raise cleanup_error
+        process.stdin = FailedClose()
+    if failure_at in ("wait", "both"):
+        def failed_wait():
+            process.waited = True
+            raise cleanup_error
+        process.wait = failed_wait
+    with pytest.raises(ValueError if body_error else RuntimeError) as caught:
+        with encode.VideoWriter(tmp_path / "out.mp4"):
+            if body_error:
+                raise original
+    assert process.waited
+    if body_error:
+        assert caught.value is original
+    else:
+        assert "out.mp4" in str(caught.value)
+        assert caught.value.__cause__ is cleanup_error
+
+
 @pytest.mark.parametrize("shape,dtype,pix_fmt,codec", [
     ((2, 3, 3), np.uint8, "bgr24", "libx264"),
     ((1, 3, 2, 3), np.uint8, "bgr24", "libx264"),
