@@ -11,13 +11,13 @@ target* displaced past the contact surface,
 
 where ``n_hat`` is the pressing direction (the sensor surface normal, in
 world frame from the OptiTrack quaternion) and ``k`` the stiffness an
-impedance controller would run with at deployment. A policy trained on
-these targets reproduces the demonstrated force through the controller,
-with no force interface required; in free space ``F_n = 0`` and the target
-is exactly the observed pose, so no-contact behaviour is untouched.
+impedance controller would run with at deployment. Force reproduction depends
+on that controller and the effective contact stiffness. ``F_n / k`` is a
+controller virtual displacement, not measured gel compression. In free space
+``F_n = 0`` and the target is exactly the observed pose.
 
 Frame convention: sensor pose is (x, y, z, qx, qy, qz, qw) in the world
-frame; the gel faces along the sensor's local ``SENSOR_NORMAL_LOCAL`` axis.
+frame; ``gel_axis`` defaults to sensor local -Y (``body_y``).
 The virtual target must move the *mount* toward the surface, i.e. along the
 pressing direction.
 """
@@ -35,37 +35,26 @@ import numpy as np
 # between the exported dataset column and the site figure is a silent lie
 # about what the action means.
 #
-# SETTLED BY MEASUREMENT, as the previous note here said it should be.
+# The shared controller assumption remains 2000 N/m = 2 N/mm. Historical
+# diagnostics below used an earlier force calibration (480,080 force samples,
+# 72 sides); they are not a current v8 range report or a stiffness measurement:
 #
-# It read: "1000 N/m = 1 N/mm is the project's declared starting point ... the
-# top of that band exceeds the 4.25 mm gel thickness, i.e. at high force this k
-# commands a target further past the surface than the gel could ever be
-# compressed — an argument for raising k, to be settled by the measured
-# penetration distribution rather than by taste." The distribution is now
-# measured over the whole release (480,080 force samples, 72 sides):
-#
-#     k [N/mm]   max penetration   rows past the 4.25 mm gel
+#     k [N/mm]   max virtual F/k   rows with F/k > 4.25 mm
 #       1.00        7.870 mm              14.98%
 #       1.85        4.254 mm               2.22%
 #       2.00        3.935 mm               0.00%
 #
-# The binding constraint is max |F| = 7.870 N, which needs k >= 1.852 N/mm for
-# the deepest commanded target to stay inside the gel. 2.0 N/mm clears it with
-# margin and is still low-mid for Franka-class arms (~150-3000 N/m).
-#
-# This is an ASSUMPTION about the environment either way — raising it does not
-# make it measured. What changed is that 1.0 was measurably WRONG: it commanded
-# a target past the surface further than the gel can compress on 15% of rows,
-# and `export_force_columns.verify` now fails rather than reports if that ever
-# returns.
+# That historical max force, 7.870 N, gives F/k <= 4.25 mm at k >= 1.852 N/mm.
+# This comparison once motivated the value, but mistook controller virtual
+# displacement for physical gel compression. It does not validate or bound
+# controller stiffness. Export now retains those comparisons as diagnostics
+# and applies only a loose 100 mm displacement sanity bound alongside its
+# identity and alignment checks. No controller or gel stiffness was measured.
 STIFFNESS_N_PER_M = 2000.0
 
-# The pressing direction in the rigid-body frame is NOT a coordinate axis:
-# the rig's dual-ball calibration measures it as ``gel_axis_in_rigid``
-# (pose-to-pose consistency ~1 degree), pointing outward through the gel —
-# verified against the same file's geometry (gel_center = gelball - 5 mm *
-# axis) and by the sign of the approach velocity at force onsets, which the
-# naive [0, 0, 1] guess got wrong.
+# The legacy dual-ball source reads ``gel_axis_in_rigid`` from calibration.
+# Its repeatability does not establish a gel surface normal; the default is
+# sensor local -Y, as explained in ``gel_axis`` below.
 # The task -> calibration-epoch mapping has exactly one home: calib_epoch.
 # This module used to carry its own copy (the mapping existed in five files),
 # which is how every motherboard preview shipped with pushT's extrinsics.
@@ -87,8 +76,8 @@ def gel_axis(task: str, side: str, source: str | None = None) -> np.ndarray:
     -y.
 
     `source="dual_ball"` returns the calibrated `gel_axis_in_rigid`, kept
-    because it is what the published files contain and what earlier results
-    used.
+    for comparison with earlier results that used the dual-ball axis. Current
+    exports use the selected default, normally body_y.
 
     WHY -Y IS THE DEFAULT. `gel_axis_in_rigid` is
     normalize(gelball_centre - refball_centre): the line between two

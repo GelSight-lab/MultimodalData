@@ -25,9 +25,9 @@ from .marker_removal import stages_depth as reconstruct_marker_gel  # noqa: F401
 # Stiffness for the force -> position-target conversion.
 #
 # DERIVED, not declared: `dexforce.STIFFNESS_N_PER_M` is the single source of
-# truth. It is an ASSUMPTION about the environment, not a measured property of
-# it, which is why it is exported as a named constant and written into the
-# dataset sidecar rather than left at a call site — anyone reading a target
+# truth. It is an ASSUMPTION about the deployment controller, not a measured
+# gel property, which is why it is exported as a named constant and written
+# into the dataset sidecar rather than left at a call site — anyone reading a target
 # pose must be able to see which stiffness produced it.
 # ---------------------------------------------------------------------------
 from .dexforce import STIFFNESS_N_PER_M
@@ -57,15 +57,15 @@ def force_from_depth(st: dict, model) -> float:
 
 
 def penetration_mm(force_n, k_n_per_mm: float = STIFFNESS_N_PER_MM):
-    """How far past the surface a stiffness-k environment would be pushed.
+    """Controller virtual displacement F/k, in millimetres.
 
     Zero force gives exactly zero penetration (not NaN), so a no-contact frame
     yields a target pose identical to the observed one.
 
     This is a virtual F/k displacement, not measured gel indentation. The
     current shared assumption is 2 N/mm: 15 N gives 7.5 mm. The export gate
-    rejects displacement above 4.25 mm, so full-range v8 action export needs
-    an explicit policy decision. This function does not clip displacement.
+    applies a loose 100 mm displacement sanity bound; gel thickness is not an
+    action gate. This function does not clip displacement.
     """
     return np.asarray(force_n, dtype=float) / float(k_n_per_mm)
 

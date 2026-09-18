@@ -36,21 +36,20 @@ recorded in three places so a reader can never be unaware of it: as per-field
 parquet metadata on each new column, as schema-level metadata under the key
 ``twm.force_export``, and in the sidecar JSON next to the parquet.
 
-Pressing direction (derived, not hard-coded)
+Pressing direction (rotated with each pose)
 --------------------------------------------
-``n_hat = R(q_row) @ gel_axis_in_rigid`` where ``gel_axis_in_rigid`` comes
-from the rig's dual-ball calibration (``calibration/*/T_gel_to_rigid_<side>``,
-pose-to-pose consistency <= 1.07 deg) and ``R(q_row)`` is the *per-row*
-world rotation of the sensor rigid body.  The direction therefore rotates
-with the sensor and is never a fixed world axis.  In the rigid-body frame
-that axis is dominated by -Y (left ``[-0.174, -0.932, -0.316]``, right
-``[0.350, -0.925, 0.149]``): the naive "tool z axis" guess would be 71-108
-deg off, which is why it is read from calibration rather than assumed.
+``n_hat = R(q_row) @ gel_axis(task, side)`` uses the default source selected
+in ``dexforce``: ``body_y``, sensor local -Y. The legacy ``dual_ball`` source
+reads ``gel_axis_in_rigid`` from ``calibration/*/T_gel_to_rigid_<side>.json``;
+it is retained for comparison, not selected by default. ``R(q_row)`` is the
+per-row world rotation, so the pressing direction rotates with the sensor.
+The selected source is recorded in the parquet header and sidecar.
 
-The *sign* and the direction itself are validated against the motion data
-alone by :func:`direction_agreement`, per sensor-side: during force rise the
-mount must advance along ``n_hat`` and during release it must retreat.  The
-per-side numbers land in the sidecar; the aggregate is printed by ``verify``.
+:func:`direction_agreement` reports motion/force agreement per sensor-side:
+during force rise the mount is expected to advance along ``n_hat`` and during
+release to retreat. These diagnostics do not independently establish a
+surface normal. The per-side numbers land in the sidecar; ``verify`` prints
+the aggregate.
 
 Edge cases, all explicit
 ------------------------
@@ -71,8 +70,8 @@ Edge cases, all explicit
 
 Usage
 -----
-    python -m force_recovery.export_force_columns export [--stiffness 1.0]
-    python -m force_recovery.export_force_columns verify
+    python -m twm.force_recovery.export_force_columns export [--stiffness 2.0]
+    python -m twm.force_recovery.export_force_columns verify
 """
 from __future__ import annotations
 
@@ -85,6 +84,7 @@ import numpy as np
 import pyarrow as pa
 import pyarrow.parquet as pq
 
+from . import dexforce
 from .dexforce import gel_axis, quat_to_matrix
 from .pipeline import STIFFNESS_N_PER_MM, penetration_mm
 from .run_episode import OUT_ROOT as FORCE_ROOT
@@ -94,8 +94,8 @@ EXPORT_ROOT = Path("/media/yxma/Disk1/twm/release_force")
 
 # Stiffness for ``penetration = F / k``.  NOT redeclared here: it comes from
 # ``pipeline.STIFFNESS_N_PER_MM``, itself derived from the single definition in
-# ``dexforce.STIFFNESS_N_PER_M``, where the value and the measurement that
-# settled it are written down.  A stiffness that disagreed between this dataset
+# ``dexforce.STIFFNESS_N_PER_M``, where the controller assumption is documented.
+# A stiffness that disagreed between this dataset
 # column and the rest of the codebase would be a silent lie about what the
 # action means -- which is why the value is not repeated here.  It used to be,
 # as "(1000 N/m = 1 N/mm, the project's declared starting point)" alongside a
@@ -109,10 +109,8 @@ EXPORT_ROOT = Path("/media/yxma/Disk1/twm/release_force")
 # read F/k as a gel compression and so compared a control quantity against
 # sensor geometry. It no longer does; see `_gate`.
 
-# GelSight Mini elastomer thickness; the hard physical ceiling a penetration
-# interpreted as gel compression may not exceed. Defined in lut_calibration,
-# beside the other sensor geometry, and imported so the reconstruction and the
-# exporter cannot disagree about how thick the gel is.
+# GelSight Mini elastomer thickness, retained for historical comparison
+# diagnostics only. It is not a bound on controller virtual displacement.
 from .lut_calibration import GEL_THICKNESS_MM  # noqa: E402
 
 # A commanded virtual deflection larger than this means the stiffness is wrong
@@ -148,7 +146,7 @@ def press_direction(task: str, side: str, pose: np.ndarray) -> np.ndarray:
     """Per-row unit pressing direction in the world frame, ``(T, 3)``.
 
     ``pose`` is ``(T, 7)`` = x, y, z, qx, qy, qz, qw.  See the module
-    docstring for why the local axis comes from calibration.
+    docstring for the body_y default and optional legacy calibration source.
     """
     axis = gel_axis(task, side)
     n = quat_to_matrix(np.asarray(pose, np.float64)[:, 3:POSE_DIM]) @ axis
@@ -161,9 +159,9 @@ def direction_agreement(pose_xyz_mm: np.ndarray, n_hat: np.ndarray,
                         df_floor: float = 0.5) -> dict:
     """Does the mount actually advance along ``n_hat`` when force rises?
 
-    Uses only pose + force, no calibration, so it is an independent check on
-    the direction taken from calibration.  Returns the mean along-normal
-    velocity during force rise (should be > 0) and during release (< 0), and
+    Uses pose + force to check agreement with the supplied direction; it does
+    not independently identify the surface normal. Returns the mean
+    along-normal velocity during force rise (should be > 0) and release (< 0), and
     the correlation between dF and the along-normal velocity.
     """
     T = len(force)
@@ -290,9 +288,8 @@ def build_side(task: str, date: str, ep: str, side: str, table: pa.Table,
     contact = force > 0.0
     # FORCE-ONLY. `stiffness is None` means the operator chose to publish the
     # measurement without the control policy layered on it. Both derived
-    # columns are functions of k, so with no k there is nothing to derive --
-    # and nothing computed here that the 4.25 mm gate could refuse. Expressing
-    # it as an absent k rather than a "skip these columns" flag is what makes
+    # columns are functions of k, so with no k there is nothing to derive.
+    # Expressing it as an absent k rather than a "skip these columns" flag makes
     # that structural: there is no path on which the derived columns are
     # written from a stiffness nobody supplied.
     # n_hat is the pressing direction and needs no stiffness; only the
@@ -368,7 +365,9 @@ def _field_meta(name: str, stiffness: float | None) -> dict:
                                "rows (tactile_<side>_is_new == False)"}
     elif name.endswith("_penetration_mm"):
         common |= {"twm.units": "mm",
-                   "twm.desc": "force / stiffness; ASSUMED stiffness, see "
+                   "twm.desc": "controller virtual displacement = force / "
+                               "stiffness; not gel compression; ASSUMED "
+                               "controller stiffness, see "
                                "twm.stiffness_n_per_mm"}
     elif name.endswith("_source_frame"):
         common |= {"twm.units": "index",
@@ -384,7 +383,8 @@ def _field_meta(name: str, stiffness: float | None) -> dict:
                    "twm.desc": "DexForce virtual target: observed pose with "
                                "position advanced by penetration_mm along the "
                                "per-row pressing direction "
-                               "R(q) @ gel_axis_in_rigid; quaternion copied; "
+                               "R(q) @ gel_axis(task, side), source recorded "
+                               "in twm.force_export; quaternion copied; "
                                "identical to the observed pose when force==0"}
     return common
 
@@ -409,9 +409,15 @@ def export_episode(task: str, date: str, ep: str, stiffness: float | None,
         "generator": "twm.force_recovery.export_force_columns",
         "stiffness_n_per_mm": stiffness,
         "penetration": "penetration_mm = force_normal_n / "
-                       "stiffness_n_per_mm  (ASSUMED stiffness)",
-        "press_direction": "R(q_row) @ gel_axis_in_rigid from "
-                           "calibration/*/T_gel_to_rigid_<side>.json",
+                       "stiffness_n_per_mm (ASSUMED controller stiffness; "
+                       "virtual displacement, not gel compression)",
+        "press_direction": (
+            "R(q_row) @ gel_axis(task, side); "
+            f"source={dexforce.GEL_AXIS_SOURCE_DEFAULT}; "
+            + ("sensor local -Y [0, -1, 0]"
+               if dexforce.GEL_AXIS_SOURCE_DEFAULT == "body_y" else
+               "gel_axis_in_rigid from "
+               "calibration/*/T_gel_to_rigid_<side>.json")),
         "no_contact_rule": "force == 0 -> penetration 0 and target_pose is a "
                            "copy of sensor_<side>_pose",
         "duplicate_rows": "tactile_<side>_is_new == False rows reuse the "
@@ -638,26 +644,18 @@ def verify(root: Path = EXPORT_ROOT, task: str | None = None) -> dict:
         "force_only": force_only,
         "penetration_p50_p95_p99_max_mm": (
             None if force_only else _pct(pen, [50, 95, 99, 100])),
-        # None, not 0.0: "no penetration column was written" and "every
-        # penetration is inside the gel" are different findings, and the gate
-        # must not read the first as the second.
+        # Historical gel-thickness comparisons, not action gates. None means
+        # no virtual displacement column was written, not a measured zero.
         "penetration_over_gel_thickness_frac": (
             None if force_only else float((pen > GEL_THICKNESS_MM).mean())),
         "sides_with_p95_over_gel": (None if force_only else int(sum(
             e["pen_p95_mm"] > GEL_THICKNESS_MM for e in ep_stats))),
         "gel_stiffness_implied_n_per_mm_p5_p25_p50_p75_p95": _pct(
             k_gel, [5, 25, 50, 75, 95]),
-        # Minimum stiffness that keeps a penetration inside the gel. These are
-        # LOWER BOUNDS, so they must be quoted rounded UP — the README used to
-        # carry k_for_max_within_gel = 1.7141 as "k ~ 1.7", and 7.285/1.7 =
-        # 4.285 mm, which is outside the 4.25 mm gel. Rounding a threshold to
-        # the nearest value inverts what it asserts.
-        #
-        # The p95 over ALL rows is a poor number to choose a stiffness from:
-        # most rows are free space, so it is mostly a percentile of zeros. The
-        # contact-only figure is the one a user needs, and it is larger. The
-        # two values were quoted here as "6.86 mm against 5.78 mm" until the
-        # channel moved underneath them; `verify` prints both every run.
+        # Historical values of k for which F/k equals the gel thickness.
+        # Retained for comparison; these are not controller recommendations
+        # or evidence of physical gel compression. All-row and contact-only
+        # percentiles differ because free-space rows contribute zeros.
         "k_for_p95_within_gel": float(np.percentile(force, 95)
                                       / GEL_THICKNESS_MM),
         "k_for_contact_p95_within_gel": float(
@@ -667,8 +665,7 @@ def verify(root: Path = EXPORT_ROOT, task: str | None = None) -> dict:
         # because k was 1.0 N/mm and the two were numerically equal. The
         # README quoted it as a penetration.
         # None under force-only: a penetration is force/k and there is no k.
-        # The k_for_*_within_gel figures above survive -- they say what
-        # stiffness WOULD be needed, which is exactly the open question.
+        # The historical k_for_*_within_gel comparisons survive without a k.
         "contact_p95_penetration_mm": (
             None if force_only
             else float(np.percentile(force[force > 0], 95) / k)),
@@ -717,11 +714,8 @@ def verify(root: Path = EXPORT_ROOT, task: str | None = None) -> dict:
                 "p95_mm": float(np.percentile(force, 95) / kk),
                 "max_mm": float(force.max() / kk),
                 "frac_over_gel": float((force / kk > GEL_THICKNESS_MM).mean()),
-            # The shipped k joins the candidates when there IS one. Under
-            # force-only this sweep is the most useful thing in the report --
-            # it is precisely "what would each candidate stiffness give", the
-            # question the withheld columns are waiting on -- so it is kept,
-            # with None simply not a candidate.
+            # Retain the historical candidate sweep in force-only reports,
+            # with None simply not a candidate. Gel comparisons are not gates.
             } for kk in sorted({0.5, 1.0, 1.5, 3.0, 5.6, 15.4}
                                | ({k} if k is not None else set()))},
     }
@@ -753,31 +747,32 @@ def _print(report: dict) -> None:
           "%.1f/%.1f/%.1f%%)"
           % (100 * report["no_contact_frac_global"], *nc))
     if report.get("force_only"):
-        print("penetration / virtual targets: NOT PUBLISHED (force-only; no "
-              "approved stiffness for the measured range)")
-        print(f"  stiffness that WOULD keep contact p95 inside the "
-              f"{GEL_THICKNESS_MM} mm gel: "
+        print("penetration / virtual targets: NOT PUBLISHED (force-only; "
+              "no controller stiffness supplied)")
+        print(f"  historical gel comparison (not a gate): k for contact "
+              f"p95 F/k <= {GEL_THICKNESS_MM} mm: "
               f">= {report['k_for_contact_p95_within_gel']:.2f} N/mm, "
               f"and the max needs >= {report['k_for_max_within_gel']:.2f}")
     else:
-        print("penetration p50/p95/p99/max: %.4f / %.3f / %.3f / %.3f mm"
+        print("virtual displacement p50/p95/p99/max: %.4f / %.3f / %.3f / %.3f mm"
               % report["penetration_p50_p95_p99_max_mm"])
-        print(f"  rows over gel thickness {GEL_THICKNESS_MM} mm: "
+        print(f"  historical gel comparison (not a gate): rows with F/k "
+              f"> {GEL_THICKNESS_MM} mm: "
               f"{100 * report['penetration_over_gel_thickness_frac']:.2f}%  "
               f"sides with p95 over it: {report['sides_with_p95_over_gel']}"
               f"/{report['n_sensor_sides']}")
-    print("  gel stiffness implied by the estimator's own indentation "
-          "(F / max_depth_mm, F>0.5 N):")
+    print("  historical F / max_depth_mm diagnostic (F>0.5 N; geometry "
+          "calibration dependent, not controller stiffness):")
     print("    p5/p25/p50/p75/p95 = %.1f / %.1f / %.1f / %.1f / %.1f N/mm"
           % report["gel_stiffness_implied_n_per_mm_p5_p25_p50_p75_p95"])
-    print(f"  k so that p95 penetration <= gel thickness: "
+    print(f"  historical k for p95 F/k <= gel thickness (not a gate): "
           f"{report['k_for_p95_within_gel']:.2f} N/mm")
-    print(f"  k so that max penetration <= gel thickness: "
+    print(f"  historical k for max F/k <= gel thickness (not a gate): "
           f"{report['k_for_max_within_gel']:.2f} N/mm")
     for kk, v in report["penetration_sweep"].items():
         print(f"    k={kk:>5} N/mm -> p95 {v['p95_mm']:6.3f} mm, "
               f"max {v['max_mm']:7.3f} mm, "
-              f"{100 * v['frac_over_gel']:5.2f}% over gel")
+              f"{100 * v['frac_over_gel']:5.2f}% over gel (comparison only)")
     # Everything from here to the duplicate-fill line is a property of the
     # TARGET POSE, which force-only does not write. Printing "0.0" for a
     # check that never ran would read as a pass.
@@ -822,12 +817,9 @@ def digest(root: Path = EXPORT_ROOT) -> str:
 def _gate(report: dict) -> int:
     """Turn the verification report into an EXIT CODE.
 
-    `verify` computed all of this already and `_print` showed it, but `main`
-    returned None either way — so a run with `identity_pass` False, or with a
-    commanded target displaced further past the surface than the gel can be
-    compressed, exited 0 and read as a clean export. The penetration case was
-    not hypothetical: at k = 1 N/mm it covered 14.98% of rows and 49 of 72
-    sides, printed on every run, and nothing downstream of the print cared.
+    Enforce row alignment, no-contact identity, controller roundtrip, and the
+    100 mm virtual-displacement sanity bound. Historical gel-thickness
+    comparisons remain diagnostics and do not affect the exit code.
     """
     fails = []
     if not report.get("identity_pass", False):
@@ -866,15 +858,15 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("command", choices=["export", "verify", "digest"])
     ap.add_argument("--stiffness", type=float, default=STIFFNESS_N_PER_MM,
-                    help="N/mm used for penetration = force / k")
+                    help="assumed controller stiffness in N/mm for virtual "
+                         "displacement = force / k "
+                         f"(default: {STIFFNESS_N_PER_MM:g}); "
+                         "not gel compression")
     ap.add_argument("--force-only", action="store_true",
                     help="publish the measurement without the control policy: "
                          "force_<side>_normal_n and force_<side>_source_frame "
-                         "only, no penetration_mm and no target_pose. Use when "
-                         "no stiffness has been approved for the force range "
-                         "actually measured -- v8 reaches 15 N, and at the "
-                         "shipped k=2 N/mm the 4.25 mm gel gate caps usable "
-                         "force at 8.5 N.")
+                         "only, no penetration_mm and no target_pose. Use to "
+                         "omit controller-derived virtual targets.")
     ap.add_argument("--root", type=Path, default=EXPORT_ROOT)
     ap.add_argument("--task", default=None,
                     help="export only this task. The whole-tree run refuses if "
