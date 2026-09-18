@@ -18,6 +18,7 @@ Timestamp checks also reject stale completion files from older builders.
 """
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from .config import CAM_STREAM, GEL_STREAM, WRIST_STREAM
@@ -34,11 +35,27 @@ def is_complete(release_root, task: str, date: str, episode: str, *,
     Callers without a source (such as a scheduler) still require all seven
     streams. Metadata-only builds require metadata and the detection sidecar;
     requesting video or depth later therefore cannot skip missing outputs.
+    New builds also attest which media finished encoding. An intervening
+    metadata-only build cannot make a failed video/depth encode complete.
+    Older output without this record retains the artifact/timestamp check.
     """
     root = Path(release_root) / task
     pq = root / "meta" / date / f"{episode}.parquet"
     if not pq.is_file():
         return False
+    marker = pq.with_suffix("._build.json")
+    try:
+        media = json.loads(marker.read_text())
+    except FileNotFoundError:
+        media = None  # legacy builds predate persisted media completion
+    except (OSError, ValueError):
+        return False
+    else:
+        if (not isinstance(media, dict)
+                or any(type(media.get(key)) is not bool for key in ("video", "depth"))):
+            return False
+        if (encode_video and not media["video"]) or (with_depth and not media["depth"]):
+            return False
     streams = list(STREAMS)
     depths = list(CAM_STREAM.values())
     if source_h5 is not None:
@@ -53,6 +70,8 @@ def is_complete(release_root, task: str, date: str, episode: str, *,
             depths = [name for index, name in CAM_STREAM.items()
                       if f"realsense/cam{index}/depth" in f]
     artifacts = [root / "meta" / date / f"{episode}._detect.pt"]
+    if media is not None:
+        artifacts.append(marker)
     if encode_video:
         artifacts += [root / "videos" / date / episode / f"{s}.mp4"
                       for s in streams]

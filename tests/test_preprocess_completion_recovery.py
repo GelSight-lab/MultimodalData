@@ -132,3 +132,50 @@ def test_failed_parquet_write_is_not_published(recording, monkeypatch):
         pipeline.build_episode(source, "pushT")
     _, meta_dir = config.stage_dirs("pushT", source.parent.name, source.stem)
     assert not (meta_dir / f"{source.stem}.parquet").exists()
+
+
+@pytest.mark.parametrize("media", ["video", "depth"])
+def test_retry_that_omits_failed_media_cannot_mark_it_complete(recording, monkeypatch, media):
+    source, root = recording
+    assert pipeline.build_episode(source, "pushT", with_depth=True).status == "OK"
+    video_dir, _ = config.stage_dirs("pushT", source.parent.name, source.stem)
+    partial = (video_dir / "view_right.mp4" if media == "video" else
+               root / "pushT/depth" / source.parent.name / source.stem / "depth_right.mkv")
+    encoder_name = "_encode_rgb_single_pass" if media == "video" else "_encode_depth"
+    original_encoder = getattr(pipeline, encoder_name)
+
+    def failed_encoder(*args, **kwargs):
+        partial.write_bytes(b"partial header")
+        raise OSError("interrupted encoding")
+
+    monkeypatch.setattr(pipeline, encoder_name, failed_encoder)
+    with pytest.raises(OSError, match="interrupted encoding"):
+        pipeline.build_episode(source, "pushT", force=True, with_depth=True)
+    assert not _complete(root, source, with_depth=True)
+    monkeypatch.setattr(pipeline, encoder_name, original_encoder)
+    # A metadata-only retry omits failed video; an ordinary retry omits depth.
+    assert pipeline.build_episode(source, "pushT", encode_video=media != "video").status == "OK"
+    assert partial.read_bytes() == b"partial header"
+    assert not _complete(root, source, with_depth=media == "depth")
+    assert pipeline.build_episode(source, "pushT", with_depth=True).status == "OK"
+    assert partial.read_bytes() != b"partial header"
+    assert _complete(root, source, with_depth=True)
+
+
+def test_metadata_refresh_preserves_previously_completed_media(recording):
+    source, root = recording
+    assert pipeline.build_episode(source, "pushT", with_depth=True).status == "OK"
+    assert pipeline.build_episode(source, "pushT", force=True, encode_video=False).status == "OK"
+    assert _complete(root, source, with_depth=True)
+    assert pipeline.build_episode(source, "pushT", with_depth=True).status == "skipped"
+
+
+@pytest.mark.parametrize("contents", ["{", "null", '{"video": "yes", "depth": true}'])
+def test_invalid_media_completion_record_requires_retry(recording, contents):
+    source, root = recording
+    assert pipeline.build_episode(source, "pushT").status == "OK"
+    _, meta_dir = config.stage_dirs("pushT", source.parent.name, source.stem)
+    (meta_dir / f"{source.stem}._build.json").write_text(contents)
+    assert not _complete(root, source)
+    assert pipeline.build_episode(source, "pushT").status == "OK"
+    assert _complete(root, source)

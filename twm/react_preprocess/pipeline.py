@@ -303,9 +303,22 @@ def build_episode(h5_path: Path, task: str, force: bool = False,
                                  with_depth=with_depth):
         return BuildReport(source.episode, "skipped", detail="already built")
 
+    # Preserve unrequested media only when the previous build attests that it
+    # finished. File presence after a failed encode is insufficient: ffmpeg
+    # creates a nonempty header before it has written all frames.
+    media = {
+        "video": not encode_video and is_complete(
+            release_root, task, source.date, source.episode, source_h5=h5_path),
+        "depth": not with_depth and is_complete(
+            release_root, task, source.date, source.episode, source_h5=h5_path,
+            encode_video=False, with_depth=True),
+    }
     # Invalidate completion before replacing any artifact, including when a
     # forced or metadata-only rebuild fails before its first video write.
     pq_path.unlink(missing_ok=True)
+    meta_dir.mkdir(parents=True, exist_ok=True)
+    marker = pq_path.with_suffix("._build.json")
+    marker.write_text(json.dumps(media))
 
     with h5py.File(str(h5_path), "r") as f:
         # The tone exponent is a property of (camera, task), not of this run,
@@ -339,6 +352,9 @@ def build_episode(h5_path: Path, task: str, force: bool = False,
     meta_dir.mkdir(parents=True, exist_ok=True)
     _write_detect_sidecar(meta_dir / f"{source.episode}._detect.pt", source, tactile,
                           extra_meta=wrist)
+    media["video"] = media["video"] or encode_video
+    media["depth"] = media["depth"] or with_depth
+    marker.write_text(json.dumps(media))
     # A partial parquet must never become the completion signal. The sibling
     # temporary path keeps the final rename atomic on the same filesystem.
     pending_pq = pq_path.with_suffix(".parquet.tmp")
