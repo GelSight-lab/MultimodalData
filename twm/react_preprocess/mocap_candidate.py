@@ -163,6 +163,26 @@ def snapshot_inputs(source_root: Path,
     )
 
 
+def save_manifest(manifest: InputManifest, path: Path) -> Path:
+    """Persist a manifest, refusing to replace a different snapshot."""
+    _validate_manifest(manifest)
+    path = Path(path)
+    if path.is_file():
+        prior = InputManifest.from_dict(json.loads(path.read_text()))
+        _validate_manifest(prior)
+        if prior.digest != manifest.digest:
+            raise ValueError(
+                f"manifest path already contains a different snapshot: {path}")
+    _atomic_json(path, manifest.to_dict())
+    return path
+
+
+def load_manifest(path: Path) -> InputManifest:
+    manifest = InputManifest.from_dict(json.loads(Path(path).read_text()))
+    _validate_manifest(manifest)
+    return manifest
+
+
 def _atomic_json(path: Path, value: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.NamedTemporaryFile(

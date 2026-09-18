@@ -351,7 +351,7 @@ git commit -m "feat: review raw and repaired mocap trajectories"
 - Create: `twm/scripts/build_mocap_repair_candidates.py`
 - Create: `tests/test_build_mocap_repair_candidates.py`
 
-- [ ] **Step 1: Write failing CLI integration tests**
+- [x] **Step 1: Write failing CLI integration tests**
 
 ```python
 def test_audit_then_build_uses_exact_manifest_snapshot(tmp_path):
@@ -368,23 +368,23 @@ def test_verify_detects_any_source_mutation(tmp_path):
         verify_candidate(result.root)
 ```
 
-- [ ] **Step 2: Run and verify RED**
+- [x] **Step 2: Run and verify RED**
 
 Run: `python -m pytest -q tests/test_build_mocap_repair_candidates.py`
 
 Expected: CLI module does not exist.
 
-- [ ] **Step 3: Implement CLI phases**
+- [x] **Step 3: Implement CLI phases**
 
 Provide `audit`, `benchmark`, `build`, `review`, `apply-decisions`, and `verify`. Defaults are source `/media/yxma/Disk1/twm/release`, tasks motherboard/pushT/rope/toy, and output `/media/yxma/Disk1/twm/review/mocap_repair_2026-09-17/candidate_release`. Require an existing manifest and task gates for build. Emit machine-readable summaries by task/confidence/recovered native actions/recovered 15 fps actions and never promote or upload.
 
-- [ ] **Step 4: Run focused and full regression suites**
+- [x] **Step 4: Run focused and full regression suites**
 
 Run: `python -m pytest -q tests/test_build_mocap_repair_candidates.py tests/test_mocap_candidate.py tests/test_mocap_repair.py tests/test_repaired_actions.py tests/test_mocap_benchmark.py tests/test_build_pose_review.py tests/test_pose_anomaly.py tests/test_pose_repair.py tests/test_pose_flicker.py tests/test_repair_release_poses.py`
 
 Expected: all pass.
 
-- [ ] **Step 5: Commit implementation**
+- [x] **Step 5: Commit implementation**
 
 ```bash
 git add twm/scripts/build_mocap_repair_candidates.py tests/test_build_mocap_repair_candidates.py
