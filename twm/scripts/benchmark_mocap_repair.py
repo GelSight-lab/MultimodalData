@@ -23,8 +23,11 @@ class BenchmarkReport:
     task: str
     seed: int
     intervals: int
+    high_intervals: int
     anomaly_lengths: tuple[int, ...]
+    confidence_counts: dict[str, int]
     metrics: dict[str, MetricSummary]
+    metrics_all: dict[str, MetricSummary]
     gate: TaskGate
 
     def to_dict(self) -> dict:
@@ -33,9 +36,13 @@ class BenchmarkReport:
             "task": self.task,
             "seed": self.seed,
             "intervals": self.intervals,
+            "high_intervals": self.high_intervals,
             "anomaly_lengths": list(self.anomaly_lengths),
+            "confidence_counts": dict(sorted(self.confidence_counts.items())),
             "metrics": {name: asdict(self.metrics[name])
                         for name in sorted(self.metrics)},
+            "metrics_all": {name: asdict(self.metrics_all[name])
+                            for name in sorted(self.metrics_all)},
             "gate": asdict(self.gate),
         }
 
@@ -187,10 +194,14 @@ def benchmark_task(
             pool_size=max(1000, int(max_intervals) * 50)),
         int(max_intervals))
 
-    translation: list[float] = []
-    orientation: list[float] = []
-    native_translation: list[float] = []
-    native_rotation: list[float] = []
+    names = ("translation_mm", "orientation_deg",
+             "native_translation_mm", "native_rotation_deg")
+    all_values: dict[str, list[float]] = {name: [] for name in names}
+    high_values: dict[str, list[float]] = {name: [] for name in names}
+    high_by_length: dict[int, dict[str, list[float]]] = {
+        length: {name: [] for name in names} for length in lengths}
+    high_interval_count = {length: 0 for length in lengths}
+    confidence_counts = {"HIGH": 0, "MEDIUM": 0, "LOW": 0}
     gate_for_reconstruction = TaskGate(True, max(lengths))
     for index, interval in enumerate(selected):
         truth = episodes[interval.episode]
@@ -209,33 +220,68 @@ def benchmark_task(
             result.pose[all_rows, :3] - truth[all_rows, :3], axis=1) * 1000.0
         rot_error = _rotation_angle_deg(
             result.pose[all_rows, 3:], truth[all_rows, 3:])
-        translation.extend(map(float, pose_error))
-        orientation.extend(map(float, rot_error))
         lo = max(0, interval.start - 1)
         hi = min(len(truth) - 1, interval.start + interval.length)
         transitions = np.arange(lo, hi, dtype=int)
         trans_action, rot_action = _native_errors(
             result.pose, truth, transitions)
-        native_translation.extend(map(float, trans_action))
-        native_rotation.extend(map(float, rot_action))
+        interval_values = {
+            "translation_mm": list(map(float, pose_error)),
+            "orientation_deg": list(map(float, rot_error)),
+            "native_translation_mm": list(map(float, trans_action)),
+            "native_rotation_deg": list(map(float, rot_action)),
+        }
+        for name in names:
+            all_values[name].extend(interval_values[name])
+        corrupt_confidence = result.confidence[corrupt_rows]
+        if (len(corrupt_rows)
+                and result.repaired[corrupt_rows].all()
+                and np.all(corrupt_confidence == 3)):
+            tier = "HIGH"
+        elif (result.repaired[corrupt_rows].any()
+              or np.any(corrupt_confidence == 2)):
+            tier = "MEDIUM"
+        else:
+            tier = "LOW"
+        confidence_counts[tier] += 1
+        if tier == "HIGH":
+            high_interval_count[interval.length] += 1
+            for name in names:
+                high_values[name].extend(interval_values[name])
+                high_by_length[interval.length][name].extend(
+                    interval_values[name])
 
-    metrics = {
-        "translation_mm": _summary(translation),
-        "orientation_deg": _summary(orientation),
-        "native_translation_mm": _summary(native_translation),
-        "native_rotation_deg": _summary(native_rotation),
-    }
-    high_enabled = (
-        len(selected) >= 100
-        and metrics["translation_mm"].median <= 2.0
-        and metrics["translation_mm"].p95 <= 10.0
-        and metrics["orientation_deg"].median <= 1.0
-        and metrics["orientation_deg"].p95 <= 5.0
-        and metrics["native_translation_mm"].p95 <= 5.0
-        and metrics["native_rotation_deg"].p95 <= 3.0)
+    metrics = {name: _summary(high_values[name]) for name in names}
+    metrics_all = {name: _summary(all_values[name]) for name in names}
+
+    def passes(values: dict[str, list[float]], interval_count: int) -> bool:
+        summary = {name: _summary(values[name]) for name in names}
+        return (
+            interval_count >= 100
+            and summary["translation_mm"].median <= 2.0
+            and summary["translation_mm"].p95 <= 10.0
+            and summary["orientation_deg"].median <= 1.0
+            and summary["orientation_deg"].p95 <= 5.0
+            and summary["native_translation_mm"].p95 <= 5.0
+            and summary["native_rotation_deg"].p95 <= 3.0)
+
+    validated_max = 0
+    for max_length in lengths:
+        prefix = {name: [] for name in names}
+        prefix_intervals = 0
+        for length in lengths:
+            if length > max_length:
+                continue
+            prefix_intervals += high_interval_count[length]
+            for name in names:
+                prefix[name].extend(high_by_length[length][name])
+        if passes(prefix, prefix_intervals):
+            validated_max = max_length
     gate = TaskGate(
-        high_confidence_enabled=bool(high_enabled),
-        validated_max_frames=max(lengths) if high_enabled else 0)
+        high_confidence_enabled=validated_max > 0,
+        validated_max_frames=validated_max)
     return BenchmarkReport(
         task=str(task), seed=int(seed), intervals=len(selected),
-        anomaly_lengths=lengths, metrics=metrics, gate=gate)
+        high_intervals=confidence_counts["HIGH"],
+        anomaly_lengths=lengths, confidence_counts=confidence_counts,
+        metrics=metrics, metrics_all=metrics_all, gate=gate)

@@ -34,6 +34,10 @@ def test_benchmark_reports_all_required_errors():
     }
     assert report.intervals == 30
     assert all(metric.count > 0 for metric in report.metrics.values())
+    assert sum(report.confidence_counts.values()) == report.intervals
+    assert report.high_intervals == report.confidence_counts["HIGH"]
+    assert all(report.metrics[name].count <= report.metrics_all[name].count
+               for name in report.metrics)
 
 
 def test_fewer_than_one_hundred_intervals_disables_high_confidence():
@@ -51,6 +55,7 @@ def test_accurate_hundred_interval_benchmark_enables_high_confidence():
         max_intervals=120, seed=11)
 
     assert report.intervals == 120
+    assert report.high_intervals >= 100
     assert report.gate.high_confidence_enabled is True
     assert report.gate.validated_max_frames == 5
 
