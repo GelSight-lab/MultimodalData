@@ -69,19 +69,37 @@ def _motion_score(pose: np.ndarray, start: int, length: int) -> float:
 
 
 def _candidate_order(episodes: list[np.ndarray], lengths: tuple[int, ...],
-                     rng: np.random.Generator) -> list[_Candidate]:
-    candidates = []
+                     rng: np.random.Generator, *,
+                     pool_size: int) -> list[_Candidate]:
+    """Sample a bounded candidate pool before motion-stratified sorting."""
     context = 15
+    spans: list[tuple[int, int, int]] = []
     for episode_index, pose in enumerate(episodes):
         for length in lengths:
-            for start in range(context, len(pose) - context - length):
-                rows = pose[start - context:start + length + context]
-                norm = np.linalg.norm(rows[:, 3:], axis=1)
-                if not np.isfinite(rows).all() or np.any(norm <= 1e-12):
-                    continue
-                candidates.append(_Candidate(
-                    episode_index, start, length,
-                    _motion_score(pose, start, length)))
+            count = max(0, len(pose) - 2 * context - length)
+            if count:
+                spans.append((episode_index, length, count))
+    total = sum(count for _, _, count in spans)
+    if not total:
+        return []
+    take = min(int(pool_size), total)
+    flat_rows = (np.arange(total, dtype=np.int64) if take == total
+                 else np.sort(rng.choice(total, size=take, replace=False)))
+    cumulative = np.cumsum([count for _, _, count in spans])
+    candidates = []
+    for flat in flat_rows:
+        span_index = int(np.searchsorted(cumulative, flat, side="right"))
+        prior = int(cumulative[span_index - 1]) if span_index else 0
+        episode_index, length, _ = spans[span_index]
+        start = context + int(flat) - prior
+        pose = episodes[episode_index]
+        rows = pose[start - context:start + length + context]
+        norm = np.linalg.norm(rows[:, 3:], axis=1)
+        if not np.isfinite(rows).all() or np.any(norm <= 1e-12):
+            continue
+        candidates.append(_Candidate(
+            episode_index, start, length,
+            _motion_score(pose, start, length)))
     candidates.sort(key=lambda row: (row.motion, row.episode, row.start, row.length))
     bins = [list(chunk) for chunk in np.array_split(
         np.asarray(candidates, dtype=object), 3) if len(chunk)]
@@ -164,7 +182,10 @@ def benchmark_task(
         raise ValueError("max_intervals must be positive")
     rng = np.random.default_rng(int(seed))
     selected = _select_disjoint(
-        _candidate_order(episodes, lengths, rng), int(max_intervals))
+        _candidate_order(
+            episodes, lengths, rng,
+            pool_size=max(1000, int(max_intervals) * 50)),
+        int(max_intervals))
 
     translation: list[float] = []
     orientation: list[float] = []
@@ -218,4 +239,3 @@ def benchmark_task(
     return BenchmarkReport(
         task=str(task), seed=int(seed), intervals=len(selected),
         anomaly_lengths=lengths, metrics=metrics, gate=gate)
-

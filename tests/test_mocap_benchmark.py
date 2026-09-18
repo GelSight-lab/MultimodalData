@@ -3,7 +3,7 @@ from __future__ import annotations
 import numpy as np
 from scipy.spatial.transform import Rotation as R
 
-from twm.scripts.benchmark_mocap_repair import benchmark_task
+from twm.scripts.benchmark_mocap_repair import _candidate_order, benchmark_task
 
 
 def clean_episode(n: int = 360, phase: float = 0.0) -> np.ndarray:
@@ -63,3 +63,11 @@ def test_calibration_is_deterministic():
     second = benchmark_task(clean_episodes(), **kwargs).to_dict()
 
     assert first == second
+
+
+def test_candidate_pool_is_bounded_before_motion_sorting():
+    ordered = _candidate_order(
+        [clean_episode(5000)], (1, 5, 20, 60),
+        np.random.default_rng(4), pool_size=700)
+
+    assert len(ordered) <= 700
