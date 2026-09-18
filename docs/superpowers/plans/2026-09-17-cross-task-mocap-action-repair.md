@@ -304,7 +304,7 @@ git commit -m "feat: calibrate mocap repair confidence gates"
 - Modify: `twm/scripts/build_pose_review.py`
 - Modify: `tests/test_build_pose_review.py`
 
-- [ ] **Step 1: Write failing candidate-aware review tests**
+- [x] **Step 1: Write failing candidate-aware review tests**
 
 ```python
 def test_review_contains_every_medium_and_low_event_and_samples_high():
@@ -322,23 +322,23 @@ def test_clip_receives_raw_and_candidate_pose_arrays(monkeypatch, tmp_path):
     assert overlay_observations == expected_raw_and_candidate_rows
 ```
 
-- [ ] **Step 2: Run and verify RED**
+- [x] **Step 2: Run and verify RED**
 
 Run: `python -m pytest -q tests/test_build_pose_review.py -k 'canonical or candidate or medium'`
 
 Expected: new selection/API assertions fail.
 
-- [ ] **Step 3: Implement review selection and overlays**
+- [x] **Step 3: Implement review selection and overlays**
 
 Render every MEDIUM/LOW event and deterministic HIGH samples. Load candidate poses alongside raw poses, plot raw/candidate rotation, translation, velocity, acceleration, residuals, anchors, retained measured rows, and replaced rows. Keep existing camera/tactile panel and gel-point projection. Export schema-versioned decisions with manifest digest and exact event IDs.
 
-- [ ] **Step 4: Run all review tests**
+- [x] **Step 4: Run all review tests**
 
 Run: `python -m pytest -q tests/test_build_pose_review.py tests/test_preview_clip_window.py tests/test_preview_gel_frame_choice.py`
 
 Expected: all pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add twm/scripts/build_pose_review.py tests/test_build_pose_review.py

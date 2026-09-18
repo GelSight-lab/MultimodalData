@@ -9,6 +9,7 @@ import numpy as np
 import pyarrow as pa
 import pyarrow.parquet as pq
 import cv2
+import pytest
 from scipy.spatial.transform import Rotation as R
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "twm" / "scripts"))
@@ -23,7 +24,7 @@ def poses(yaw_deg, x_mm):
 
 
 def write_parquet(path: Path, left, right, source_start=100):
-    path.parent.mkdir(parents=True)
+    path.parent.mkdir(parents=True, exist_ok=True)
     pq.write_table(pa.table({
         "source_h5_frame": np.arange(source_start, source_start + len(left)),
         "sensor_left_pose": pa.array(left.tolist()),
@@ -167,12 +168,106 @@ def test_html_links_every_clip_and_exports_persistent_decisions(tmp_path):
     html = path.read_text()
 
     assert "clips/a.mp4" in html and "clips/b.mp4" in html
-    assert 'data-decision="keep"' in html
-    assert 'data-decision="repair"' in html
+    assert 'data-decision="keep_raw"' in html
+    assert 'data-decision="accept_repair"' in html
     assert 'data-decision="invalidate"' in html
+    assert 'data-decision="unsure"' in html
     assert "localStorage" in html
     assert "Export decisions.json" in html
     assert "rotation_deg" in html and "translation_mm" in html
+
+
+def test_review_selects_all_medium_low_and_deterministic_high_sample():
+    events = [
+        {"event_id": "high-a", "confidence": "HIGH"},
+        {"event_id": "high-b", "confidence": "HIGH"},
+        {"event_id": "medium", "confidence": "MEDIUM"},
+        {"event_id": "low", "confidence": "LOW"},
+    ]
+
+    no_high = BPR.select_review_events(events, high_sample_rate=0.0, seed=4)
+    all_events = BPR.select_review_events(events, high_sample_rate=1.0, seed=4)
+    first = BPR.select_review_events(events, high_sample_rate=0.5, seed=9)
+    second = BPR.select_review_events(events, high_sample_rate=0.5, seed=9)
+
+    assert {event["event_id"] for event in no_high} == {"medium", "low"}
+    assert {event["event_id"] for event in all_events} == {
+        "high-a", "high-b", "medium", "low"}
+    assert first == second
+
+
+def test_render_candidate_draws_raw_and_repaired_pose_overlays(tmp_path, monkeypatch):
+    root = tmp_path / "release" / "motherboard"
+    date, episode = "2026-09-11", "episode_004"
+    raw = poses([0] * 10, np.arange(10))
+    candidate = raw.copy(); candidate[4, 0] += 0.02
+    write_parquet(root / "meta" / date / f"{episode}.parquet", raw, raw,
+                  source_start=100)
+    candidate_path = tmp_path / "candidate.parquet"
+    write_parquet(candidate_path, candidate, raw, source_start=100)
+    video_dir = root / "videos" / date / episode
+    for name in ("view_left", "view_middle", "view_right",
+                 "tactile_left", "tactile_right"):
+        _write_video(video_dir / f"{name}.mp4")
+    event = {
+        "event_id": "review", "date": date, "episode": episode,
+        "side": "left", "kind": "branch_discontinuity", "confidence": "MEDIUM",
+        "row_start": 4, "row_end": 4, "source_start": 104, "source_end": 104,
+    }
+    overlay_calls = []
+    monkeypatch.setattr(BPR, "_load_review_calibration",
+                        lambda task, date: (["cam"], "left-gel", "right-gel"))
+    monkeypatch.setattr(BPR, "draw_projection_overlay",
+                        lambda panel, opt, *a, **k: overlay_calls.append(opt))
+
+    info = BPR.render_event_clip(
+        event, root, tmp_path / "candidate.mp4", context_frames=1,
+        candidate_parquet=candidate_path)
+
+    assert info["frames"] == 3
+    assert len(overlay_calls) == 6
+    raw_x = overlay_calls[2]["sensor_left"][1][0]
+    candidate_x = overlay_calls[3]["sensor_left"][1][0]
+    assert candidate_x - raw_x == pytest.approx(0.02)
+
+
+def test_candidate_event_loader_adds_motion_and_residual_charts(tmp_path):
+    root = tmp_path / "release" / "motherboard"
+    candidate_root = tmp_path / "candidate" / "motherboard"
+    date, episode = "2026-09-11", "episode_004"
+    raw = poses(np.arange(20), np.arange(20))
+    candidate = raw.copy(); candidate[8, 0] += 0.02
+    write_parquet(root / "meta" / date / f"{episode}.parquet", raw, raw,
+                  source_start=100)
+    candidate_path = candidate_root / "meta" / date / f"{episode}.parquet"
+    write_parquet(candidate_path, candidate, raw, source_start=100)
+    table = pq.read_table(candidate_path)
+    table = table.append_column(
+        "pose_left_repaired", pa.array([i == 8 for i in range(20)]))
+    pq.write_table(table, candidate_path)
+    event_path = candidate_root / "repair_events" / date / f"{episode}.json"
+    event_path.parent.mkdir(parents=True)
+    event_path.write_text(json.dumps({
+        "manifest_digest": "a" * 64, "task": "motherboard", "date": date,
+        "episode": episode, "events": [{
+            "event_id": "left:8-8:branch", "side": "left", "start": 8,
+            "end": 8, "kind": "branch", "confidence": "MEDIUM",
+            "method": "robust_se3_hermite", "replaced_frames": [8],
+            "evidence": {},
+        }],
+    }))
+
+    events = BPR.load_candidate_events(root, candidate_root, chart_context=3)
+
+    assert len(events) == 1
+    chart = events[0]["chart"]
+    assert set(chart) >= {
+        "rotation_raw_deg", "rotation_candidate_deg",
+        "translation_raw_mm", "translation_candidate_mm",
+        "linear_velocity_candidate_mm_s", "linear_acceleration_candidate_mm_s2",
+        "pose_translation_residual_mm", "pose_rotation_residual_deg",
+        "anchor_rows", "retained_rows", "replaced_rows",
+    }
 
 
 def test_build_review_renders_only_unresolved_events(monkeypatch, tmp_path):
