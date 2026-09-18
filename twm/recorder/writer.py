@@ -178,7 +178,7 @@ class EpisodeWriter:
             self._file_mb_s = 0.0
 
     def drain(self, timeout: Optional[float] = None) -> None:
-        """Block until every submitted tick is written. Raises WriterFault."""
+        """Wait for writes and batch file access to finish. Raises WriterFault."""
         with self._cv:
             ok = self._cv.wait_for(
                 lambda: (self._fault is not None
@@ -230,13 +230,16 @@ class EpisodeWriter:
                     continue
                 dt = self._clock() - t0
                 with self._cv:
-                    self._queue_bytes -= nbytes
-                    self._in_flight = 0
                     self._bytes_written += nbytes
                     self._write_seconds += dt
                     self._last_batch_ms = dt * 1e3
-                    self._cv.notify_all()
                 self._maybe_flush(f)
+                with self._cv:
+                    # drain() hands the file back to the controller to close;
+                    # the batch owns it until flushing and sampling finish.
+                    self._queue_bytes -= nbytes
+                    self._in_flight = 0
+                    self._cv.notify_all()
             except BaseException as exc:
                 # Nothing above this point may kill the thread silently: a
                 # dead thread with `_fault is None` means drain() blocks

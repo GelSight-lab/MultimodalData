@@ -250,11 +250,20 @@ class CaptureLoop:
         log.error("capture stopped: %s", message)
         with self._lock:
             prev = self._latest
+            # stats() may be the failing dependency. Fatal publication must
+            # use only the last snapshot or an explicitly unavailable value.
+            stats = prev.writer if prev else WriterStats(
+                queue_items=0, queue_bytes=0, capacity_bytes=0,
+                peak_fraction=0.0, bytes_written=0, write_seconds=0.0,
+                last_batch_ms=0.0, flushes=0, file_mb_s=0.0,
+                disk_free_gb=None, overloaded_since=None,
+                fault="writer stats unavailable")
             self._latest = CaptureSnapshot(
                 tick=prev.tick if prev else Tick(self._clock()),
                 gs_ref=self._gs_ref or (), ot_poses=prev.ot_poses if prev else {},
+                sensors=prev.sensors if prev else {},
                 recording=self._recording, frame_count=self._frame_count,
                 elapsed=(self._clock() - self._start_t) if self._recording else 0.0,
-                fps_meas=0.0, writer=self.writer.stats(),
+                fps_meas=0.0, writer=stats,
                 stop_request=self._stop_request, fatal_error=message)
         self._stop.set()

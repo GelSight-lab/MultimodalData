@@ -164,6 +164,51 @@ def test_periodic_flush_and_disk_sampling(tmp_path):
     w.stop()
 
 
+@pytest.mark.parametrize("blocked_access", ["flush", "filename"])
+def test_drain_waits_until_batch_file_access_finishes(tmp_path, blocked_access):
+    entered = threading.Event()
+    release = threading.Event()
+    path = tmp_path / "ep.h5"
+    path.touch()
+
+    class GatedFile:
+        def flush(self):
+            if blocked_access == "flush":
+                entered.set()
+                assert release.wait(5)
+
+        @property
+        def filename(self):
+            if blocked_access == "filename":
+                entered.set()
+                assert release.wait(5)
+            return str(path)
+
+    w = EpisodeWriter(capacity_bytes=TICK_BYTES * 2, batch_size=1,
+                      flush_interval_s=0.0, sink=lambda f, t: None)
+    try:
+        w.submit(GatedFile(), small_tick(0))
+        assert entered.wait(2)
+        with pytest.raises(WriterFault, match="drain timed out"):
+            w.drain(timeout=0)
+        stats = w.stats()
+        assert stats.queue_items == 1
+        assert stats.queue_bytes == TICK_BYTES
+        assert stats.bytes_written == TICK_BYTES
+        # Capture must still be able to enqueue while file I/O is blocked.
+        w.submit(object(), small_tick(1))
+        assert w.stats().queue_items == 2
+        release.set()
+        w.drain(timeout=2)
+        assert w.stats().queue_items == 0
+        assert w.stats().queue_bytes == 0
+        assert w.stats().bytes_written == TICK_BYTES * 2
+        assert w.stats().flushes == 2
+    finally:
+        release.set()
+        w.stop()
+
+
 def test_writer_thread_never_dies_silently_on_internal_error():
     """A raise anywhere in the loop -- not just from the sink -- must fault
     out, not kill the thread silently and leave drain()/check() hanging or

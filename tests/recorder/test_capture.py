@@ -292,3 +292,56 @@ def test_snapshot_carries_sensor_status_from_the_rig():
     snap = _wait(loop.latest)
     loop.stop(); writer.stop()
     assert snap.sensors["gelsight_left"]["restarts"] == 1 and snap.sensors["gelsight_left"]["restarting"]
+
+
+@pytest.mark.parametrize("publish_first", [False, True])
+def test_persistent_stats_failure_publishes_fatal_and_stops(monkeypatch, publish_first):
+    rig = FakeRig()
+    writer = EpisodeWriter(capacity_bytes=TICK * 100, sink=lambda f, t: None)
+    rig.sensor_status = lambda: {"gelsight_left": {"restarts": 3}}
+    stats_calls = 0
+    previous = None
+
+    def failing_stats():
+        nonlocal stats_calls
+        stats_calls += 1
+        raise RuntimeError("writer statistics unavailable")
+
+    # Run on this thread so an exception escaping fatal publication is a
+    # deterministic test failure, rather than a background-thread warning.
+    def after_snapshot(_delay):
+        nonlocal previous
+        previous = loop.latest()
+        monkeypatch.setattr(writer, "stats", failing_stats)
+
+    loop = CaptureLoop(rig, writer, warmup_drop_frames=0,
+                       clock=lambda: 1000.0, sleep=after_snapshot)
+    if not publish_first:
+        monkeypatch.setattr(writer, "stats", failing_stats)
+    loop.start_recording("h5")
+    try:
+        loop._run()
+        snapshot = loop.latest()
+        assert snapshot is not None
+        assert snapshot.fatal_error == "RuntimeError: writer statistics unavailable"
+        assert loop._stop.is_set()
+        assert stats_calls == 1
+        assert snapshot.recording is True
+        if publish_first:
+            assert previous is not None
+            assert snapshot.writer is previous.writer
+            assert snapshot.sensors == previous.sensors == rig.sensor_status()
+            assert snapshot.tick is previous.tick
+            assert snapshot.ot_poses is previous.ot_poses
+        else:
+            assert snapshot.sensors == {}
+            assert snapshot.writer.queue_items == 0
+            assert snapshot.writer.capacity_bytes == 0
+            assert snapshot.writer.disk_free_gb is None
+            assert snapshot.writer.fault == "writer stats unavailable"
+        result = loop.stop_recording()
+        assert result is not None
+        assert result.frame_count == (2 if publish_first else 1)
+    finally:
+        loop.stop()
+        writer.stop()
