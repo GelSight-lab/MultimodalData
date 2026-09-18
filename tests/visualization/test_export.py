@@ -1,5 +1,7 @@
 """Small real-encoder tests for streaming, cleanup and retry behavior."""
 import shutil
+import json
+import subprocess
 import weakref
 
 import cv2
@@ -104,3 +106,56 @@ def test_episode_preview_streams_a_replayable_factory(monkeypatch, tmp_path):
     assert len(calls) == 1
     assert calls[0][1]["window_start"] == 123
     assert calls[0][1]["show_virtual_targets"] is False
+
+
+@pytest.mark.parametrize("pixel_format,profile", [(None, "High 4:4:4 Predictive"),
+                                                   ("yuv420p", "High")])
+def test_export_preserves_selected_pixel_format(tmp_path, pixel_format, profile):
+    from twm.visualization.export import write_video
+
+    path = tmp_path / "clip.mp4"
+    options = {} if pixel_format is None else {"pixel_format": pixel_format}
+    assert write_video(path, lambda: iter([np.zeros((32, 48, 3), np.uint8)]),
+                       **options) == 1
+    result = json.loads(subprocess.check_output([
+        "ffprobe", "-v", "error", "-show_entries", "stream=pix_fmt,profile",
+        "-of", "json", str(path),
+    ]))["streams"][0]
+    assert result == {"pix_fmt": pixel_format or "yuv444p", "profile": profile}
+
+
+def test_invalid_pixel_format_does_not_open_source_or_touch_destination(tmp_path):
+    from twm.visualization.export import write_video
+
+    path = tmp_path / "clip.mp4"
+    path.write_bytes(b"previous")
+
+    def frames():
+        pytest.fail("invalid configuration must not open source")
+
+    with pytest.raises(ValueError, match="pixel.format"):
+        write_video(path, frames, pixel_format="not-a-format")
+    assert path.read_bytes() == b"previous"
+    assert list(tmp_path.iterdir()) == [path]
+
+
+@pytest.mark.parametrize("shape", [(31, 48, 3), (32, 47, 3)])
+def test_420_rejects_odd_dimensions_and_closes_source(tmp_path, shape):
+    from twm.visualization.export import write_video
+
+    path = tmp_path / "clip.mp4"
+    path.write_bytes(b"previous")
+    closed = []
+
+    def frames():
+        try:
+            yield np.zeros(shape, np.uint8)
+            pytest.fail("invalid geometry must fail on first frame")
+        finally:
+            closed.append(True)
+
+    with pytest.raises(ValueError, match="yuv420p.*even"):
+        write_video(path, frames, pixel_format="yuv420p")
+    assert closed == [True]
+    assert path.read_bytes() == b"previous"
+    assert list(tmp_path.iterdir()) == [path]

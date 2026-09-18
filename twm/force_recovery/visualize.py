@@ -333,5 +333,5 @@ def overlay_clip(task: str, date: str, ep: str, side: str,
             for row in range(lo, hi):
                 yield overlay.render(frames[int(indices[row])], row - lo)
 
-    write_video(out, panels, fps=out_fps)
+    write_video(out, panels, fps=out_fps, pixel_format="yuv420p")
     return out

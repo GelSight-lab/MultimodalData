@@ -1,5 +1,6 @@
 """Synthetic force figures use the same capture map as preprocessing."""
 import subprocess
+import json
 import sys
 
 import cv2
@@ -127,8 +128,8 @@ def test_overlay_replays_shared_export_and_preserves_pixels(episode, monkeypatch
                     for row, src in enumerate(idx)]
     calls = []
 
-    def write_video(out, factory, *, fps):
-        calls.append((out, fps))
+    def write_video(out, factory, *, fps, pixel_format="yuv444p"):
+        calls.append((out, fps, pixel_format))
         for _ in range(2):
             actual = list(factory())
             assert len(actual) == len(expected)
@@ -139,7 +140,18 @@ def test_overlay_replays_shared_export_and_preserves_pixels(episode, monkeypatch
     monkeypatch.setattr(export, "write_video", write_video)
     monkeypatch.setattr(cv2, "VideoWriter", lambda *a, **kw: pytest.fail("double encoding"))
     out = viz.overlay_clip(*args, force=arrays["force_normal_n"])
-    assert calls == [(out, 30)]
+    assert calls == [(out, 30, "yuv420p")]
+
+
+def test_overlay_encodes_browser_compatible_h264(episode):
+    viz, args, _, _, arrays = episode
+    out = viz.overlay_clip(*args, force=arrays["force_normal_n"])
+    result = json.loads(subprocess.check_output([
+        "ffprobe", "-v", "error", "-show_entries",
+        "stream=pix_fmt,profile,width,height,nb_frames", "-of", "json", str(out),
+    ]))["streams"][0]
+    assert result == {"pix_fmt": "yuv420p", "profile": "High", "width": 640,
+                      "height": 560, "nb_frames": "4"}
 
 
 @pytest.mark.parametrize("force", [np.array([]), np.zeros((4, 1)), np.zeros(3),
@@ -161,7 +173,7 @@ def test_overlay_closes_h5_when_encoder_stops_early(episode, monkeypatch):
         opened.append(handle)
         return handle
 
-    def stop_encoding(path, frames, fps):
+    def stop_encoding(path, frames, fps, pixel_format):
         next(frames)
         raise RuntimeError("encoder stopped")
 
