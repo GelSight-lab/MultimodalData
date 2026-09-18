@@ -590,6 +590,29 @@ def _rows_equal(left: np.ndarray, right: np.ndarray) -> np.ndarray:
     return np.all(same, axis=1)
 
 
+def _columns_equal(left: pa.ChunkedArray,
+                   right: pa.ChunkedArray) -> bool:
+    """Arrow equality with IEEE NaNs treated as equal at identical positions."""
+    if left.type != right.type or len(left) != len(right):
+        return False
+    if left.equals(right):
+        return True
+    try:
+        if (pa.types.is_list(left.type)
+                or pa.types.is_large_list(left.type)
+                or pa.types.is_fixed_size_list(left.type)):
+            a = np.asarray(left.to_pylist(), dtype=float)
+            b = np.asarray(right.to_pylist(), dtype=float)
+        elif pa.types.is_floating(left.type):
+            a = np.asarray(left.to_numpy(zero_copy_only=False), dtype=float)
+            b = np.asarray(right.to_numpy(zero_copy_only=False), dtype=float)
+        else:
+            return False
+    except (TypeError, ValueError):
+        return False
+    return bool(np.array_equal(a, b, equal_nan=True))
+
+
 def _verify_action_file(path: Path, expected: ActionSeries,
                         errors: list[str]) -> None:
     if not path.is_file():
@@ -639,7 +662,8 @@ def verify_candidate(candidate_root: Path) -> VerificationReport:
         for name in source.column_names:
             if name.startswith("sensor_") and name.endswith("_pose"):
                 continue
-            if name not in candidate.column_names or not source[name].equals(candidate[name]):
+            if (name not in candidate.column_names
+                    or not _columns_equal(source[name], candidate[name])):
                 errors.append(f"source column changed: {item.path}:{name}")
         rel = Path(item.path)
         task, _, date, filename = rel.parts

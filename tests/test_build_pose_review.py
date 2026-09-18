@@ -3,6 +3,7 @@ from __future__ import annotations
 import csv
 import json
 import sys
+import types
 from pathlib import Path
 
 import numpy as np
@@ -46,6 +47,21 @@ def test_scan_preserves_source_frames_and_hand(tmp_path):
     assert events[0]["source_end"] == 8550
     assert events[0]["event_id"] == (
         "2026-09-11__episode_004__right__8550-8550__returning_excursion")
+
+
+def test_calibration_loader_uses_package_import_when_run_as_module(monkeypatch):
+    fake = types.ModuleType("twm.scripts.build_episode_previews")
+    fake._load_proj_calibs = lambda task, date: (  # type: ignore[attr-defined]
+        ["camera"], "left", "right", "extra")
+    monkeypatch.setitem(sys.modules, "twm.scripts.build_episode_previews", fake)
+    monkeypatch.delitem(sys.modules, "build_episode_previews", raising=False)
+    monkeypatch.setattr(
+        sys, "path", [entry for entry in sys.path
+                      if not entry.rstrip("/").endswith("twm/scripts")])
+
+    got = BPR._load_review_calibration("toy", "2026-09-17")
+
+    assert got == (["camera"], "left", "right")
 
 
 def test_scan_tree_loads_per_side_known_gaps(tmp_path):

@@ -328,7 +328,7 @@ def _decoded_frames(path: Path) -> int:
 def _load_review_calibration(task: str, date: str):
     """Reuse the canonical preview's date-specific calibration routing."""
     try:
-        from build_episode_previews import _load_proj_calibs
+        from twm.scripts.build_episode_previews import _load_proj_calibs
         cameras, gel_left, gel_right, _ = _load_proj_calibs(task, date)
         return cameras, gel_left, gel_right
     except Exception as exc:  # a review clip remains useful without projection

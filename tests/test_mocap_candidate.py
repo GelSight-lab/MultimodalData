@@ -46,6 +46,7 @@ def _write_episode(path: Path, glitch: bool = False) -> Path:
         "source_h5_frame": np.arange(1000, 1000 + n, dtype=np.int32),
         "sensor_left_pose": pa.array(left.tolist()),
         "sensor_right_pose": pa.array(right.tolist()),
+        "object_pose": pa.array(np.full((n, 7), np.nan).tolist()),
         "force_left_normal_n": np.linspace(0, 5, n, dtype=np.float32),
         "force_right_normal_n": np.linspace(1, 6, n, dtype=np.float32),
     }), path, compression="zstd")
@@ -179,7 +180,15 @@ def _logical_candidate_state(output: Path) -> tuple:
     native = output / "motherboard/actions_native/2026-09-17/episode_000_left.npz"
     with np.load(native, allow_pickle=False) as data:
         action_state = tuple((name, data[name].tobytes()) for name in sorted(data.files))
-    return tuple((name, table[name].to_pylist()) for name in table.column_names), action_state
+    def stable(value):
+        if isinstance(value, float) and np.isnan(value):
+            return "NaN"
+        if isinstance(value, list):
+            return tuple(stable(item) for item in value)
+        return value
+
+    return tuple((name, stable(table[name].to_pylist()))
+                 for name in table.column_names), action_state
 
 
 def test_accepting_medium_event_enables_pose_and_recomputed_actions(tmp_path):
