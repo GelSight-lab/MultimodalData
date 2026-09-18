@@ -198,7 +198,7 @@ git commit -m "feat: rebuild repair-aware 30 and 15 fps actions"
 - Create: `twm/react_preprocess/mocap_candidate.py`
 - Create: `tests/test_mocap_candidate.py`
 
-- [ ] **Step 1: Write failing manifest and safety tests**
+- [x] **Step 1: Write failing manifest and safety tests**
 
 ```python
 def test_manifest_is_sorted_and_contains_sha256(tmp_path):
@@ -222,31 +222,31 @@ def test_candidate_keeps_unselected_columns_and_good_poses_exact(tmp_path):
     assert np.array_equal(raw_pose[~out.repaired], candidate_pose[~out.repaired])
 ```
 
-- [ ] **Step 2: Run and verify RED**
+- [x] **Step 2: Run and verify RED**
 
 Run: `python -m pytest -q tests/test_mocap_candidate.py`
 
 Expected: import failure for the new module.
 
-- [ ] **Step 3: Implement immutable manifest and root guards**
+- [x] **Step 3: Implement immutable manifest and root guards**
 
 Snapshot relative path, bytes, rows, mtime_ns, and streaming SHA-256 for every `release/<task>/meta/*/*.parquet`; persist schema version, source root, creation time, task set, and digest of the canonical manifest JSON. Reject output equal to, inside, or parent of any known production root (`release`, `release_zup`, `release_cut`) and reject an existing candidate whose manifest digest differs unless a new output root is supplied.
 
-- [ ] **Step 4: Implement candidate parquet and sidecar writer**
+- [x] **Step 4: Implement candidate parquet and sidecar writer**
 
 Copy the source table and replace only candidate pose columns. Add per-side `pose_*_repaired`, `pose_*_repair_confidence`, and `pose_*_valid` columns to the `T`-row candidate parquet. Store the `T-1` native actions and the derived 15 fps actions in separate per-episode sidecars with value/valid/repaired/event-ID arrays. Store event evidence and event-ID dictionaries in deterministic JSON. Use temporary sibling files plus `os.replace`; verify source size/digest immediately before writing. Never mutate source files.
 
-- [ ] **Step 5: Implement deterministic decision replay and verification**
+- [x] **Step 5: Implement deterministic decision replay and verification**
 
 Accept only `keep_raw`, `accept_repair`, `invalidate`, or `unsure`. Match every decision to exactly one event ID; reject duplicates and unknown IDs. Accepted medium events become valid; keep_raw restores the raw pose and applies physical validity; invalidate/unsure stay invalid. Applying the same canonical decisions twice must produce byte-identical logical tables and sidecars. Verify all quaternion norms, changed-frame declarations, untouched-frame equality, action contracts, and source digests.
 
-- [ ] **Step 6: Run candidate tests**
+- [x] **Step 6: Run candidate tests**
 
 Run: `python -m pytest -q tests/test_mocap_candidate.py tests/test_repaired_actions.py`
 
 Expected: all pass.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add twm/react_preprocess/mocap_candidate.py tests/test_mocap_candidate.py
