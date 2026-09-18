@@ -345,7 +345,7 @@ def _gui_loop(config, recorder: Recorder, capture: CaptureLoop, rig,
               projection: Optional[Dict[str, Any]]) -> int:
     import cv2
     from twm.recorder.frames import decode_arducam
-    from twm.viz import build_preview_panel, draw_projection_overlay
+    from twm.visualization import render_preview, Projection, draw_preview_overlay
     from twm.wrist_tone import apply_tone_curve
 
     log.info("controls: s start | e end | r reset diff ref | p projection | q quit")
@@ -354,6 +354,8 @@ def _gui_loop(config, recorder: Recorder, capture: CaptureLoop, rig,
     if wrist_gamma != 1.0:
         log.info("wrist preview through the published tone curve (gamma %.1f)", wrist_gamma)
     show_projection = projection is not None
+    overlay_config = (Projection(projection["cams"], projection["gel_left"],
+                                 projection["gel_right"]) if projection else None)
     gui_dt = 1.0 / float(getattr(config, 'gui_fps', 15))
 
     def draw_health(panel, snap):
@@ -365,7 +367,7 @@ def _gui_loop(config, recorder: Recorder, capture: CaptureLoop, rig,
 
     def build(snap):
         tick = snap.tick
-        return build_preview_panel(
+        return render_preview(
             list(tick.color), list(tick.gelsight), list(snap.gs_ref), snap.ot_poses,
             snap.recording, snap.frame_count, snap.elapsed,
             snap.writer.queue_items, snap.fps_meas, task_name=config.task,
@@ -377,8 +379,7 @@ def _gui_loop(config, recorder: Recorder, capture: CaptureLoop, rig,
             arducam_labels=arducam_labels)
 
     def overlay(panel, ot_poses):
-        draw_projection_overlay(panel, ot_poses, projection["cams"],
-                                projection["gel_left"], projection["gel_right"])
+        draw_preview_overlay(panel, ot_poses, overlay_config)
 
     latest_snap = {"snap": None}
 

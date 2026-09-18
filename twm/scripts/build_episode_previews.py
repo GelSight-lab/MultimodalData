@@ -29,29 +29,30 @@ from __future__ import annotations
 
 import argparse
 import json
-import subprocess
 import sys
-import tempfile
 from pathlib import Path
+from functools import partial
 
 import cv2
 import h5py
 import hdf5plugin  # noqa: F401
 import numpy as np
 
-sys.path.insert(0, "/home/yxma/MultimodalData")
+if __package__ in (None, ""):
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from twm.data_collection import REALSENSE_SERIALS    # noqa
 from twm.recorder.frames import decode_arducam  # noqa: E402
 from twm.wrist_tone import apply_tone_curve, episode_wrist_gamma  # noqa: E402
+from twm.visualization import (
+    Projection, draw_preview_overlay, render_preview as build_preview_panel,
+)
 from twm.viz import (
     DISPLAY_ORDER,
     GS_THUMB_W,
     RS_THUMB_H,
     RS_THUMB_W,
     ROW2_Y,
-    build_preview_panel,
-    draw_projection_overlay,
     cam_aligned_pose,
     load_optitrack,
     optitrack_at,
@@ -458,16 +459,15 @@ def clip_window(trim_offset: int, window_start: int | None,
     return start, min(T_h5, start + n_frames_target)
 
 
-def build_one_preview(h5_path: Path, out_mp4: Path,
-                      clip_s: float, speed: float,
+def iter_preview_panels(h5_path: Path, clip_s: float,
                       project_cams, gel_center_left, gel_center_right,
                       dx: float = 0.0, dy: float = 0.0, dz: float = 0.0,
                       proj_up_axis: str = "y",
                       press_axes=None, window_start: int | None = None,
                       force_root: Path | None = None,
-                      frame_transform=None, show_virtual_targets: bool = True) -> None:
+                      frame_transform=None, show_virtual_targets: bool = True):
+    """Yield aligned BGR panels; source resources close with the generator."""
     force_root = FORCE_ROOT if force_root is None else Path(force_root)
-    output_fps = SOURCE_FPS * speed
     n_frames_target = int(round(clip_s * SOURCE_FPS))   # e.g. 30s * 30fps = 900
     task_name = h5_path.parent.parent.name
     date_name = h5_path.parent.name
@@ -523,7 +523,10 @@ def build_one_preview(h5_path: Path, out_mp4: Path,
         targets = preview_targets(task_name, date_name, h5_path.stem, force_root,
                                   enabled=show_virtual_targets)
 
-        panels = []
+        wrist_slots = sorted(f["arducam"])[:2] if "arducam" in f else []
+        wrist_labels = [{"cam0": "wrist left", "cam1": "wrist right"}.get(slot, slot)
+                        for slot in wrist_slots] or None
+        wrist_gamma = episode_wrist_gamma(f) if wrist_slots else 1.0
         overlay_errors = 0
         for f_idx_int in sample_idx:
             f_idx_int = int(f_idx_int)
@@ -538,20 +541,19 @@ def build_one_preview(h5_path: Path, out_mp4: Path,
             opt_poses = optitrack_at(ot_lookup, float(cam_ts[f_idx_int]))
 
             wrist = None
-            if "arducam" in f:
+            if wrist_slots:
                 # Same tick index as everything else, so the wrist row is in
                 # step with the views and the tactile beside it.
                 # The published curve, so the preview panel matches the
                 # wrist videos the dataset ships. See `twm.wrist_tone`.
-                wg = episode_wrist_gamma(f)
                 wrist = [apply_tone_curve(
-                             decode_arducam(f[f"arducam/{slot}/frames"][f_idx_int]), wg)
-                         for slot in sorted(f["arducam"])][:2]
+                             decode_arducam(f[f"arducam/{slot}/frames"][f_idx_int]), wrist_gamma)
+                         for slot in wrist_slots]
             panel = build_preview_panel(
                 color_frames=color_frames,
                 gs_frames=[gs_L, gs_R],
                 arducam_frames=wrist,
-                arducam_labels=(["wrist left", "wrist right"] if wrist else None),
+                arducam_labels=wrist_labels,
                 gs_ref=[gs_ref_L, gs_ref_R],
                 optitrack_poses=opt_poses,
                 recording=False,
@@ -605,14 +607,13 @@ def build_one_preview(h5_path: Path, out_mp4: Path,
 
             if project_cams:
                 try:
-                    draw_projection_overlay(
-                        panel, opt_poses,
+                    draw_preview_overlay(panel, opt_poses, Projection(
                         project_cams,
                         gel_center_left, gel_center_right,
                         forces_n=frame_forces or None,
                         targets_7=frame_targets or None,
                         press_axis=press_axes,
-                    )
+                    ))
                 except Exception as e:
                     # Was `except Exception: pass`. A frame that failed to
                     # draw its overlay still encoded fine and looked
@@ -640,69 +641,43 @@ def build_one_preview(h5_path: Path, out_mp4: Path,
 
             if frame_transform is not None:
                 panel = frame_transform(panel, f_idx_int)
-            panels.append(panel)
+            yield panel
 
     if overlay_errors:
         print(f"  WARN: {overlay_errors}/{len(sample_idx)} frames "
               f"rendered without the projection/force overlay")
 
-    # Write MP4 via ffmpeg (rawvideo BGR -> H.264 yuv444p), then PROVE it plays.
-    #
-    # ffmpeg exiting 0 is not evidence the file is good. On 2026-08-08 a pushT
-    # render reported "OK (2766 KB)" for all four episodes and every one of them
-    # decoded to ZERO frames: the container held two copies of the moov atom, so
-    # every sample offset in the first copy was short by one moov (11606 bytes)
-    # and the demuxer read NAL lengths out of the second copy's tail. Re-running
-    # the identical command produced four clean files, so this is intermittent
-    # and I could not reproduce it — which is exactly why the check below counts
-    # decoded frames instead of trusting the exit status.
-    out_mp4.parent.mkdir(parents=True, exist_ok=True)
-    cmd = [
-        "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
-        "-f", "rawvideo", "-pix_fmt", "bgr24",
-        "-s", f"{panels[0].shape[1]}x{panels[0].shape[0]}",   # from the panel, not a constant
-        "-r", f"{output_fps}",
-        "-i", "-",
-        "-c:v", "libx264",
-        "-profile:v", "high444",
-        "-preset", "medium",
-        "-crf", "20",
-        "-pix_fmt", "yuv444p",
-        "-movflags", "+faststart",
-        "-an",
-        str(out_mp4),
-    ]
-    for attempt in (1, 2, 3):
-        p = subprocess.Popen(cmd, stdin=subprocess.PIPE)
-        for panel in panels:
-            p.stdin.write(panel.tobytes())
-        p.stdin.close()
-        ret = p.wait()
-        if ret != 0:
-            raise RuntimeError(f"ffmpeg failed with code {ret}")
-        got = _decoded_frame_count(out_mp4)
-        if got == len(panels):
-            return
-        print(f"  WARN: {out_mp4.name} wrote {out_mp4.stat().st_size} bytes but "
-              f"decodes to {got}/{len(panels)} frames — rewriting "
-              f"(attempt {attempt}/3)", flush=True)
-    raise RuntimeError(
-        f"{out_mp4}: ffmpeg exited 0 three times and the file still decodes to "
-        f"{got}/{len(panels)} frames. Refusing to publish an unplayable preview.")
+
+def build_one_preview(h5_path: Path, out_mp4: Path,
+                      clip_s: float, speed: float,
+                      project_cams, gel_center_left, gel_center_right,
+                      dx: float = 0.0, dy: float = 0.0, dz: float = 0.0,
+                      proj_up_axis: str = "y", press_axes=None,
+                      window_start: int | None = None, force_root: Path | None = None,
+                      frame_transform=None, show_virtual_targets: bool = True) -> None:
+    """Stream panels to a verified MP4, replaying source only on verification retry.
+
+    ``frame_transform`` must be deterministic if supplied: a failed decode check
+    starts a fresh source pass. Existing destination remains intact on failure.
+    """
+    from twm.visualization.export import write_video
+
+    if not np.isfinite(clip_s) or clip_s <= 0:
+        raise ValueError("clip_s must be finite and positive")
+    frames = partial(
+        iter_preview_panels, h5_path, clip_s, project_cams,
+        gel_center_left, gel_center_right, dx=dx, dy=dy, dz=dz,
+        proj_up_axis=proj_up_axis, press_axes=press_axes,
+        window_start=window_start, force_root=force_root,
+        frame_transform=frame_transform, show_virtual_targets=show_virtual_targets,
+    )
+    write_video(out_mp4, frames, fps=SOURCE_FPS * speed)
 
 
 def _decoded_frame_count(mp4: Path) -> int:
-    """How many frames the file actually yields to a decoder.
-
-    Decoded at 32x12 so the check costs demuxing plus a cheap scale rather than
-    a full-size decode; a container whose sample offsets are wrong fails here
-    the same way it fails at full size.
-    """
-    out = subprocess.run(
-        ["ffmpeg", "-v", "error", "-i", str(mp4), "-vf", "scale=32:12",
-         "-f", "rawvideo", "-pix_fmt", "gray", "-"],
-        capture_output=True).stdout
-    return len(out) // (32 * 12)
+    """Compatibility alias for the shared full-decode verification."""
+    from twm.visualization.export import decoded_frame_count
+    return decoded_frame_count(mp4)
 
 
 def main():

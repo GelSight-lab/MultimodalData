@@ -5,6 +5,10 @@ Tools for collecting and reviewing multimodal data for the Tactile World Model
 2 Arducam wrist cameras, OptiTrack), an unattended soak test, an episode
 validator, a per-stream integrity check, calibration tools, and a viewer.
 
+For shared rendering, custom modality layouts and overlays, see
+[the visualization module](visualization/README.md). The unified viewer entry
+point is `python -m twm.visualization`; the existing viewer command still works.
+
 ## Quick start
 
 ```bash

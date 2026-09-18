@@ -1,17 +1,13 @@
 """The GUI loop runs end to end with a stubbed window: builds a panel from a
 real synthetic tick, draws the overlay with the newest pose, and quits on q."""
-import sys
-import types
-
+import cv2
 import numpy as np
-import pytest
 
 from twm.recorder import app as app_mod
 from twm.recorder.capture import CaptureSnapshot
 from twm.recorder.config import RecorderConfig
 from twm.recorder.frames import synthetic_tick
 from twm.recorder.writer import WriterStats
-import twm.viz  # noqa: F401  bind the real cv2 before the window stub is installed
 
 
 class FakeCapture:
@@ -55,15 +51,9 @@ class FakeRig:
 def test_gui_loop_renders_overlay_with_fresh_poses_and_quits(monkeypatch):
     shown = []
     keys = iter([255, 255, ord("p"), 255, ord("q")])
-    stub = types.SimpleNamespace(
-        imshow=lambda name, panel: shown.append(panel.copy()),
-        waitKey=lambda ms: next(keys),
-        destroyAllWindows=lambda: None,
-    )
-    import cv2 as real_cv2
-    for attr in ("putText", "FONT_HERSHEY_SIMPLEX", "LINE_AA"):
-        setattr(stub, attr, getattr(real_cv2, attr))
-    monkeypatch.setitem(sys.modules, "cv2", stub)
+    monkeypatch.setattr(cv2, "imshow", lambda name, panel: shown.append(panel.copy()))
+    monkeypatch.setattr(cv2, "waitKey", lambda ms: next(keys))
+    monkeypatch.setattr(cv2, "destroyAllWindows", lambda: None)
 
     tick = synthetic_tick(100.0, seed=1, n_realsense=3, n_arducam=2)
     snap = CaptureSnapshot(tick=tick, gs_ref=tuple(g.copy() for g in tick.gelsight),

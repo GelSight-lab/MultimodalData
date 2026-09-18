@@ -58,7 +58,10 @@ import cv2
 # pushT) and is resolved from the input path at parse time via calib_epoch —
 # a constant here defaulted every task to June-26.
 
-from twm.data_collection import make_preview, REALSENSE_SERIALS
+from twm.data_collection import REALSENSE_SERIALS
+from twm.visualization import (
+    Projection, draw_preview_overlay, render_preview as make_preview,
+)
 from twm.recorder.frames import decode_arducam
 from twm.wrist_tone import apply_tone_curve, episode_wrist_gamma
 from twm.viz import (
@@ -431,11 +434,9 @@ def process_episode(h5_path, out_video_path, args,
             # Pose AND force, the pair the dataset previews show. The overlay
             # draws the disc on the SAME projected point as the axes, so the
             # two can never disagree about where the sensor is.
-            draw_projection_overlay(
-                preview, optitrack_poses, project_cams,
-                gel_center_left, gel_center_right,
-                forces_n=forces_n or None,
-            )
+            draw_preview_overlay(preview, optitrack_poses, Projection(
+                project_cams, gel_center_left, gel_center_right,
+                forces_n=forces_n or None))
 
             # ── Action menu + status bar ─────────────────────────────────────
             preview[240:480, 960:1280] = make_action_menu(w=320, h=240, paused=paused, loop=loop)
@@ -497,13 +498,10 @@ def process_episode(h5_path, out_video_path, args,
                 loop = not loop
                 print(f"Loop {'ON' if loop else 'OFF'}")
             elif key == ord('r'):
-                shifted = frame_idx + tac_lat
-                gs_ref = [
-                    f["gelsight/left/frames"][max(0, min(shifted, gs_left_n - 1))].copy()   if gs_left_n  > 0 else _blank_gs.copy(),
-                    f["gelsight/right/frames"][max(0, min(shifted, gs_right_n - 1))].copy() if gs_right_n > 0 else _blank_gs.copy(),
-                ]
-                print(f"GelSight diff reference reset to frame {frame_idx + 1}"
-                      + (f" (gs idx {shifted + 1}, +{tac_lat})" if tac_lat else ""))
+                # The source adapter already resolved tactile alignment. Reuse
+                # those frames for both raw HDF5 and published episodes.
+                gs_ref = [frame.copy() for frame in gs_frames]
+                print(f"GelSight diff reference reset to frame {frame_idx + 1}")
 
             if not paused:
                 frame_idx += speed
@@ -535,7 +533,7 @@ def process_episode(h5_path, out_video_path, args,
             cv2.destroyAllWindows()
 
 
-def main():
+def main(argv=None):
     parser = argparse.ArgumentParser(
         description="Visualize a TWM episode HDF5 file (with optional "
                     "GelSight-center projection overlay; on by default).")
@@ -575,7 +573,7 @@ def main():
     parser.add_argument("--tactile_latency", type=int, default=3,
                         help="Frames to advance gelsight reads (h5_frame + N) to "
                              "compensate for tactile capture lag. Default: 3.")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     if not args.no_projection:
         from twm.calib_epoch import resolve_calibration
