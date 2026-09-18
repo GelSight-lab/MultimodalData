@@ -148,7 +148,7 @@ git commit -m "feat: reconstruct and score mocap repair candidates"
 - Create: `twm/react_preprocess/repaired_actions.py`
 - Create: `tests/test_repaired_actions.py`
 
-- [ ] **Step 1: Write failing action-contract tests**
+- [x] **Step 1: Write failing action-contract tests**
 
 ```python
 def test_native_action_is_translation_plus_relative_rot6d():
@@ -164,28 +164,28 @@ def test_native_valid_requires_both_valid_endpoints_and_physical_step():
 def test_fps15_valid_is_and_and_repaired_is_or():
     native.valid[:] = [True, False, True, True]
     native.repaired[:] = [False, True, False, True]
-    half = actions_fps15(native)
+    half = actions_fps15(poses, native)
     assert half.valid.tolist() == [False, True]
     assert half.repaired.tolist() == [True, True]
 ```
 
-- [ ] **Step 2: Run and verify RED**
+- [x] **Step 2: Run and verify RED**
 
 Run: `python -m pytest -q tests/test_repaired_actions.py`
 
 Expected: import failure for the new module.
 
-- [ ] **Step 3: Implement action builders**
+- [x] **Step 3: Implement action builders**
 
 Build world-frame relative rotations `R[k+1] * R[k].inv()` and encode the first two rotation-matrix columns as rot6d after the 3-D translation delta. Mark transitions invalid for non-finite endpoints, invalid pose endpoints, translation >50 mm, or rotation >30 degrees. Propagate repaired flags and sorted event IDs from either endpoint. Build 15 fps actions directly from pose `k -> k+2`; validity is native `k AND k+1`, repaired is native `k OR k+1`, and provenance is their union.
 
-- [ ] **Step 4: Run action tests plus toolbox regressions**
+- [x] **Step 4: Run action tests plus toolbox regressions**
 
 Run: `python -m pytest -q tests/test_repaired_actions.py twm/scripts/test_synth_actions.py`
 
 Expected: all pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add twm/react_preprocess/repaired_actions.py tests/test_repaired_actions.py
