@@ -23,6 +23,7 @@ import numpy as np
 
 from . import meta as meta_mod
 from . import repair
+from .complete import is_complete
 from .config import CAM_STREAM, CHUNK, GEL_STREAM, SIDES, WRIST_STREAM, stage_dirs
 from twm.recorder.frames import decode_arducam
 
@@ -296,8 +297,15 @@ def build_episode(h5_path: Path, task: str, force: bool = False,
 
     video_dir, meta_dir = stage_dirs(task, source.date, source.episode)
     pq_path = meta_dir / f"{source.episode}.parquet"
-    if pq_path.exists() and not force:
+    release_root = video_dir.parent.parent.parent.parent
+    if not force and is_complete(release_root, task, source.date, source.episode,
+                                 source_h5=h5_path, encode_video=encode_video,
+                                 with_depth=with_depth):
         return BuildReport(source.episode, "skipped", detail="already built")
+
+    # Invalidate completion before replacing any artifact, including when a
+    # forced or metadata-only rebuild fails before its first video write.
+    pq_path.unlink(missing_ok=True)
 
     with h5py.File(str(h5_path), "r") as f:
         # The tone exponent is a property of (camera, task), not of this run,
@@ -328,9 +336,17 @@ def build_episode(h5_path: Path, task: str, force: bool = False,
             _encode_depth(f, source, depth_dir)
 
     table = meta_mod.build_table(source, tactile, obj_pose)
-    meta_mod.write_table(table, pq_path)
+    meta_dir.mkdir(parents=True, exist_ok=True)
     _write_detect_sidecar(meta_dir / f"{source.episode}._detect.pt", source, tactile,
                           extra_meta=wrist)
+    # A partial parquet must never become the completion signal. The sibling
+    # temporary path keeps the final rename atomic on the same filesystem.
+    pending_pq = pq_path.with_suffix(".parquet.tmp")
+    try:
+        meta_mod.write_table(table, pending_pq)
+        pending_pq.replace(pq_path)
+    finally:
+        pending_pq.unlink(missing_ok=True)
 
     lstat = tactile["left"].stats
     detail = (f"T={source.T} "

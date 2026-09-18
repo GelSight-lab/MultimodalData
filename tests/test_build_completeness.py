@@ -19,6 +19,7 @@ def _episode(root, task="motherboard", date="2026-09-11", ep="episode_006",
     (root / task / "meta" / date).mkdir(parents=True, exist_ok=True)
     for s in STREAMS[:n_streams]:
         (vd / f"{s}.mp4").write_bytes(b"x")
+    (root / task / "meta" / date / f"{ep}._detect.pt").write_bytes(b"sidecar")
     return root / task / "meta" / date / f"{ep}.parquet"
 
 

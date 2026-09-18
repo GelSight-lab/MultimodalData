@@ -18,10 +18,15 @@ class VideoWriter:
 
     def __init__(self, path: Path, pix_fmt="bgr24", codec="libx264",
                  width=W, height=H, fps=FPS):
+        if pix_fmt not in ("bgr24", "gray16le"):
+            raise ValueError(f"unsupported input pixel format {pix_fmt!r}")
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._cmd = self._build(pix_fmt, codec, width, height, fps)
         self._proc = None
+        self._frame_shape = ((height, width, 3) if pix_fmt == "bgr24"
+                             else (height, width))
+        self._dtype = np.dtype("uint8" if pix_fmt == "bgr24" else "<u2")
 
     def _build(self, pix_fmt, codec, width, height, fps):
         cmd = ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
@@ -48,14 +53,26 @@ class VideoWriter:
         return self
 
     def write(self, block: np.ndarray) -> None:
+        block = np.asarray(block)
+        if (block.ndim != len(self._frame_shape) + 1
+                or block.shape[1:] != self._frame_shape or block.dtype != self._dtype):
+            raise ValueError(
+                f"{self.path}: expected {self._dtype} blocks shaped "
+                f"(N, {', '.join(map(str, self._frame_shape))}), "
+                f"got {block.dtype} {block.shape}")
         self._proc.stdin.write(np.ascontiguousarray(block).tobytes())
 
     def __exit__(self, exc_type, exc, tb):
-        if self._proc.stdin:
-            self._proc.stdin.close()
-        rc = self._proc.wait()
-        if rc != 0 and exc_type is None:
-            raise RuntimeError(f"ffmpeg failed ({rc}) writing {self.path}")
+        close_error = None
+        try:
+            if self._proc.stdin:
+                self._proc.stdin.close()
+        except BrokenPipeError as error:
+            close_error = error
+        finally:
+            rc = self._proc.wait()
+        if exc_type is None and (rc != 0 or close_error is not None):
+            raise RuntimeError(f"ffmpeg failed ({rc}) writing {self.path}") from close_error
         return False
 
 
