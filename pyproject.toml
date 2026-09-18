@@ -23,7 +23,8 @@ twm = ["h5py", "hdf5plugin", "pyarrow", "matplotlib"]
 
 [tool.setuptools.packages.find]
 include = ["probing_panda*", "camera_stream*", "optitrack*", "ft_sensor*", "misc*", "twm*"]
-namespaces = false
+namespaces = true
+exclude = ["twm.plan*", "twm.config*", "twm.calibration.epoch_*", "twm.calibration.realsense*"]
 
 [tool.setuptools.package-data]
 twm = ["config/*.json", "calibration/epoch_*/*.json", "calibration/epoch_*/*.npy",

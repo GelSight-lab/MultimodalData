@@ -21,6 +21,9 @@ def test_wheel_contains_twm_subpackages_and_calibration(tmp_path):
                    capture_output=True, text=True)
     installed = tmp_path / "installed"
     with zipfile.ZipFile(next(wheel_dir.glob("*.whl"))) as wheel:
+        assert {"twm/calibration/mocap_to_cam.py",
+                "twm/scripts/diagnostics/test_world_offset.py",
+                "ft_sensor/mms101/mms101.py"} <= set(wheel.namelist())
         wheel.extractall(installed)
     env = dict(os.environ, PYTHONPATH=str(installed))
     # Avoid a host calibration override hiding missing package data.

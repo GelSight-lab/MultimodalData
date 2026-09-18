@@ -111,3 +111,31 @@ def test_empty_collection_summary_is_json_safe():
     summary = summarise(collect("toy", [], lambda _: pytest.fail("unexpected fetch")))
     assert summary["frames"] == 0 and summary["new_pct"] is None
     json.dumps(summary, allow_nan=False)
+
+
+@pytest.mark.parametrize("invalid", [np.nan, np.inf, -np.inf])
+def test_nonfinite_force_marks_summary_incomplete(tmp_path, invalid):
+    import json
+    from twm.scripts.dataset_stats import collect, summarise
+    p = tmp_path / "nonfinite.parquet"
+    pq.write_table(pa.table({"tactile_left_is_new": [True, True],
+                            "force_left_normal_n": [1., invalid],
+                            "force_right_normal_n": [1., 2.]}), p)
+    summary = summarise(collect("toy", ["2026-09-16/episode_000"], lambda _: p))
+    assert summary["frames"] == 2 and summary["no_force"]
+    assert summary["contact_pct_L"] is None
+    json.dumps(summary, allow_nan=False)
+
+
+@pytest.mark.parametrize("values", [[], [0., 0.], [8., 8.]])
+def test_empty_force_distributions_render(tmp_path, values):
+    from twm.scripts.dataset_stats import collect, summarise, CEILING_N
+    from twm.scripts.dataset_stats_fig import panel
+    p = tmp_path / "distribution.parquet"
+    pq.write_table(pa.table({"tactile_left_is_new": [True] * len(values),
+                            "force_left_normal_n": values,
+                            "force_right_normal_n": values}), p)
+    summary = summarise(collect("rope", ["2026-09-16/episode_000"], lambda _: p))
+    output = tmp_path / "distribution.png"
+    panel({"rope": summary}, CEILING_N, output, "Test")
+    assert output.stat().st_size > 0

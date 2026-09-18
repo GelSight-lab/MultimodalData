@@ -3,7 +3,7 @@
     python twm/scripts/dataset_stats.py --out-dir assets
 
 Two eras, drawn separately because they are not comparable: the wrist-camera
-era (`data/{motherboard,pushT,rope}`) and the earlier Arducam session
+era (`data/{motherboard,pushT,rope,toy}`) and the earlier Arducam session
 (`data/validation`), which carries different wrist cameras and a different
 calibration epoch.
 
@@ -41,7 +41,7 @@ CEILING_N = 7.87      # the isotonic stage's top output; see react_calib.F_MAX_N
 CONTACT_N = 0.15
 _SEG = re.compile(r"_seg\d+$")
 
-# The wrist-camera era is the three task folders; `data/validation` is the
+# The wrist-camera era comprises the current task folders; `data/validation` is the
 # earlier session (2026-09-09), which carries different wrist cameras and a
 # different calibration epoch, so it is drawn on its own axes.
 ERAS = {
