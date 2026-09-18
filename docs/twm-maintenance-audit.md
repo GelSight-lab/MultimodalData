@@ -79,6 +79,30 @@ tests and documentation in the isolated worktree; main-checkout edits are preser
    hardware drivers are not imported. This does not test a fresh full hardware
    installation; base robot dependencies still exist in project metadata.
 
+### Requirement-to-evidence map
+
+These behavioral checks are part of the default suite, not substitutes for the
+full run. Paths below are relative to `tests/`.
+
+| Contract | Executable evidence |
+| --- | --- |
+| Immutable RGB/BGR/depth/height tiles; native ordered overlays and missing modalities | `visualization/test_core.py` |
+| Legacy pixel equality, mocap/force/target overlays, matching world frames and independent pose cadence | `visualization/test_preview.py` |
+| HDF5 zero/one/two wrists, aligned reference reset, compatible CLI and clean imports | `visualization/test_integrations.py`, `test_playback_controls.py`, `test_cli.py`, `test_import_hygiene.py` in `visualization/` |
+| Streaming memory ownership, retry, atomic output, default 444 and browser 420 encoding | `visualization/test_export.py` (real FFmpeg/FFprobe and decode checks) |
+| Drain waits through flush; persistent telemetry faults stop/finalize recording | `recorder/test_writer.py`, `test_capture.py`, `test_recorder.py` |
+| Interrupted builds cannot publish completion; modality-aware retries and scheduler prerequisites | `test_preprocess_completion_recovery.py`, `test_scheduler_build_completion.py` |
+| Encoder exception preservation; source dimensions, trim, tone, frame counts and lossless depth | `test_preprocess_encoder_cleanup.py`, `test_preprocess_source_dimensions.py`, `test_single_pass_encode.py`, `test_end_to_end_smoke.py` |
+| Sorted unique frame selection, explicit missing-frame errors and decoder closure | `test_toolbox_video_io.py` (AV and OpenCV, including real video) |
+| Canonical tactile alignment, replayable reader lifetime and bounded timeline redraw | `test_force_visualization.py` |
+| Force-free/partial statistics, calibration routing and isolated prerequisites | `test_stats_without_force.py`, `test_calib_epoch_sessions.py`, `test_force_asset_is_declared.py` |
+| Default/legacy axis metadata, shared stiffness and unchanged force/target values | `test_force_export_provenance.py`, `test_virtual_target_is_not_gel_compression.py` |
+| Installed modules, packaged calibration/config and hardware-free CLI imports | `test_installed_package.py` |
+
+No calibration/config/data files differ from maintenance base `039f6af`.
+Physical-device acquisition and idle-host real-time performance are separate
+operational checks; synthetic lifecycle/content tests do not certify either.
+
 ### Test cleanup and baseline failures
 
 - Statistics now retain scale/tactile information when force is absent, partial
@@ -114,12 +138,64 @@ every historical script's `main()` or every physical device integration.
 
 ## Verification notes
 
+### Maintenance completion run
+
+The final full serial `python -m pytest -q` run on code commit `f6c3c29`
+(documentation-only follow-up `078cc11`) completed with **1,215 passed,
+1 skipped, 11 warnings in 474.28 s**, exit 0. It collected both `tests` and
+embedded `twm` tests, including real encoding and installed-wheel checks.
+The one skip is the opt-in host-scheduling test; deterministic headless recorder
+content, schema, fault handling and synthetic timing-threshold checks ran.
+Ten warnings are third-party Matplotlib/distutils deprecations; one is NumPy's
+nonfinite subtraction warning in the known-gap endpoint regression.
+
+Independent final spec and quality reviews approved the completed changes,
+with no remaining Critical/Important findings. Review also checked the cumulative
+maintenance diff against `039f6af`; it did not certify physical hardware or
+interactive browser playback.
+
+The first full serial run on maintenance commit `348952d` collected both `tests`
+and embedded `twm` tests: **1,195 passed, 3 failed, 1 skipped**, 11 warnings in
+534.08 s. The skip is the explicitly opt-in real-time scheduling check; the
+deterministic headless recorder check ran. The three failures identified:
+
+- Two end-to-end checks failed when 64×48 synthetic source images reached an encoder
+  still configured for 640×480. Strict shape checking correctly prevents corrupt
+  output. Writers now receive source dimensions without relaxing validation;
+  real raw/MJPEG, single/multi-pass, tactile and lossless-depth regressions verify
+  dimensions, trim, counts, alignment and pixel semantics (`b2d577e`).
+- The force-asset presence test depended on this host's pre-existing build outputs
+  instead of establishing the build prerequisite in its own fixture.
+  It now isolates that prerequisite and tests both ready and unavailable builds
+  without changing production gating (`84b30ec`).
+
+Independent spec review approved the eight maintenance implementations. Final
+quality review additionally found that force website clips lost their previous
+`yuv420p` encoding when routed through the shared `yuv444p` batch writer.
+The force adapter now explicitly requests 420 while the shared default stays
+444; FFprobe tests verify the actual pixel format/profile. Invalid formats and
+odd 420 dimensions fail before publishing output (`f6c3c29`).
+Force export provenance and documentation now match the selected runtime axis,
+shared 2 N/mm stiffness and virtual displacement semantics; tests verify schema,
+sidecar and unchanged numerical force/target values (`67574d8`, `078cc11`).
+
+Fresh final checks: **15 pipeline-guard checks, 0 violations**; installed-wheel
+smoke **1 passed in 2.78 s** outside the checkout; shared CLI help, compilation
+and diff whitespace checks passed. A fresh 100-iteration synthetic benchmark
+confirmed pixel equality, with legacy/shared median **6.12 / 6.36 ms** and
+p95 **6.54 / 7.24 ms**. Rendering has similar cost (slightly slower in this run),
+not a demonstrated speedup. The principal efficiency improvements are streaming
+frame ownership, cached source configuration and bounded force-timeline redraw.
+Host workload varies, so these timings are observations, not speed guarantees.
+
+### Historical initial visualization run
+
 The baseline suite (`tests`, before implementation, maxfail=5) produced 919 passes
 and five failures: an on-disk undeclared `pushT/2026-09-17` calibration session,
 the task-list duplication guard, and three force-free dataset-statistics tests.
 Unrelated user edits in the main checkout were not copied over or overwritten.
 The results below describe the initial visualization phase; the maintenance
-follow-up addresses those baseline failures and is being verified separately.
+follow-up addresses those baseline failures; its final verification is above.
 Initial refactor verification:
 
 - Final focused integration selection: **102 passed**, including the four
@@ -138,9 +214,10 @@ Initial refactor verification:
   panel rendering was approximately **6.68 / 6.54 ms**, p95 **8.08 / 8.34 ms** on
   this run. These are observations, not portable performance guarantees.
 
-The branch remains unmerged. The entire repository is **not** claimed green;
-embedded research verifiers under `twm` and physical hardware were not run as a
-blanket suite.
+The branch remains unmerged. The configured default suite across `tests` and
+`twm` is green with the explicit timing skip above. This is not a claim that
+every historical research script's `main()`, physical device integration,
+idle-host real-time acquisition or interactive browser playback was exercised.
 
 No dataset publication, force/action regeneration, calibration rewrite, or live
 hardware acquisition was performed by this refactor.

@@ -83,11 +83,37 @@ Files: `pyproject.toml`, packaging tests, `twm/README.md`, visualization guide,
   pure modules without hardware imports or accidental checkout fallback.
 - [x] Review remaining TWM test/verifier entrypoints, document optional hardware,
   datasets and research dependencies rather than silently ignoring them.
-- [ ] Run full applicable suite serially, pipeline guard, installed-wheel smoke,
+- [x] Run full applicable suite serially, pipeline guard, installed-wheel smoke,
   and benchmarks. Independently review completed changes.
-- [ ] Update audit items with concrete resolution/evidence and runnable commands.
+- [x] Update audit items with concrete resolution/evidence and runnable commands.
   Mark goal complete only when all requirements are verified or actual external
   blockers are explicitly established; do not claim hardware tests were run.
 
 For each bug: read the call path, write/reproduce RED, implement the smallest
 root-cause fix, run GREEN plus affected regressions, review and commit scoped files.
+
+## Final verification findings
+
+The first full serial run finished with 1,195 passed, 3 failed and 1 skipped.
+Independent quality review found one additional encoding compatibility regression.
+These findings must be resolved before the final verification items above close:
+
+- [x] Correct force-export provenance and operational documentation to match
+  the existing sensor −Y normal, shared 2 N/mm controller stiffness, and virtual
+  (not gel-compression) displacement. Test schema and sidecar declarations.
+- [x] Preserve the force website clips' existing `yuv420p` output contract while
+  retaining the batch preview writer's default; verify actual encoded format.
+- [x] Fix source-frame dimensions at preprocessing encoder boundaries: the
+  synthetic end-to-end chain has 48×64 images but writers declare 480×640.
+  Retain strict block validation and verify output dimensions and frame counts.
+- [x] Make the force-asset presence test establish its build prerequisite in
+  an isolated fixture, rather than depend on this host's production release.
+- [x] Repeat the complete serial suite and independent review after these fixes.
+
+Final serial result on code commit `f6c3c29` (documentation-only follow-up
+`078cc11`): **1,215 passed, 1 skipped, 11 warnings in 474.28 s**, exit 0.
+The single skip is the opt-in real-time scheduling test, not a failed correctness
+check. Independent final spec/quality review approved the fixes with no remaining
+Critical/Important findings. Pipeline guard: **15 checks, 0 violations**;
+fresh installed-wheel smoke: **1 passed in 2.78 s**. See the maintenance audit
+for benchmark results, requirement coverage and operational exclusions.
