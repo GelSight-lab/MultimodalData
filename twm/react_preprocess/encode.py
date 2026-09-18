@@ -84,11 +84,11 @@ class VideoWriter:
         return False
 
 
-def rgb_writer(path: Path) -> VideoWriter:
+def rgb_writer(path: Path, *, width=W, height=H) -> VideoWriter:
     """8-bit colour stream. Feed BGR blocks (ffmpeg's native order)."""
-    return VideoWriter(path, pix_fmt="bgr24", codec="libx264")
+    return VideoWriter(path, pix_fmt="bgr24", codec="libx264", width=width, height=height)
 
 
-def depth_writer(path: Path) -> VideoWriter:
+def depth_writer(path: Path, *, width=W, height=H) -> VideoWriter:
     """16-bit depth stream, lossless. Feed uint16 millimetre blocks."""
-    return VideoWriter(path, pix_fmt="gray16le", codec="ffv1")
+    return VideoWriter(path, pix_fmt="gray16le", codec="ffv1", width=width, height=height)

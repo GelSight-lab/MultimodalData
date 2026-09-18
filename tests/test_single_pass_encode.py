@@ -25,6 +25,7 @@ class FakeDataset:
 
     def __init__(self, name: str, array: np.ndarray, log: list):
         self.name, self._a, self._log = name, array, log
+        self.shape = array.shape
 
     def __getitem__(self, sl):
         self._log.append((self.name, sl.start, sl.stop))
@@ -41,8 +42,9 @@ class FakeMeta:
 
 
 class FakeWriter:
-    def __init__(self, path, sink):
+    def __init__(self, path, sink, *, width, height):
         self.path, self._sink = path, sink
+        self._shape = (height, width, 3)
 
     def __enter__(self):
         return self
@@ -51,6 +53,7 @@ class FakeWriter:
         return False
 
     def write(self, block):
+        assert block.shape[1:] == self._shape
         self._sink.setdefault(self.path.name, []).append(np.asarray(block).copy())
 
 
@@ -81,7 +84,7 @@ def _fake_file(log, n=40, wrist=True):
 def patched(monkeypatch):
     """Isolate the traversal from ffmpeg and from the tone curve."""
     sink = {}
-    monkeypatch.setattr(pipeline, "rgb_writer", lambda p: FakeWriter(p, sink))
+    monkeypatch.setattr(pipeline, "rgb_writer", lambda p, **kw: FakeWriter(p, sink, **kw))
     monkeypatch.setattr(pipeline, "gamma_for_camera", lambda kind, task: 2.0)
     monkeypatch.setattr(pipeline, "decode_arducam", lambda fr: fr)
     monkeypatch.setattr(pipeline, "apply_tone_curve", lambda a, g: a + 100)
@@ -136,7 +139,7 @@ def test_single_pass_writes_the_same_bytes_as_the_two_pass_path(monkeypatch):
     I/O reordering and must not be anything else."""
     def run(single: bool):
         sink = {}
-        monkeypatch.setattr(pipeline, "rgb_writer", lambda p: FakeWriter(p, sink))
+        monkeypatch.setattr(pipeline, "rgb_writer", lambda p, **kw: FakeWriter(p, sink, **kw))
         monkeypatch.setattr(pipeline, "gamma_for_camera", lambda kind, task: 2.0)
         monkeypatch.setattr(pipeline, "decode_arducam", lambda fr: fr)
         monkeypatch.setattr(pipeline, "apply_tone_curve", lambda a, g: a + 100)

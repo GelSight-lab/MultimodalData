@@ -68,7 +68,8 @@ def process_side(h5file, side: str, align: TactileAlignment, out_path: Path,
     is_new = np.empty(T, bool)
     tracker = NewFrameTracker()
 
-    writer = rgb_writer(out_path) if encode else None
+    writer = (rgb_writer(out_path, width=ds.shape[2], height=ds.shape[1])
+              if encode else None)
     ctx = writer if writer is not None else _NullCtx()
     with ctx:
         for s, e in _blocks(T):

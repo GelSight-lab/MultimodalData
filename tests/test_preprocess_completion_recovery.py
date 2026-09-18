@@ -25,7 +25,8 @@ def recording(tmp_path, monkeypatch):
     class ByteWriter:
         # Isolate ffmpeg only; alignment, tactile metrics, metadata, and
         # publication all use the real pipeline on this small H5.
-        def __init__(self, path):
+        def __init__(self, path, *, width, height):
+            self.shape = (height, width)
             path.parent.mkdir(parents=True, exist_ok=True)
             self.output = path.open("wb")
 
@@ -33,6 +34,7 @@ def recording(tmp_path, monkeypatch):
             return self
 
         def write(self, block):
+            assert block.shape[1:3] == self.shape
             self.output.write(block.tobytes())
 
         def __exit__(self, *args):

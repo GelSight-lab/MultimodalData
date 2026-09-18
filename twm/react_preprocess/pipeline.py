@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import time
+from contextlib import ExitStack
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -51,7 +52,8 @@ def _encode_cameras(f, source, video_dir: Path) -> None:
         if key not in f:
             continue
         ds = f[key]                                   # (N, H, W, 3) BGR
-        with rgb_writer(video_dir / f"{name}.mp4") as w:
+        with rgb_writer(video_dir / f"{name}.mp4", width=ds.shape[2],
+                        height=ds.shape[1]) as w:
             for s in range(0, source.T, CHUNK):
                 e = min(s + CHUNK, source.T)
                 w.write(ds[source.trim + s:source.trim + e])
@@ -125,22 +127,25 @@ def _encode_rgb_single_pass(f, source, video_dir: Path) -> dict:
     The two-pass path stays. It is the reference this equivalence was measured
     against, and `--single-pass/--no-single-pass` still chooses.
     """
-    from contextlib import ExitStack
-
     plan, gammas = _rgb_plan(f, source)
     if not plan:
         return gammas
     with ExitStack() as stack:
-        writers = [stack.enter_context(rgb_writer(video_dir / f"{name}.mp4"))
-                   for _, name, _ in plan]
+        writers = {}
         for s in range(0, source.T, CHUNK):
             e = min(s + CHUNK, source.T)
-            for (ds, _, gamma), w in zip(plan, writers):
+            for ds, name, gamma in plan:
                 block = ds[source.trim + s:source.trim + e]
                 if gamma is not None:
                     block = apply_tone_curve(
                         np.stack([decode_arducam(fr) for fr in block]), gamma)
-                w.write(block)
+                # MJPEG dimensions are available only after decoding. Open
+                # each writer on its first block without another HDF5 read.
+                if name not in writers:
+                    writers[name] = stack.enter_context(rgb_writer(
+                        video_dir / f"{name}.mp4", width=block.shape[2],
+                        height=block.shape[1]))
+                writers[name].write(block)
     return gammas
 
 
@@ -168,14 +173,20 @@ def _encode_wrist(f, source, video_dir: Path) -> dict:
         if key not in f:
             continue
         ds = f[key]
-        with rgb_writer(video_dir / f"{name}.mp4") as w:
+        with ExitStack() as stack:
+            writer = None
             for s in range(0, source.T, CHUNK):
                 e = min(s + CHUNK, source.T)
                 block = ds[source.trim + s:source.trim + e]
                 # decode_arducam is a no-op on the raw-BGR episodes recorded
                 # before 2026-09, so both layouts take this one path.
-                w.write(apply_tone_curve(
-                    np.stack([decode_arducam(fr) for fr in block]), gamma))
+                block = apply_tone_curve(
+                    np.stack([decode_arducam(fr) for fr in block]), gamma)
+                if writer is None:
+                    writer = stack.enter_context(rgb_writer(
+                        video_dir / f"{name}.mp4", width=block.shape[2],
+                        height=block.shape[1]))
+                writer.write(block)
         gammas[slot] = round(float(gamma), 4)
     return gammas
 
@@ -205,7 +216,7 @@ def _encode_depth(f, source, depth_dir: Path) -> int:
             continue
         ds = f[key]                                   # (N, H, W) uint16 mm
         out = depth_dir / f"{name.replace('view_', 'depth_')}.mkv"
-        with depth_writer(out) as w:
+        with depth_writer(out, width=ds.shape[2], height=ds.shape[1]) as w:
             for s in range(0, source.T, CHUNK):
                 e = min(s + CHUNK, source.T)
                 w.write(np.asarray(ds[source.trim + s:source.trim + e], np.uint16))
