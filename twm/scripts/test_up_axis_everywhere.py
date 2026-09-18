@@ -36,7 +36,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import numpy as np                                             # noqa: E402
 import pyarrow.parquet as pq                                   # noqa: E402
 
-from react_paths import force_meta, release_root, testset_root  # noqa: E402
+from react_paths import force_meta, release_root, testset_root as _testset_root  # noqa: E402
 from react_toolbox.frames import UP_AXIS_RECORDED               # noqa: E402
 
 RESULTS: list[tuple[bool, str, str]] = []
@@ -161,7 +161,7 @@ def main() -> int:
           if not mism else f"declared != measured for {mism}")
 
     # 6 — the artefacts built from it
-    ts = testset_root() / "calibration" / "T_mocap_to_cam_middle.json"
+    ts = _testset_root() / "calibration" / "T_mocap_to_cam_middle.json"
     sim = release_root().parent / "sim" / "sim.json"
     extra = []
     if ts.exists() and (json.loads(ts.read_text()).get("up_axis")

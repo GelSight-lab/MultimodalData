@@ -66,9 +66,9 @@ def test_every_declared_session_names_a_real_epoch_directory():
         assert epoch_of(task, date=date) == CALIB_SESSIONS[(task, date)]
 
 
-def test_the_recorded_sessions_on_disk_are_all_declared():
-    """A session that exists in the release but not here is exactly the gap
-    this table closes."""
+def test_the_recorded_sessions_on_disk_have_resolvable_epochs():
+    """Historical sessions need declarations; current-rig dates use the
+    standing live-epoch policy. Check the resolver, not table membership."""
     import json
     from pathlib import Path
     root = Path("/media/yxma/Disk1/twm/release")
@@ -79,26 +79,22 @@ def test_the_recorded_sessions_on_disk_are_all_declared():
         if not jsonl.is_file():
             continue
         dates = {json.loads(line)["date"] for line in jsonl.read_text().splitlines() if line.strip()}
-        undeclared = sorted(d for d in dates if (task, d) not in CALIB_SESSIONS)
-        assert not undeclared, f"{task}: undeclared sessions {undeclared}"
+        for date in dates:
+            check_epoch(task, date=date)
+
+
+def test_current_rig_session_does_not_require_a_manual_table_entry():
+    from twm.calib_epoch import CURRENT_EPOCH, session_epoch
+    assert session_epoch("toy", "2099-01-01") == CURRENT_EPOCH
 
 
 def test_the_status_line_names_the_session_epoch_not_the_task_default():
     """The preview status bar exists so a viewer can catch a wrong epoch
     without trusting the pipeline. Labelling a June-26 render '2026-05-12'
     defeats exactly that."""
-    import sys
     from twm.calib_epoch import describe
-    # calib_epoch imports `react_toolbox.frames` (not `twm.react_toolbox`) for
-    # the Y-up/Z-up conversion, so it resolves only with twm/ on the path —
-    # which is how every render script runs. Pre-existing coupling, not part
-    # of what this test is about.
-    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "twm"))
-    try:
-        assert describe("motherboard", "2026-09-09", "episode_000").startswith("calib 2026-09-09")
-        assert describe("motherboard", "2026-05-10", "episode_000").startswith("calib 2026-05-12")
-    finally:
-        sys.path.pop(0)
+    assert describe("motherboard", "2026-09-09", "episode_000").startswith("calib 2026-09-09")
+    assert describe("motherboard", "2026-05-10", "episode_000").startswith("calib 2026-05-12")
 
 
 def test_the_viewer_picks_the_epoch_from_the_date_in_the_path():

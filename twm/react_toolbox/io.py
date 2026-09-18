@@ -5,48 +5,76 @@ Decoded frames are RGB uint8 (T, H, W, 3) — standard decoder convention.
 from __future__ import annotations
 
 from pathlib import Path
+from numbers import Integral
 
 import numpy as np
-import pyarrow.parquet as pq
 
-try:
-    import av
-    _BACKEND = "av"
-except Exception:
-    import cv2
-    _BACKEND = "cv2"
+
+def _video_backend():
+    """Load decoder dependencies only when video is requested."""
+    try:
+        import av
+        return "av", av
+    except ImportError:
+        import cv2
+        return "cv2", cv2
 
 
 def load_video(mp4_path, frames=None):
     """Decode an MP4 to (N, H, W, 3) uint8 RGB.
 
-    frames=None -> all frames; else an iterable of frame indices.
+    ``frames=None`` decodes all frames; selections are sorted and deduplicated.
+    An empty selection returns shape (0, 0, 0, 3) without opening the file.
+    Negative/noninteger indices raise ValueError; unavailable requested frames
+    raise IndexError. Neither backend fabricates black frames or drops requests.
     """
     mp4_path = str(mp4_path)
-    want = None if frames is None else sorted(set(int(i) for i in frames))
-    if _BACKEND == "av":
-        c = av.open(mp4_path)
-        out = []
-        idxset = set(want) if want is not None else None
-        for i, fr in enumerate(c.decode(c.streams.video[0])):
-            if idxset is None or i in idxset:
-                out.append(fr.to_ndarray(format="rgb24"))
-            if idxset is not None and i >= max(idxset):
-                break
-        c.close()
-        return np.stack(out)
-    cap = cv2.VideoCapture(mp4_path)
+    want = None if frames is None else list(frames)
+    if want is not None:
+        if any(isinstance(i, (bool, np.bool_)) or not isinstance(i, Integral)
+               or i < 0 for i in want):
+            raise ValueError("frame indices must be nonnegative integers")
+        want = sorted(set(int(i) for i in want))
+        if not want:
+            return np.empty((0, 0, 0, 3), dtype=np.uint8)
+    idxset = None if want is None else set(want)
+    last = None if want is None else want[-1]
+    backend, decoder = _video_backend()
     out = []
-    if want is None:
-        ok, fr = cap.read()
-        while ok:
-            out.append(fr[..., ::-1]); ok, fr = cap.read()
+    found = set()
+    if backend == "av":
+        container = decoder.open(mp4_path)
+        try:
+            if not container.streams.video:
+                raise ValueError(f"No video stream in {mp4_path}")
+            for i, frame in enumerate(container.decode(container.streams.video[0])):
+                if idxset is None or i in idxset:
+                    out.append(frame.to_ndarray(format="rgb24"))
+                    found.add(i)
+                if last is not None and i >= last:
+                    break
+        finally:
+            container.close()
     else:
-        for i in want:
-            cap.set(cv2.CAP_PROP_POS_FRAMES, i)
-            ok, fr = cap.read()
-            out.append(fr[..., ::-1] if ok else np.zeros((480, 640, 3), np.uint8))
-    cap.release()
+        cap = decoder.VideoCapture(mp4_path)
+        try:
+            if not cap.isOpened():
+                raise OSError(f"Cannot open video {mp4_path}")
+            i = 0
+            while last is None or i <= last:
+                ok, frame = cap.read()
+                if not ok:
+                    break
+                if idxset is None or i in idxset:
+                    out.append(frame[..., ::-1].copy())
+                    found.add(i)
+                i += 1
+        finally:
+            cap.release()
+    if idxset is not None and idxset - found:
+        raise IndexError(f"Unavailable frame indices in {mp4_path}: {sorted(idxset - found)}")
+    if not out:
+        raise ValueError(f"No decodable video frames in {mp4_path}")
     return np.stack(out)
 
 
@@ -66,6 +94,7 @@ def episode_paths(task_root, episode):
 
 def load_meta(parquet_path, columns=None):
     """Load per-frame metadata as a dict of numpy arrays."""
+    import pyarrow.parquet as pq
     tbl = pq.read_table(str(parquet_path), columns=columns)
     out = {}
     for c in tbl.column_names:

@@ -51,7 +51,7 @@ def _frame(cy: int, cx: int, r: int) -> tuple[np.ndarray, np.ndarray]:
 # px past the top AND the bottom: the case named "grazing" was the most
 # truncated frame in the file. It failed against a candidate threshold and the
 # threshold took the blame. Every case states its overflow in pixels and
-# `test_case_geometry` recomputes it, so a case cannot silently stop meaning
+# `check_case_geometry` recomputes it, so a case cannot silently stop meaning
 # what its name says.
 #
 #   overflow = r - (distance from the centre to the nearest border)
@@ -69,7 +69,7 @@ CASES = [
 ]
 
 
-def test_case_geometry() -> int:
+def check_case_geometry() -> int:
     """Each case overflows the border by the number of pixels it claims."""
     bad = 0
     for name, (cy, cx), r, want_over, _ in CASES:
@@ -93,7 +93,7 @@ def _old_rule(img, ref) -> bool:
                 or core[:, 0].any() or core[:, -1].any())
 
 
-def test_refactor_changed_nothing(n: int = 120) -> int:
+def check_refactor_changed_nothing(n: int = 120) -> int:
     """On REAL frames, the new form agrees with the old rule everywhere.
 
     The sweep concluded the threshold should stay at zero, which makes the
@@ -126,7 +126,7 @@ def test_refactor_changed_nothing(n: int = 120) -> int:
 
 def main() -> int:
     print("case geometry")
-    bad = test_case_geometry()
+    bad = check_case_geometry()
     print("\nvisible()")
     for name, (cy, cx), r, _over, want in CASES:
         img, ref = _frame(cy, cx, r)
@@ -135,7 +135,7 @@ def main() -> int:
         bad += not ok
         print(f"  [{'ok' if ok else 'FAIL'}] {name:36s} visible={got} want={want}")
     print(f"\nthe refactor moved no frame (threshold {EDGE_CHORD_RATIO})")
-    bad += test_refactor_changed_nothing()
+    bad += check_refactor_changed_nothing()
     print(f"\ntruncation rule: {bad} failing")
     return 1 if bad else 0
 

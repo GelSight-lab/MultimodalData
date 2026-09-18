@@ -24,14 +24,14 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from react_paths import release_root, testset_root   # noqa: E402
+from react_paths import release_root, testset_root as _testset_root   # noqa: E402
 
 import numpy as np                                             # noqa: E402
 
 import react_toolbox.calibration as T_                          # noqa: E402
 
 RESULTS: list[tuple[bool, str, str]] = []
-ROOT = testset_root()
+ROOT = _testset_root()
 
 
 def check(ok: bool, name: str, evidence: str) -> None:

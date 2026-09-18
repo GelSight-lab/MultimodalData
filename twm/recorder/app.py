@@ -143,7 +143,18 @@ class Recorder:
         except WriterFault as exc:
             if ended_by in VALID_ENDINGS:
                 ended_by, reason = "writer_fault", str(exc)
-        stats = self.writer.stats()
+        try:
+            stats = self.writer.stats()
+        except Exception as exc:
+            # Telemetry failure must not leave a drained HDF5 file open or
+            # certify the episode as valid. Capture may already have stopped.
+            snapshot = self.capture.latest()
+            stats = snapshot.writer if snapshot else None
+            detail = f"writer stats unavailable: {exc}"
+            reason = f"{reason}; {detail}" if reason else detail
+            if ended_by in VALID_ENDINGS:
+                ended_by = "writer_fault"
+            log.error(detail)
         has_ot = False
         try:
             has_ot = count_optitrack_samples(ep.h5) > 0
@@ -155,8 +166,8 @@ class Recorder:
             valid=ended_by in VALID_ENDINGS, ended_by=ended_by, reason=reason,
             max_tick_gap_s=result.max_gap_s if result else 0.0,
             gap_count=result.gap_count if result else 0,
-            queue_peak_fraction=stats.peak_fraction,
-            writer_mean_mb_s=stats.mean_mb_s, has_optitrack=has_ot,
+            queue_peak_fraction=stats.peak_fraction if stats else 0.0,
+            writer_mean_mb_s=stats.mean_mb_s if stats else 0.0, has_optitrack=has_ot,
             sensor_restarts=self._sensor_restarts_since_start())
         try:
             write_episode_attrs(ep.h5, summary.attrs())

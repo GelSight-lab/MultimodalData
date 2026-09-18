@@ -223,6 +223,25 @@ def test_close_finalizes_open_episode_as_quit(parts):
         assert f["metadata"].attrs["ended_by"] == "quit"
 
 
+def test_stats_failure_still_closes_and_marks_episode_invalid(parts, monkeypatch):
+    parts.rig.fresh()
+    assert parts.rec.start_episode() == []
+    _wait(lambda: parts.capture.latest().frame_count >= 1)
+    handle = parts.rec._open.h5
+
+    def broken_stats():
+        raise RuntimeError("stats unavailable")
+
+    monkeypatch.setattr(parts.writer, "stats", broken_stats)
+    summary = parts.rec.end_episode()
+    assert not handle.id.valid
+    assert not summary.valid
+    assert summary.ended_by == "writer_fault"
+    assert "stats unavailable" in summary.reason
+    with h5py.File(summary.path, "r") as f:
+        assert not f["metadata"].attrs["valid"]
+
+
 class _Stream:
     """Minimal hardware double: starts, stops, hands back a fixed frame."""
 

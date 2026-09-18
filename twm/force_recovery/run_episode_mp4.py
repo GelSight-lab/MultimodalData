@@ -181,9 +181,10 @@ def process_side(task: str, date: str, episode: str, side: str, *,
 
 
 def jobs(include_push_t: bool = True) -> list[tuple[str, str, str, str]]:
-    scopes = OLD_SCOPES if include_push_t else {"motherboard": OLD_SCOPES["motherboard"]}
     result = []
-    for task, dates in scopes.items():
+    for task, dates in OLD_SCOPES.items():
+        if not include_push_t and task != "motherboard":
+            continue
         for date in dates:
             for parquet in sorted((STAGE_ROOT / task / "meta" / date).glob("episode_*.parquet")):
                 for side in ("left", "right"):

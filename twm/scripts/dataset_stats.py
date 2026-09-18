@@ -81,19 +81,28 @@ def collect(folder: str, keys: list[str], fetch) -> dict:
     tree to read), and local parquets rewritten after upload. Reading the
     published copy makes the figure incapable of describing anything else.
     """
-    o = dict(segs=0, frames=0, f=[], cL=0, cR=0, both=0, newL=0, srcs=set())
+    o = dict(segs=0, frames=0, f=[], cL=0, cR=0, both=0, newL=0,
+             srcs=set(), no_force=False)
     for key in keys:
         date, ep = key.split("/")
         t = pq.read_table(fetch(f"data/{folder}/meta/{date}/{ep}.parquet"))
         col = lambda c: np.asarray(t.column(c).to_numpy(zero_copy_only=False), float)
-        fl, fr = col("force_left_normal_n"), col("force_right_normal_n")
-        n = len(fl)
+        has_force = all(f"force_{side}_normal_n" in t.column_names
+                        for side in ("left", "right"))
+        n = t.num_rows
         o["segs"] += 1
         o["frames"] += n
-        o["f"].append(np.concatenate([fl, fr]))
-        o["cL"] += int((fl > CONTACT_N).sum())
-        o["cR"] += int((fr > CONTACT_N).sum())
-        o["both"] += int(((fl > CONTACT_N) & (fr > CONTACT_N)).sum())
+        if has_force:
+            fl, fr = col("force_left_normal_n"), col("force_right_normal_n")
+            # Partial/nonfinite coverage cannot support whole-task occupancy.
+            has_force = bool(np.isfinite(fl).all() and np.isfinite(fr).all())
+        if has_force:
+            o["f"].append(np.concatenate([fl, fr]))
+            o["cL"] += int((fl > CONTACT_N).sum())
+            o["cR"] += int((fr > CONTACT_N).sum())
+            o["both"] += int(((fl > CONTACT_N) & (fr > CONTACT_N)).sum())
+        else:
+            o["no_force"] = True
         o["newL"] += int(np.asarray(
             t.column("tactile_left_is_new").to_numpy(zero_copy_only=False)).sum())
         o["srcs"].add(f"{date}/{_SEG.sub('', ep)}")
@@ -101,26 +110,34 @@ def collect(folder: str, keys: list[str], fetch) -> dict:
 
 
 def summarise(o: dict) -> dict:
+    summary = dict(
+        segs=o["segs"], sources=len(o["srcs"]),
+        minutes=o["frames"] / 1800, frames=o["frames"],
+        new_pct=o["newL"] / o["frames"] * 100 if o["frames"] else None,
+        no_force=bool(o.get("no_force") or not o["frames"] or not o["f"]),
+    )
+    if summary["no_force"]:
+        summary.update(dict.fromkeys(("contact_frames", "sat_pct", "contact_pct_L",
+                                      "contact_pct_R", "both_pct", "f_q", "f_ecdf_x")))
+        return summary
     f = np.concatenate(o["f"])
     c = f[f > CONTACT_N]
     saturated = c >= CEILING_N - 1e-6
     unsat = c[~saturated]
-    return dict(
-        segs=o["segs"], sources=len(o["srcs"]),
-        minutes=o["frames"] / 1800, frames=o["frames"],
+    summary.update(
         contact_frames=int(len(c)),
-        sat_pct=float(saturated.mean() * 100),
+        sat_pct=float(saturated.mean() * 100) if len(c) else None,
         contact_pct_L=o["cL"] / o["frames"] * 100,
         contact_pct_R=o["cR"] / o["frames"] * 100,
         both_pct=o["both"] / o["frames"] * 100,
-        new_pct=o["newL"] / o["frames"] * 100,
-        f_q=[float(x) for x in np.percentile(unsat, [5, 25, 50, 75, 95])],
+        f_q=np.percentile(unsat, [5, 25, 50, 75, 95]).tolist() if len(unsat) else None,
         # ECDF rather than a density: the calibration ends in an isotonic
         # regression, so its output takes a few thousand discrete values and a
         # density draws them as a comb of spikes -- true, but it reads as a
         # plotting error. A step function says the same thing honestly.
-        f_ecdf_x=[float(x) for x in np.percentile(unsat, np.linspace(0, 100, 101))],
+        f_ecdf_x=np.percentile(unsat, np.linspace(0, 100, 101)).tolist() if len(unsat) else None,
     )
+    return summary
 
 
 def gather() -> dict:

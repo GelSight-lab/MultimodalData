@@ -32,7 +32,10 @@ REPO = pathlib.Path(__file__).resolve().parents[1]
 EXEMPT_NAMES = ("OBJECT_BODY", "CALIB_DIRS", "EXPECTED_EPOCH", "WORLD_OFFSET",
                 # Per-task CONFIG, not a copy of the list: which episodes a
                 # one-off clip script uses, and the human-readable task string.
-                "TASK_CFG", "TASK_STRINGS")
+                "TASK_CFG", "TASK_STRINGS",
+                # Deleted-raw sessions with MP4-only force recovery. This is
+                # historical provenance, not the general pipeline task list.
+                "OLD_SCOPES")
 
 EXEMPT = (
     "scripts/oneoff/",          # kept as a record of what was run once
@@ -102,3 +105,10 @@ def test_no_module_on_the_pipeline_path_restates_the_task_list():
         "these restate the task list and disagree with pipeline_stages.TASKS; "
         "a stage whose own tuple omits a task exits 0 having done nothing for "
         "it:\n  " + "\n  ".join(bad))
+
+
+def test_historical_scope_exemption_does_not_hide_pipeline_task_copies(tmp_path):
+    path = tmp_path / "stage.py"
+    path.write_text('OLD_SCOPES = {"motherboard": ("2026-05-10",)}\n'
+                    'TASKS = ("motherboard", "pushT")\n')
+    assert _task_tuples(path) == [(2, ("motherboard", "pushT"))]

@@ -24,7 +24,7 @@ from matplotlib.patches import Patch  # noqa: E402
 ORDER = ["motherboard", "pushT", "rope", "toy", "validation"]
 _PAD = 0.35          # category-axis padding; see `panel`
 COL = {"motherboard": "#2F6FB5", "pushT": "#C8622B", "rope": "#3F8F5B",
-       "validation": "#7A5AA8"}
+       "toy": "#B5892F", "validation": "#7A5AA8"}
 
 plt.rcParams.update({
     "font.size": 8, "axes.titlesize": 9, "axes.labelsize": 8,
@@ -49,7 +49,7 @@ def panel(d: dict, ceiling: float, path: Path, title: str) -> None:
                    r.get_y() + r.get_height() / 2,
                    f"{d[t]['minutes']:.1f} min\n{d[t]['segs']} seg{rec}",
                    va="center", fontsize=7)
-    ax[0].set_xlim(0, max(mins) * 1.55)
+    ax[0].set_xlim(0, max(max(mins, default=0) * 1.55, 1))
     ax[0].set_xlabel("published minutes")
     ax[0].set_title("A  Scale", loc="left", fontweight="bold")
     # Pad the category axis explicitly. Left to autoscale, a single-task
@@ -57,9 +57,20 @@ def panel(d: dict, ceiling: float, path: Path, title: str) -> None:
     # because matplotlib fits the limits to the one category.
     ax[0].set_ylim(len(ts) - 0.5 + _PAD, -0.5 - _PAD)
 
+    # Panels B and C are derived from force ALONE. A task published without it
+    # is left out and said so, rather than drawn from zeros — a zero-filled
+    # task reads as one that never makes contact, which would be a false claim
+    # about the data.
+    fts = [t for t in ts if not d[t].get("no_force")]
+    nof = [t for t in ts if d[t].get("no_force")]
     q = np.linspace(0, 1, 101)
-    for t in ts:
+    for t in fts:
+        if d[t]["f_ecdf_x"] is None:
+            continue
         ax[1].plot(d[t]["f_ecdf_x"], q, color=COL[t], lw=1.5, label=t)
+    if nof:
+        ax[1].text(.03, .06, "force unavailable/incomplete: " + ", ".join(nof),
+                   transform=ax[1].transAxes, fontsize=6.4, color="#666")
     ax[1].axvline(ceiling, color="#B00", lw=1.1, ls="--")
     # The annotation sits above the curves and clear of the legend; set
     # vertically beside the line it overlapped the legend and could not be read.
@@ -72,15 +83,16 @@ def panel(d: dict, ceiling: float, path: Path, title: str) -> None:
     ax[1].set_xlabel("normal contact force (N)")
     ax[1].set_ylabel("cumulative fraction of contact frames")
     ax[1].set_title("B  Contact force (unsaturated)", loc="left", fontweight="bold")
-    ax[1].legend(frameon=False, loc="lower right")
+    if ax[1].get_legend_handles_labels()[0]:
+        ax[1].legend(frameon=False, loc="lower right")
 
-    x = np.arange(len(ts))
+    x = np.arange(len(fts))
     w = .26
     for i, (key, alpha) in enumerate([("contact_pct_L", .95),
                                       ("contact_pct_R", .62),
                                       ("both_pct", .32)]):
-        ax[2].bar(x + (i - 1) * w, [d[t][key] for t in ts], w,
-                  color=[COL[t] for t in ts], alpha=alpha)
+        ax[2].bar(x + (i - 1) * w, [d[t][key] for t in fts], w,
+                  color=[COL[t] for t in fts], alpha=alpha)
     # Neutral grey swatches: shade means left/right/both, colour means task.
     # Drawing the legend in one task's colour reads as "all three are that task".
     ax[2].legend(handles=[Patch(facecolor="#555", alpha=a, label=l)
@@ -88,16 +100,23 @@ def panel(d: dict, ceiling: float, path: Path, title: str) -> None:
                                        (.32, "both hands"))],
                  frameon=False, loc="upper right", fontsize=7)
     ax[2].set_xticks(x)
-    ax[2].set_xticklabels(ts, rotation=12, ha="right")
-    ax[2].set_xlim(-0.5 - _PAD, len(ts) - 0.5 + _PAD)
+    ax[2].set_xticklabels(fts, rotation=12, ha="right")
+    ax[2].set_xlim(-0.5 - _PAD, len(fts) - 0.5 + _PAD)
     ax[2].set_ylabel("% of all frames")
     ax[2].set_title("C  Contact occupancy", loc="left", fontweight="bold")
 
-    ax[3].bar(x - .16, [d[t]["new_pct"] for t in ts], .3,
+    # D mixes two things: `new_pct` is tactile validity and exists without
+    # force; `sat_pct` is the force ceiling and does not. Every task gets the
+    # first bar, only the force-bearing ones get the second.
+    xa = np.arange(len(ts))
+    ax[3].bar(xa - .16, [d[t]["new_pct"] if d[t]["new_pct"] is not None else np.nan for t in ts], .3,
               color=[COL[t] for t in ts], label="new tactile frames")
-    ax[3].bar(x + .16, [d[t]["sat_pct"] for t in ts], .3,
-              color=[COL[t] for t in ts], alpha=.42, hatch="///",
-              edgecolor="white", label="force at ceiling (of contact)")
+    sats = [t for t in fts if d[t]["sat_pct"] is not None]
+    xf = np.array([ts.index(t) for t in sats], float)
+    if len(xf):
+        ax[3].bar(xf + .16, [d[t]["sat_pct"] for t in sats], .3,
+                  color=[COL[t] for t in sats], alpha=.42, hatch="///",
+                  edgecolor="white", label="force at ceiling (of contact)")
     ax[3].axhline(100 * 17.8 / 29.8, color="#666", lw=.9, ls=":")
     # Axes-fraction x, so the label starts just inside the plot whatever the
     # category count; at a fixed data x it fell outside the axes and over the
@@ -107,10 +126,10 @@ def panel(d: dict, ceiling: float, path: Path, title: str) -> None:
                fontsize=6.3, ha="left", va="bottom", color="#444")
     # rope saturates on 0.6 % of contact frames, which is invisible as a bar;
     # label the value or a reader takes it for zero.
-    for xi, t in zip(x, ts):
+    for xi, t in zip(xf, sats):
         ax[3].text(xi + .16, d[t]["sat_pct"] + 1.2, f'{d[t]["sat_pct"]:.1f}',
                    ha="center", fontsize=6.3, color="#333")
-    ax[3].set_xticks(x)
+    ax[3].set_xticks(xa)
     ax[3].set_xticklabels(ts, rotation=12, ha="right")
     ax[3].set_xlim(-0.5 - _PAD, len(ts) - 0.5 + _PAD)
     ax[3].set_ylabel("percent")

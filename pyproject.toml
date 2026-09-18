@@ -18,8 +18,17 @@ dependencies = [
     "digit-interface",
 ]
 
-[tool.setuptools]
-packages = ["probing_panda", "camera_stream", "optitrack", "ft_sensor", "misc", "twm"]
+[project.optional-dependencies]
+twm = ["h5py", "hdf5plugin", "pyarrow", "matplotlib"]
+
+[tool.setuptools.packages.find]
+include = ["probing_panda*", "camera_stream*", "optitrack*", "ft_sensor*", "misc*", "twm*"]
+namespaces = false
+
+[tool.setuptools.package-data]
+twm = ["config/*.json", "calibration/epoch_*/*.json", "calibration/epoch_*/*.npy",
+       "calibration/realsense/*.json", "visualization/README.md", "react_toolbox/*.md"]
+probing_panda = ["*.json", "config/*.yaml"]
 
 [tool.pytest.ini_options]
 # `--import-mode=importlib` is load-bearing, not a preference. 66 test files
@@ -31,6 +40,10 @@ packages = ["probing_panda", "camera_stream", "optitrack", "ft_sensor", "misc", 
 # but nothing can run them" looked like from the outside.
 addopts = "--import-mode=importlib"
 testpaths = ["tests", "twm"]
+markers = [
+    "slow: expensive synthetic end-to-end pipeline tests",
+    "timing: host-scheduling-dependent recorder checks (set TWM_TIMING_TESTS=1)",
+]
 # pytest keeps the last three runs' tmp_path trees. The gates here render real
 # MP4s, and /tmp/pytest-of-yxma reached 23 GB and left the 469 G root
 # partition with 148 K free, which blocked every tool in the session. Disk1
