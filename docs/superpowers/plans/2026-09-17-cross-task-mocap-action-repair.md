@@ -234,7 +234,7 @@ Snapshot relative path, bytes, rows, mtime_ns, and streaming SHA-256 for every `
 
 - [ ] **Step 4: Implement candidate parquet and sidecar writer**
 
-Copy the source table and replace only candidate pose columns. Add per-side `pose_*_repaired`, `pose_*_repair_confidence`, `pose_*_valid`, native action value/valid/repaired columns, and 15 fps action sidecars. Store event evidence and event-ID dictionaries in deterministic JSON. Use temporary sibling files plus `os.replace`; verify source size/digest immediately before writing. Never mutate source files.
+Copy the source table and replace only candidate pose columns. Add per-side `pose_*_repaired`, `pose_*_repair_confidence`, and `pose_*_valid` columns to the `T`-row candidate parquet. Store the `T-1` native actions and the derived 15 fps actions in separate per-episode sidecars with value/valid/repaired/event-ID arrays. Store event evidence and event-ID dictionaries in deterministic JSON. Use temporary sibling files plus `os.replace`; verify source size/digest immediately before writing. Never mutate source files.
 
 - [ ] **Step 5: Implement deterministic decision replay and verification**
 
