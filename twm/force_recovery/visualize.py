@@ -5,95 +5,73 @@ Everything renders headless into OUT_ROOT/site_assets/.
 from __future__ import annotations
 
 from pathlib import Path
+import os
 
-import cv2
-import matplotlib
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
 import numpy as np
-import pyarrow.parquet as pq
 
-from .dexforce import force_informed_targets, gel_axis
-from .run_episode import DATA_ROOT, OUT_ROOT, STAGE_ROOT
-# LEGACY_SHIFT moved to its one owner. `run_episode` stopped re-exporting
-# it in 9589e2c (the row->GelSight map now comes from the preprocess, not
-# a constant), which left this import dangling and the module unimportable.
-from twm.tactile_align import LEGACY_SHIFT
+# Compatibility exports for existing figure callers; no estimator imports.
+from twm.visualization.force import DIFF_GAIN, diff_rgb, diff_caption
 
+DATA_ROOT = Path(os.environ.get("REACT_DATA_ROOT", "/media/yxma/Disk1/twm/data"))
+STAGE_ROOT = Path(os.environ.get("REACT_STAGE_ROOT", "/media/yxma/Disk1/twm/release"))
+OUT_ROOT = Path(os.environ.get("REACT_FORCE_RECOVERY_ROOT",
+                               "/media/yxma/Disk1/twm/force_recovery"))
 ASSETS = OUT_ROOT / "site_assets"
 
-# ── the one way a difference image is drawn ─────────────────────────────────
-# Gain applied to dI before it is centred on mid-grey. NONE — the difference
-# image is shown as it is.
-#
-# This was 3.0, justified by "contact moves the gel only a few grey levels, so
-# an ungained dI reads as a flat grey rectangle". Measured over 8 strong
-# contacts each from React and cnc_mini_26, that is false in both directions:
-#
-#   gain   contact-region |dI|            clipped pixels
-#    x1    median +-25..31, p95 +-80..93   0.16 - 0.33 %
-#    x2                                    4.99 - 5.41 %
-#    x3                                   10.27 - 14.79 %
-#
-# At x1 the contact already occupies 19-24 % of the +-128 range at its median
-# and 62-73 % at p95 — not a flat grey rectangle. At x3 one contact pixel in
-# seven is clipped, and they are the strongest ones, which is exactly the part
-# of the image the figure exists to show. A gain that saturates the signal to
-# make it look stronger is not a display choice, it is a loss.
-DIFF_GAIN = 1.0
 
-
-def diff_rgb(img: np.ndarray, ref: np.ndarray, gain: float = DIFF_GAIN):
-    """Signed difference image as COLOUR, the way the React previews show it.
-
-    `|img - ref|` averaged over channels was what several panels drew, and it
-    throws away the two things the difference image is for. The sign says
-    which side of the indenter a pixel is on — a bump and a dent have the same
-    magnitude and opposite colour — and the channel split is the raw material
-    of every reconstruction here, LUT or calibration-free: three LEDs from
-    three directions, one per channel. A grey magnitude image is a picture of
-    neither.
-
-    Returns uint8 RGB centred on 128, so no contact is neutral grey.
-    """
-    d = (np.asarray(img, np.float32) - np.asarray(ref, np.float32)) * gain
-    return np.clip(d + 128.0, 0, 255).astype(np.uint8)
-
-
-def diff_caption(prefix: str = "difference  dI = frame − ref",
-                 gain: float = DIFF_GAIN) -> str:
-    """The caption for a difference image, DERIVED from the gain.
-
-    Six figures across five modules had "(×3, colour)" typed into their titles.
-    DIFF_GAIN went to 1.0 and every one of them kept claiming ×3 — the figure
-    said one thing and the pixels did another, on the live site. A caption that
-    restates a constant is a copy of that constant, so it belongs next to it.
-    """
-    return f"{prefix}  (colour)" if abs(gain - 1.0) < 1e-9 \
-        else f"{prefix}  (×{gain:g}, colour)"
-
-
-plt.rcParams.update({
-    "figure.dpi": 130, "font.size": 9, "axes.grid": True,
-    "grid.alpha": 0.25, "axes.spines.top": False, "axes.spines.right": False,
-})
+def _pyplot():
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    plt.rcParams.update({
+        "figure.dpi": 130, "font.size": 9, "axes.grid": True,
+        "grid.alpha": 0.25, "axes.spines.top": False, "axes.spines.right": False,
+    })
+    return plt
 
 
 def _load(task, date, ep, side):
-    npz = np.load(OUT_ROOT / task / date / f"{ep}_{side}.npz")
+    import pyarrow.parquet as pq
+
+    with np.load(OUT_ROOT / task / date / f"{ep}_{side}.npz") as archive:
+        npz = {key: archive[key] for key in archive.files}
     table = pq.read_table(
         str(STAGE_ROOT / task / "meta" / date / f"{ep}.parquet"),
         columns=[f"tactile_{side}_intensity", f"tactile_{side}_is_new",
                  f"sensor_{side}_pose"])
     inten = np.asarray(table[f"tactile_{side}_intensity"].to_numpy())
     is_new = np.asarray(table[f"tactile_{side}_is_new"].to_numpy())
+    if not len(inten):
+        raise ValueError("Force metadata has no rows")
     pose = np.stack(table[f"sensor_{side}_pose"].to_numpy())
     return npz, inten, is_new, pose
+
+
+def _index_map(path, task, side, rows):
+    from twm.react_preprocess.h5io import open_episode
+
+    indices = np.asarray(open_episode(path, task).align[side].index_map)
+    if indices.shape != (rows,):
+        raise ValueError(f"Tactile alignment length differs from {rows} force rows")
+    return indices
+
+
+def _validate_indices(indices, frames):
+    if indices.dtype.kind not in "iu" or np.any((indices < 0) | (indices >= len(frames))):
+        raise ValueError("Tactile alignment points outside the recording")
+
+
+def _force_values(force, rows):
+    force = np.asarray(force)
+    if force.shape != (rows,) or not rows or not np.isfinite(force).all():
+        raise ValueError("Force must be a nonempty finite vector matching the metadata rows")
+    return force
 
 
 def force_timeline(task: str, date: str, ep: str) -> Path:
     """Two-panel force + intensity timeline for one episode."""
     from .evaluate import median3_fresh
+    plt = _pyplot()
 
     fig, axes = plt.subplots(2, 1, figsize=(9.5, 4.4), sharex=True)
     for ax, side in zip(axes, ("left", "right")):
@@ -124,22 +102,33 @@ def depth_panels(task: str, date: str, ep: str, side: str) -> Path:
     import h5py
     import hdf5plugin  # noqa: F401
 
-    npz, _, _, _ = _load(task, date, ep, side)
-    trim = int(npz["trim"])
-    depth_keys = sorted(k for k in npz.files if k.startswith("depth_row_"))
-    ref_row = int(npz["reference_rows"][0])
+    npz, inten, _, _ = _load(task, date, ep, side)
+    force = _force_values(npz["force_normal_n"], len(inten))
+    depth_keys = sorted(k for k in npz if k.startswith("depth_row_"))
+    if not depth_keys:
+        raise ValueError("No saved depth rows are available")
+    refs = np.asarray(npz["reference_rows"])
+    if refs.ndim != 1 or not len(refs):
+        raise ValueError("No reference rows are available")
+    ref_row = int(refs[0])
+    selected = [int(key.split("_")[-1]) for key in depth_keys[:3]]
+    if any(row < 0 or row >= len(force) for row in [ref_row, *selected]):
+        raise ValueError("Depth/reference rows are outside the force timeline")
+    path = DATA_ROOT / task / date / f"{ep}.h5"
+    indices = _index_map(path, task, side, len(force))
 
-    with h5py.File(str(DATA_ROOT / task / date / f"{ep}.h5"), "r") as f:
+    with h5py.File(str(path), "r") as f:
         frames = f[f"gelsight/{side}/frames"]
-        nmax = len(frames) - 1
-        ref = frames[min(trim + ref_row + LEGACY_SHIFT, nmax)].astype(np.float32)
+        _validate_indices(indices, frames)
+        ref = frames[int(indices[ref_row])].astype(np.float32)
         rows = []
         for key in depth_keys[:3]:
             row = int(key.split("_")[-1])
-            img = frames[min(trim + row + LEGACY_SHIFT, nmax)]
+            img = frames[int(indices[row])]
             depth = npz[key]
             rows.append((row, img, depth))
 
+    plt = _pyplot()
     fig, axes = plt.subplots(len(rows), 3, figsize=(8.4, 2.15 * len(rows)))
     axes = np.atleast_2d(axes)
     force = npz["force_normal_n"]
@@ -156,6 +145,7 @@ def depth_panels(task: str, date: str, ep: str, side: str) -> Path:
     fig.suptitle(f"{task}/{ep} {side} — photometric-stereo depth at the "
                  "strongest contacts", fontsize=10)
     out = ASSETS / f"depth_{task}_{ep}_{side}.png"
+    out.parent.mkdir(parents=True, exist_ok=True)
     fig.tight_layout(); fig.savefig(out); plt.close(fig)
     return out
 
@@ -172,6 +162,8 @@ def dexforce_figure(task: str, date: str, ep: str, side: str,
     falls back to the force stored at episode-processing time.
     """
     from .evaluate import median3_fresh
+    from .dexforce import force_informed_targets, gel_axis
+    plt = _pyplot()
 
     npz, _, is_new, pose = _load(task, date, ep, side)
     if force is None:
@@ -218,6 +210,7 @@ def dexforce_figure(task: str, date: str, ep: str, side: str,
 def feats_validation_figure() -> Path:
     """Ground-truth scatter: estimated volume x calibrated force vs FEA force."""
     import json
+    plt = _pyplot()
 
     rep = json.loads((OUT_ROOT / "feats_validation_val.json").read_text())
     pf = rep["per_frame"]
@@ -264,6 +257,7 @@ def feats_validation_figure() -> Path:
 def fota_validation_figure() -> Path:
     """Per-capture rank correlation on FoTa, split by gel type."""
     import json
+    plt = _pyplot()
 
     rep = json.loads((OUT_ROOT / "fota_validation_val.json").read_text())
     pc = rep["per_capture"]
@@ -303,50 +297,41 @@ def overlay_clip(task: str, date: str, ep: str, side: str,
     import h5py
     import hdf5plugin  # noqa: F401
 
-    from .evaluate import median3_fresh
+    from twm.visualization.export import write_video
+    from twm.visualization.force import ForceOverlay
 
-    npz, _, is_new, _ = _load(task, date, ep, side)
+    npz, inten, is_new, _ = _load(task, date, ep, side)
     if force is None:
+        from .evaluate import median3_fresh
+        _force_values(npz["force_normal_n"], len(inten))
         force = median3_fresh(npz["force_normal_n"], is_new)
-    trim = int(npz["trim"])
+    force = _force_values(force, len(inten))
+    if not np.isfinite(seconds) or seconds <= 0:
+        raise ValueError("seconds must be finite and positive")
     peak = int(np.argmax(force))
-    half = int(seconds * 30 / 2)
+    half = max(1, int(seconds * 30 / 2))
     lo, hi = max(0, peak - half), min(len(force), peak + half)
     fmax = max(float(force.max()), 1e-3)
-
+    path = DATA_ROOT / task / date / f"{ep}.h5"
+    indices = _index_map(path, task, side, len(force))
+    # source_frame in the archive records the held force estimate's source.
+    # Reference/depth reconstructions and tactile display use the canonical
+    # per-row capture map, also when an overriding force estimate is supplied.
+    if "source_frame" in npz and npz["source_frame"].shape != indices.shape:
+        raise ValueError("Saved source_frame length differs from force rows")
+    overlay = ForceOverlay(force[lo:hi], maximum=fmax)
     out = ASSETS / f"clip_{task}_{ep}_{side}.mp4"
-    tmp = out.with_suffix(".raw.mp4")
-    W_, H_ = 640, 560
-    vw = cv2.VideoWriter(str(tmp), cv2.VideoWriter_fourcc(*"mp4v"),
-                         out_fps, (W_, H_))
-    with h5py.File(str(DATA_ROOT / task / date / f"{ep}.h5"), "r") as f:
-        frames = f[f"gelsight/{side}/frames"]
-        nmax = len(frames) - 1
-        for row in range(lo, hi):
-            img = frames[min(trim + row + LEGACY_SHIFT, nmax)]
-            canvas = np.zeros((H_, W_, 3), np.uint8)
-            canvas[:480] = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
-            # force bar
-            frac = force[row] / fmax
-            cv2.rectangle(canvas, (40, 520), (600, 540), (60, 60, 60), 1)
-            cv2.rectangle(canvas, (40, 520), (40 + int(560 * frac), 540),
-                          (30, 120, 240), -1)
-            cv2.putText(canvas, f"F_n = {force[row]:.3f} N",
-                        (40, 512), cv2.FONT_HERSHEY_SIMPLEX, 0.55,
-                        (240, 240, 240), 1, cv2.LINE_AA)
-            # mini timeline
-            xs = np.linspace(40, 600, hi - lo).astype(int)
-            ys = (556 - 12 * force[lo:hi] / fmax).astype(int)
-            for i in range(1, len(xs)):
-                cv2.line(canvas, (xs[i - 1], ys[i - 1]), (xs[i], ys[i]),
-                         (140, 140, 140), 1)
-            cv2.circle(canvas, (xs[row - lo], ys[row - lo]), 3,
-                       (30, 120, 240), -1)
-            vw.write(canvas)
-    vw.release()
-    import subprocess
-    subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", str(tmp),
-                    "-c:v", "libx264", "-crf", "23", "-pix_fmt", "yuv420p",
-                    "-movflags", "+faststart", str(out)], check=True)
-    tmp.unlink()
+
+    def panels():
+        # Reopen on verification retry; generator close also releases the H5
+        # when encoding fails before the final row.
+        with h5py.File(str(path), "r") as f:
+            frames = f[f"gelsight/{side}/frames"]
+            _validate_indices(indices, frames)
+            if "source_frame" in npz:
+                _validate_indices(npz["source_frame"], frames)
+            for row in range(lo, hi):
+                yield overlay.render(frames[int(indices[row])], row - lo)
+
+    write_video(out, panels, fps=out_fps)
     return out
