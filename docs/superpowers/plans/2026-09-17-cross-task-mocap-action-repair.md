@@ -27,7 +27,7 @@
 - Create: `twm/react_preprocess/mocap_repair.py`
 - Create: `tests/test_mocap_repair.py`
 
-- [ ] **Step 1: Write failing synthetic detector tests**
+- [x] **Step 1: Write failing synthetic detector tests**
 
 ```python
 def test_repeated_ab_toggles_are_one_bout():
@@ -54,23 +54,23 @@ def test_nonfinite_and_known_gap_rows_seed_one_bout():
     assert [(b.start, b.end, b.kind) for b in bouts] == [(40, 42, "known_gap")]
 ```
 
-- [ ] **Step 2: Run tests and verify RED**
+- [x] **Step 2: Run tests and verify RED**
 
-Run: `pytest -q tests/test_mocap_repair.py -k 'bout or turn or nonfinite'`
+Run: `python -m pytest -q tests/test_mocap_repair.py -k 'bout or turn or nonfinite'`
 
 Expected: collection fails because `twm.react_preprocess.mocap_repair` does not exist.
 
-- [ ] **Step 3: Implement detector data model and bout grouping**
+- [x] **Step 3: Implement detector data model and bout grouping**
 
 Implement immutable `RepairConfig`, `AnomalyBout`, and `RepairEvidence` dataclasses. Compute sign-insensitive quaternion steps, translation steps in mm, finite masks, and robust episode-local scales. Seed discontinuities only when an edge is physically surprising and has return/alternate-branch evidence; merge seeds and known gaps until ten consecutive finite transitions are compatible with the same continuous branch. Store clean-context boundaries and deterministic event IDs.
 
-- [ ] **Step 4: Run detector tests and existing anomaly regressions**
+- [x] **Step 4: Run detector tests and existing anomaly regressions**
 
-Run: `pytest -q tests/test_mocap_repair.py tests/test_pose_anomaly.py tests/test_pose_flicker.py`
+Run: `python -m pytest -q tests/test_mocap_repair.py tests/test_pose_anomaly.py tests/test_pose_flicker.py`
 
 Expected: all pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add twm/react_preprocess/mocap_repair.py tests/test_mocap_repair.py
@@ -117,7 +117,7 @@ def test_missing_anchor_is_low_and_original_is_preserved():
 
 - [ ] **Step 2: Run new tests and verify RED**
 
-Run: `pytest -q tests/test_mocap_repair.py -k 'majority or sixty or medium or missing_anchor'`
+Run: `python -m pytest -q tests/test_mocap_repair.py -k 'majority or sixty or medium or missing_anchor'`
 
 Expected: failures for missing trajectory and confidence APIs.
 
@@ -131,7 +131,7 @@ Add `Confidence(IntEnum)` values NONE/LOW/MEDIUM/HIGH and `PoseRepairResult` arr
 
 - [ ] **Step 5: Verify all repair tests**
 
-Run: `pytest -q tests/test_mocap_repair.py tests/test_pose_repair.py tests/test_pose_flicker.py`
+Run: `python -m pytest -q tests/test_mocap_repair.py tests/test_pose_repair.py tests/test_pose_flicker.py`
 
 Expected: all pass, including unchanged genuine motion and idempotence.
 
@@ -171,7 +171,7 @@ def test_fps15_valid_is_and_and_repaired_is_or():
 
 - [ ] **Step 2: Run and verify RED**
 
-Run: `pytest -q tests/test_repaired_actions.py`
+Run: `python -m pytest -q tests/test_repaired_actions.py`
 
 Expected: import failure for the new module.
 
@@ -181,7 +181,7 @@ Build world-frame relative rotations `R[k+1] * R[k].inv()` and encode the first 
 
 - [ ] **Step 4: Run action tests plus toolbox regressions**
 
-Run: `pytest -q tests/test_repaired_actions.py twm/scripts/test_synth_actions.py`
+Run: `python -m pytest -q tests/test_repaired_actions.py twm/scripts/test_synth_actions.py`
 
 Expected: all pass.
 
@@ -224,7 +224,7 @@ def test_candidate_keeps_unselected_columns_and_good_poses_exact(tmp_path):
 
 - [ ] **Step 2: Run and verify RED**
 
-Run: `pytest -q tests/test_mocap_candidate.py`
+Run: `python -m pytest -q tests/test_mocap_candidate.py`
 
 Expected: import failure for the new module.
 
@@ -242,7 +242,7 @@ Accept only `keep_raw`, `accept_repair`, `invalidate`, or `unsure`. Match every 
 
 - [ ] **Step 6: Run candidate tests**
 
-Run: `pytest -q tests/test_mocap_candidate.py tests/test_repaired_actions.py`
+Run: `python -m pytest -q tests/test_mocap_candidate.py tests/test_repaired_actions.py`
 
 Expected: all pass.
 
@@ -277,7 +277,7 @@ def test_calibration_is_deterministic():
 
 - [ ] **Step 2: Run and verify RED**
 
-Run: `pytest -q tests/test_mocap_benchmark.py`
+Run: `python -m pytest -q tests/test_mocap_benchmark.py`
 
 Expected: script module cannot be imported.
 
@@ -287,7 +287,7 @@ Select disjoint clean intervals by task, duration, and motion bin using a seeded
 
 - [ ] **Step 4: Run benchmark tests**
 
-Run: `pytest -q tests/test_mocap_benchmark.py tests/test_mocap_repair.py`
+Run: `python -m pytest -q tests/test_mocap_benchmark.py tests/test_mocap_repair.py`
 
 Expected: all pass.
 
@@ -324,7 +324,7 @@ def test_clip_receives_raw_and_candidate_pose_arrays(monkeypatch, tmp_path):
 
 - [ ] **Step 2: Run and verify RED**
 
-Run: `pytest -q tests/test_build_pose_review.py -k 'canonical or candidate or medium'`
+Run: `python -m pytest -q tests/test_build_pose_review.py -k 'canonical or candidate or medium'`
 
 Expected: new selection/API assertions fail.
 
@@ -334,7 +334,7 @@ Render every MEDIUM/LOW event and deterministic HIGH samples. Load candidate pos
 
 - [ ] **Step 4: Run all review tests**
 
-Run: `pytest -q tests/test_build_pose_review.py tests/test_preview_clip_window.py tests/test_preview_gel_frame_choice.py`
+Run: `python -m pytest -q tests/test_build_pose_review.py tests/test_preview_clip_window.py tests/test_preview_gel_frame_choice.py`
 
 Expected: all pass.
 
@@ -370,7 +370,7 @@ def test_verify_detects_any_source_mutation(tmp_path):
 
 - [ ] **Step 2: Run and verify RED**
 
-Run: `pytest -q tests/test_build_mocap_repair_candidates.py`
+Run: `python -m pytest -q tests/test_build_mocap_repair_candidates.py`
 
 Expected: CLI module does not exist.
 
@@ -380,7 +380,7 @@ Provide `audit`, `benchmark`, `build`, `review`, `apply-decisions`, and `verify`
 
 - [ ] **Step 4: Run focused and full regression suites**
 
-Run: `pytest -q tests/test_build_mocap_repair_candidates.py tests/test_mocap_candidate.py tests/test_mocap_repair.py tests/test_repaired_actions.py tests/test_mocap_benchmark.py tests/test_build_pose_review.py tests/test_pose_anomaly.py tests/test_pose_repair.py tests/test_pose_flicker.py tests/test_repair_release_poses.py`
+Run: `python -m pytest -q tests/test_build_mocap_repair_candidates.py tests/test_mocap_candidate.py tests/test_mocap_repair.py tests/test_repaired_actions.py tests/test_mocap_benchmark.py tests/test_build_pose_review.py tests/test_pose_anomaly.py tests/test_pose_repair.py tests/test_pose_flicker.py tests/test_repair_release_poses.py`
 
 Expected: all pass.
 
