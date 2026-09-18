@@ -43,7 +43,7 @@ Files: `twm/recorder/app.py`, `twm/visualize.py`,
   pure helpers directly from their owning module. Parametrize alignment cases.
 - [x] Verify each caller still supplies identical timestamps, calibration,
   masks and force arguments; retain compatibility exports.
-- [ ] Run recorder/viewer/preview/force/Z-up regressions, then commit task files.
+- [x] Run recorder/viewer/preview/force/Z-up regressions, then commit task files.
 
 Inspection-driven additions in this same rendering scope:
 - [x] Reproduce and fix playback reset-reference NameError using aligned frames.
@@ -68,5 +68,9 @@ Files: `twm/visualization/__main__.py`, `twm/visualization/README.md`,
   arrays using `time.perf_counter`, fixed iterations and no timing assertions.
 - [x] Record repository-wide inventory and targeted remaining cleanup instead of
   claiming all research/one-off scripts have been rewritten.
-- [ ] Run `PYTHONPATH=. python -m twm.pipeline_guard` and complete applicable pytest
+- [x] Run `PYTHONPATH=. python -m twm.pipeline_guard` and complete applicable pytest
   suite; independently review spec compliance then code quality. Commit verified work.
+
+Verification caveat: running the suite does not mean it is entirely green.
+See `docs/twm-maintenance-audit.md` for baseline failures and final focused checks.
+Implementation commits: `4c99f70` (core), `108a75d` (integration/export/docs).

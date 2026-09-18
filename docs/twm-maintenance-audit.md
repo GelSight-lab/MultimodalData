@@ -82,7 +82,27 @@ The baseline suite (`tests`, before implementation, maxfail=5) produced 919 pass
 and five failures: an on-disk undeclared `pushT/2026-09-17` calibration session,
 the task-list duplication guard, and three force-free dataset-statistics tests.
 Unrelated user edits in the main checkout were not copied over or overwritten.
-Final refactor verification is recorded separately after integration.
+Refactor verification:
+
+- Final focused integration selection: **102 passed**, including the four
+  optional-wrist HDF5 cases added during review.
+- Recorder directory: **152 passed**. Calibration/Z-up/force/alignment selection:
+  **64 passed** (these selections overlap, so do not add their counts).
+- Broader `tests` directory run: **1,075 passed, 6 failed**, 12 warnings in 438 s.
+  It collected before the four optional-wrist tests were added. Five failures
+  match the baseline and were independently reproduced. The sixth was the
+  headless recording's real-time validator reporting two late ticks under load;
+  the recorder-directory rerun passed. No capture timing thresholds were weakened.
+- Pipeline guard: **15 checks, 0 violations**; diff whitespace and compilation
+  checks passed. Independent spec and quality reviews found no remaining issues
+  in the refactor after the GUI module-stub and single-wrist fixes.
+- Synthetic 100-iteration benchmark: pixel equality passed; median legacy/shared
+  panel rendering was approximately **6.68 / 6.54 ms**, p95 **8.08 / 8.34 ms** on
+  this run. These are observations, not portable performance guarantees.
+
+The branch remains unmerged. The entire repository is **not** claimed green;
+embedded research verifiers under `twm` and physical hardware were not run as a
+blanket suite.
 
 No dataset publication, force/action regeneration, calibration rewrite, or live
 hardware acquisition was performed by this refactor.
