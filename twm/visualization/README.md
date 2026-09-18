@@ -1,6 +1,7 @@
 # Shared TWM visualization
 
-Run from the repository checkout:
+Run from the repository checkout or an installed package (see
+[installation](../README.md#development-and-installation)):
 
 ```bash
 python -m twm.visualization --help
@@ -121,6 +122,27 @@ alignment; that is the source adapter's responsibility.
 `twm.scripts.build_episode_previews.iter_preview_panels` exposes the existing
 aligned HDF5 preview generator. Its `build_one_preview` wrapper uses this writer.
 Frame transforms must be deterministic because a verification retry re-renders.
+
+## Force-result inspection
+
+`twm.force_recovery.visualize.overlay_clip` uses the same compositor and verified
+writer. Its HDF5 readers reopen on retry and close on early encoder failure.
+Tactile frames and depth-panel reference images use
+`open_episode(...).align[side].index_map`, matching the estimator's source adapter
+for both timestamped and legacy recordings. A saved NPZ `source_frame` records
+held force estimates and is not substituted for the display's capture map.
+
+Pure `diff_rgb`, `diff_caption` and `ForceOverlay` live in
+`twm.visualization.force`. The first two remain importable from
+`twm.force_recovery.visualize` for compatibility, without loading Arrow,
+Matplotlib or the estimator. `ForceOverlay` pre-renders its timeline once, then
+copies the background and draws the current value/cursor per frame. Force values
+are supplied by the caller; rendering does not regenerate or smooth targets.
+
+Existing force-result figure/clip APIs keep their signatures. `overlay_clip`
+still treats `out_fps` as export playback rate, not a request to resample capture
+timestamps. Its default force trace retains the existing median-on-fresh-frames
+display policy; pass `force=` to display a supplied estimate unchanged.
 
 ## Checks and benchmark
 

@@ -79,6 +79,16 @@ python -m react_toolbox.demo --with_depth
 | `actions` | `next_state_action`, `delta_pose_action`, `integrate_delta` | handheld pose → IL/world-model targets |
 
 ## Notes & limits
+
+- `load_video(path, indices)` returns sorted **unique** requested frames, in RGB.
+  Indices must be nonnegative integers (not booleans). An empty selection returns
+  shape `(0, 0, 0, 3)` without opening a decoder. A missing requested frame raises
+  `IndexError`; it is never silently dropped or replaced with black pixels.
+  An unreadable or empty video raises an error. Decoders close on failure too.
+- Storage/decoder dependencies are loaded on demand: small image/contact helpers
+  do not import Arrow or video backends. This toolbox remains independent of the
+  parent TWM recorder and force-inference stack.
+
 - **No markers** on this sensor → no marker-flow / shear-field utilities (would need a markered gel).
 - **Depth is approximate / relative**, not metric: it uses a network pretrained on a reference GelSight Mini (no per-unit calibration). Verified to track contact deformation locally (height elevation under contact correlates 0.74 with contact intensity), but the global height includes the gel's baseline curvature. For metric depth, collect a ball-indenter calibration.
 - `nnmini.pt` weights are © GelSight Inc (GPL-3.0); only the weight file is fetched on demand — no GPL code is bundled. The toolbox code itself is MIT.

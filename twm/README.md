@@ -25,13 +25,55 @@ python -m twm.data_collection --task <task_name>
 python -m twm.recorder validate  /media/yxma/Disk1/twm/data/<task>/<date>/episode_000.h5 --expected-duration <seconds>
 python -m twm.recorder integrity /media/yxma/Disk1/twm/data/<task>/<date>/episode_000.h5   # frame rate + lost frames per stream
 
-# replay it (add --cam_calib motherboard|pushT when the task has no calibration of its own)
+# replay it (use --cam_calib YYYY-MM-DD only to explicitly select a measured epoch)
 python -m twm.visualize /media/yxma/Disk1/twm/data/<task>/<date>/episode_000.h5 --check
 ```
 
-If you ever see black GelSight images or no wrist cameras in the preview, you
-are running an old checkout without `twm/recorder/` (its hard-coded serials
-fall back to black dummy frames). Pull the branch that has it.
+Missing preview tiles can indicate absent streams, disconnected devices or stale
+device configuration. Check the recorder status and integrity report before
+assuming the recording contains valid camera or tactile frames.
+
+## Development and installation
+
+The wheel includes TWM subpackages, command modules, measured calibration assets
+and rig JSON configuration. On the collection workstation, install with
+`python -m pip install -e '.[twm]'` using the rig's existing driver/ROS setup.
+The project's base dependencies still include robot-specific packages such as
+`frankapy`; installing the `twm` extra does not remove those requirements.
+
+For inspection on an analysis machine without that hardware stack:
+
+```bash
+python -m pip install -e . --no-deps
+python -m pip install numpy scipy pillow opencv-python h5py hdf5plugin pyarrow matplotlib tqdm
+python -m twm.visualization --help
+```
+
+Install FFmpeg separately for video export. Force inference, depth models and
+live acquisition have additional model/driver requirements; the pure compositor
+does not load them. The installed-wheel test checks imports and CLI help outside
+the checkout, not physical device operation.
+
+Run regression checks from the repository root:
+
+```bash
+python -m pytest -q
+python -m twm.pipeline_guard
+python -m twm.scripts.benchmark_visualization --iterations 100
+# Optional scheduling-sensitive capture check: run alone on an idle host.
+TWM_TIMING_TESTS=1 python -m pytest tests/recorder/test_headless.py -m timing -q
+```
+
+Default pytest includes deterministic headless capture and synthetic timing-rule
+tests. The real-time host-scheduling check is opt-in; production validation
+thresholds are unchanged. Historical scripts with a `main()` verifier may need
+external recordings, model weights, network access or hardware and are not
+implicitly executed by pytest. For example, `twm.scripts.test_truncation_tolerance`
+runs its external-data checks only as a command; synthetic geometry is covered
+by `tests/test_truncation_geometry.py`.
+
+See the [maintenance audit](../docs/twm-maintenance-audit.md) for scope, test
+evidence, failure-handling contracts and remaining external verification limits.
 
 ---
 
@@ -119,8 +161,8 @@ the two GelSight images with their contact-difference thumbnails, and the
 two wrist cameras labelled by slot, serial and side.
 
 The overlay marks each GelSight's surface centre and body axes on every
-calibrated RealSense view, using the current rig calibration in
-`twm/calibration/result/` (the pushT epoch, 2026-06-26). It is built for
+calibrated RealSense view, using `twm.calib_epoch.current_epoch_dir()` and the
+explicit `CURRENT_EPOCH` declaration (currently 2026-09-09). It is built for
 low latency: the thumbnails are rebuilt when a new tick arrives (30 Hz), and
 the overlay is redrawn on every GUI frame from the newest OptiTrack pose
 rather than the pose sampled at the tick, so the dot trails the sensor by
@@ -396,13 +438,16 @@ playback (the same report as `python -m twm.recorder integrity`, below).
 
 By default the viewer projects each GelSight's centre onto the RealSense views
 (see [Camera Calibration](#camera-calibration)). That needs the extrinsics of
-the **epoch the episode was recorded in**, which the viewer picks from the task
-name in the path (`twm/calib_epoch.py`, `CALIB_DIRS`):
+the **epoch the episode was recorded in**. The viewer resolves task and session
+date from the path through `twm/calib_epoch.py`. Explicit `CALIB_SESSIONS`
+entries take precedence; undeclared dates at or after `CURRENT_EPOCH` use the
+standing current-rig policy, while unknown older sessions are rejected.
 
-| task in the path | calibration folder | epoch |
+| recording session | calibration folder | epoch |
 |---|---|---|
-| `motherboard` | `twm/calibration/result backup/` | 2026-05-12 |
-| `pushT` | `twm/calibration/result/` | 2026-06-26 |
+| historical May `motherboard` | `twm/calibration/epoch_2026-05-12/` | 2026-05-12 |
+| historical June `pushT` | `twm/calibration/epoch_2026-06-26/` | 2026-06-26 |
+| declared September sessions, including `rope` and `toy` | `twm/calibration/epoch_2026-09-09/` | 2026-09-09 |
 
 Any other task name (for example `test`) stops with
 `cannot infer task from '...'`. It refuses on purpose: viewing through the
@@ -415,11 +460,12 @@ choices:
    python -m twm.visualize path/to/test/2026-09-08/episode_000.h5 --no_projection
    ```
 
-2. **Pick the epoch by task name.** `--cam_calib` accepts a task name and
-   then supplies all five files of that epoch:
+2. **Pick a measured epoch explicitly.** `--cam_calib` accepts an epoch date
+   and supplies all five files of that epoch. Task names are also accepted,
+   but select the task's historical default, not its latest session:
 
    ```bash
-   python -m twm.visualize path/to/test/2026-09-08/episode_000.h5 --cam_calib motherboard
+   python -m twm.visualize path/to/test/2026-09-18/episode_000.h5 --cam_calib 2026-09-09
    ```
 
    Those extrinsics are only right if the cameras and the OptiTrack origin
@@ -428,8 +474,9 @@ choices:
    overridden with explicit paths (`--cam_calib a.json b.json c.json`,
    `--gel_left`, `--gel_right`); anything not given comes from the same epoch.
 
-3. **A new task**: record under its own task name, calibrate (below), and add
-   the task to `CALIB_DIRS` so the viewer finds it automatically.
+3. **A new task or changed rig**: record under its own task name, measure the
+   calibration if the rig changed, and declare the task/session epoch. Merely
+   creating a newer calibration folder does not activate it for live capture.
 
 ### Controls
 
@@ -460,7 +507,8 @@ P_gel_cam    = T_mocap_to_cam   @ P_gel_mocap        (camera-view calib, below)
 (u, v)       = project(K, P_gel_cam)                 (camera intrinsics K)
 ```
 
-Calibration files live in `twm/calibration/result/`:
+Measured calibration files live in `twm/calibration/epoch_YYYY-MM-DD/`.
+Keep historical epochs for their recordings; do not overwrite them with a new solve.
 
 | File | What it maps |
 |------|--------------|
@@ -562,7 +610,7 @@ per-camera RMSE and per-point residuals (✅ <5, ⚠️ <10, ❌ ≥10; in **px*
 
 ```bash
 python -m twm.calibration.mocap_to_cam --serial 217222066989 --num_points 6 \
-    --output twm/calibration/result/T_mocap_to_cam_middle.json
+    --output /path/to/new-epoch/T_mocap_to_cam_middle.json
 ```
 
 Same click-then-type flow for one camera; controls: `y` accept · `r` redo ·
@@ -575,10 +623,10 @@ Once calibrated, the projection overlay is **on by default**:
 ```bash
 python -m twm.data_collection --task <task_name>   # press 'p' to toggle; --no_projection to start off
 python -m twm.visualize path/to/episode_000.h5     # --no_projection to disable
-python -m twm.visualize path/to/episode_000.h5 --cam_calib pushT   # pick the epoch when the path names no known task
+python -m twm.visualize path/to/episode_000.h5 --cam_calib 2026-09-09   # explicitly select the measured epoch
 ```
 
-The live recorder always uses `twm/calibration/result/` (the current rig);
+The live recorder uses the explicit `CURRENT_EPOCH` through `current_epoch_dir()`;
 the viewer picks the epoch the episode was recorded in, see
 [Visualizing Episodes](#visualizing-episodes).
 

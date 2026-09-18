@@ -1,6 +1,6 @@
 # TWM maintenance audit — 2026-09-18
 
-## Scope and delivered first phase
+## Scope and visualization module
 
 Inventory at base `039f6af`: 322 Python files / 77,509 lines in `twm`, with
 148 test files under `tests` and 47 embedded tests/verifiers under `twm`.
@@ -36,45 +36,81 @@ writer consumes frames incrementally; it does not promise constant total process
 RSS (source arrays, models, and encoder buffers still exist). Preview rasterization
 itself uses the same geometry and has similar runtime, not a claimed major speedup.
 
-## Remaining findings, prioritized
+## Maintenance follow-up
 
-These are follow-ups, **not changes made in this phase**. Keep separate regression
-tests and scope each fix before changing capture/storage behavior.
+The first audit's eight findings are tracked below. Changes are limited to code,
+tests and documentation in the isolated worktree; main-checkout edits are preserved.
 
-1. **Writer drain/flush race** — `recorder/writer.py`: `_in_flight` is cleared and
-   drain notified before `_maybe_flush`. `recorder/app.py` can then read/stamp/close
-   the same HDF5 file. Keep in-flight through flush without holding the condition
-   during I/O; use an event-controlled concurrency regression. Existing writer
-   tests poll the flush and therefore do not prove drain waits for it.
-2. **Fatal reporting can fail recursively** — `recorder/capture.py`:
-   `_publish_fatal` calls `writer.stats()` even when stats itself caused the
-   failure. Reuse the last snapshot (safe initial fallback) and ensure stop signals
-   are set in a finally path.
-3. **Incomplete preprocessing can look complete** — `preprocess/pipeline.py`:
-   parquet existence gates skipping, but parquet is written before all sidecars.
-   A failure after parquet can suppress a necessary retry. Define a completion
-   receipt/artifact check that supports rigs with missing optional cameras;
-   `preprocess/complete.py` is stronger but assumes seven streams.
-4. **Inconsistent frame-reader failures** — `react_toolbox/io.py`: empty frame
-   selections fail, AV can silently drop requested frames, OpenCV substitutes
-   fixed-size black frames, and decoder cleanup needs stronger finally coverage.
-   Cache the maximum requested index outside the decode loop; standardize missing
-   frame semantics without altering the published toolbox's import independence.
-5. **Preprocess encoder cleanup** — `preprocess/encode.py`: BrokenPipe from stdin
-   close can prevent process wait. The new visualization writer handles this,
-   but preprocessing has not been migrated. Add reaping/buffer-shape tests first.
-6. **Force visualization cost/alignment** — `force_recovery/visualize.py` uses
-   legacy tactile shifts for timestamped data, redraws growing history each frame
-   (quadratic work), and encodes twice with incomplete finally cleanup. Do not
-   change force target generation while consolidating presentation.
-7. **Heavy import chains** — selected force/toolbox visualization paths import
-   matplotlib, Arrow, decoders or inference dependencies just to use small image
-   helpers. Move shared pure helpers carefully; do not introduce a parent-TWM
-   dependency into the independently shipped toolbox.
-8. **Wheel completeness** — `pyproject.toml` package declarations include `twm`
-   but omit its subpackages. Add an installed-wheel smoke test outside the checkout
-   before changing discovery (including optional hardware dependencies). Current
-   instructions intentionally run from a checkout.
+1. **Writer drain/flush race:** `_in_flight` and queued-byte accounting remain
+   active until flush and file-size sampling finish. File I/O stays outside the
+   condition lock. Event-controlled tests prove drain cannot return early.
+2. **Recursive fatal reporting:** capture reuses the last writer/sensor snapshot
+   or an explicitly unavailable initial snapshot instead of calling failing
+   telemetry again. Controller finalization also tolerates persistent stats
+   failures, marks the episode invalid, and closes its HDF5 handle.
+3. **Preprocessing completion:** `react_preprocess.complete.is_complete()` checks
+   the detection sidecar and requested videos/depth, using the actual source
+   camera modalities. Without a source it retains strict seven-stream validation.
+   A rebuild invalidates the old completion parquet first; sidecars finish before
+   a temporary parquet is atomically published. Scheduler coverage and build
+   prerequisites use the same checks, with its existing RGB-on/depth-off policy.
+   Older outputs whose sidecars are newer than the parquet may be
+   rebuilt once; metadata-only output cannot satisfy a later video/depth request.
+4. **Frame-reader failures:** both AV and OpenCV return sorted unique requested
+   indices as RGB, reject invalid indices, raise for unavailable frames, and close
+   on failures. Empty selection returns `(0, 0, 0, 3)` without opening a decoder.
+   Bounds are computed once and decoding proceeds monotonically. No fabricated
+   black frames or silent dropped requests.
+5. **Preprocess encoder cleanup:** frame block shape/dtype is validated before
+   writing; stdin close failures still trigger process wait. Ordinary close/wait
+   failures cannot replace an active body exception; cleanup-only failures carry
+   output-path context and a chained cause.
+6. **Force visualization:** canonical HDF5 alignment replaces unconditional
+   legacy shifts. Clips use shared composition/export, a precomputed timeline
+   and replayable reader lifetime. Estimator and force-target generation are
+   outside this change.
+7. **Import boundaries:** toolbox Arrow/video imports are lazy. Pure force image
+   helpers move to `twm.visualization.force` with compatibility exports from
+   `force_recovery.visualize`. The independently shipped toolbox has no dependency
+   on the parent TWM package.
+8. **Installed wheel:** package discovery includes subpackages and namespace
+   command directories, plus calibration/config data. The smoke test extracts a
+   freshly built wheel, runs imports/CLI help outside the checkout, and checks
+   hardware drivers are not imported. This does not test a fresh full hardware
+   installation; base robot dependencies still exist in project metadata.
+
+### Test cleanup and baseline failures
+
+- Statistics now retain scale/tactile information when force is absent, partial
+  or nonfinite, while explicitly withholding force-derived summaries. Empty,
+  zero-contact and fully saturated distributions render without invented values.
+  Relevant force-free behavior from the user's dirty main checkout was preserved
+  and extended on this branch without modifying that checkout.
+- The task-list guard distinguishes historical recovery scopes from pipeline
+  defaults. Calibration-session tests use the existing explicit-session/standing
+  current-epoch policy; no extrinsics or resolver policy were changed.
+- The host-scheduling-sensitive recorder test is marked `timing` and requires
+  `TWM_TIMING_TESTS=1`. Deterministic headless content/schema/lifecycle tests and
+  synthetic timing-threshold tests remain enabled. Production limits are unchanged.
+- Imported `testset_root` helpers are no longer mistaken for tests. Historical
+  truncation checks returning integer error counts are explicit command helpers,
+  not falsely passing pytest tests; synthetic geometry has asserting regressions.
+
+## Reproduce verification
+
+From the worktree or checkout, with its analysis/test dependencies and FFmpeg:
+
+```bash
+python -m pytest -q
+python -m twm.pipeline_guard
+python -m pytest tests/test_installed_package.py -q
+python -m twm.scripts.benchmark_visualization --iterations 100
+TWM_TIMING_TESTS=1 python -m pytest tests/recorder/test_headless.py -m timing -q
+```
+
+Run the last command alone on an idle host. `pytest` collects `tests` and `twm`
+using importlib mode to avoid duplicate-basename collisions. It does not run
+every historical script's `main()` or every physical device integration.
 
 ## Verification notes
 
@@ -82,7 +118,9 @@ The baseline suite (`tests`, before implementation, maxfail=5) produced 919 pass
 and five failures: an on-disk undeclared `pushT/2026-09-17` calibration session,
 the task-list duplication guard, and three force-free dataset-statistics tests.
 Unrelated user edits in the main checkout were not copied over or overwritten.
-Refactor verification:
+The results below describe the initial visualization phase; the maintenance
+follow-up addresses those baseline failures and is being verified separately.
+Initial refactor verification:
 
 - Final focused integration selection: **102 passed**, including the four
   optional-wrist HDF5 cases added during review.
