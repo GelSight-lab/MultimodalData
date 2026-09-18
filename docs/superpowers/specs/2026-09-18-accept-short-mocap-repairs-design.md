@@ -89,3 +89,27 @@ compatibility; passing checks is not a guarantee of physical ground truth.
 No main-data force recalibration or force-version upgrade is included in this
 repair-policy update. A later force update must run the same alignment and
 derived-target consistency checks.
+
+## Approved extension: examples 24 and 25
+
+The operator subsequently approved bounded, repeated body-offset correction
+and requested the analogous pattern in example 25. Add a conservative recovery
+pass over LOW events, retaining original confidence and rejection evidence.
+Repeated transforms require two matching paired-return proposals from the same
+recording and side, not unrelated tasks or bodies. Correct only clearly
+separated branch states within 33 frames, with unchanged outer anchors and a
+maximum corrected angular step of 3 degrees for this repeated-flicker path.
+
+For mixed longer events, pair the ordered large jump boundaries into separate
+out-and-return stretches; do not interpolate the full parent interval. Each
+stretch must be at most 33 frames. A stretch of at most five frames may use the
+existing endpoint interpolation and same-branch anchor checks; longer stretches
+must pass paired body-transform checks. Allow at most 6 mm disagreement between
+the two body-translation estimates (previous cutoff 5 mm), while retaining the
+3-degree transform rotation check and the original boundary/physical checks.
+Require both outer contexts, compatible clean-branch anchors throughout, finite
+observations, and physical reconstructed transitions. Missing data, holds, odd
+unpaired jumps, incompatible branches, or incomplete recovery remain masked.
+No correction is automatic ground truth; provenance records operator-approved
+pattern policy and the original LOW classification. Do not apply this rule to
+unflagged trajectories. Re-render examples 24 and 25 for review.
