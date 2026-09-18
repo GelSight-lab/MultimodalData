@@ -195,3 +195,22 @@ def test_persistent_branch_without_return_is_low_and_not_replaced():
     assert not result.repaired.any()
     assert result.events
     assert all(event.confidence == Confidence.LOW for event in result.events)
+
+
+def test_endpoint_se3_repairs_a_five_frame_branch_without_velocity_agreement():
+    truth = curved_pose(140)
+    # A real change of direction outside the corrupt interval makes the two
+    # constant-velocity extrapolations disagree even though both immediate
+    # anchors constrain a safe five-frame interpolation.
+    truth[46:, 1] += np.linspace(0.0, 0.025, len(truth) - 46)
+    observed = wrong_branch(truth, range(40, 45))
+
+    result = repair_pose_stream(observed, "left", task_gate=passing_gate())
+
+    event = result.events[0]
+    assert event.method == "endpoint_se3"
+    assert event.confidence == Confidence.HIGH
+    assert result.valid[40:45].all()
+    assert np.array_equal(result.pose[[39, 45]], observed[[39, 45]])
+    assert event.evidence["reconstructed_max_step_translation_mm"] <= 50
+    assert event.evidence["reconstructed_max_step_rotation_deg"] <= 30

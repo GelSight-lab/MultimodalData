@@ -11,7 +11,7 @@ from enum import IntEnum
 from typing import Iterable
 
 import numpy as np
-from scipy.spatial.transform import Rotation
+from scipy.spatial.transform import Rotation, Slerp
 
 
 @dataclass(frozen=True)
@@ -316,6 +316,32 @@ def _predict_bout(pose: np.ndarray, bout: AnomalyBout, left: np.ndarray,
     return pred, evidence
 
 
+def _endpoint_se3(pose: np.ndarray, bout: AnomalyBout) -> tuple[
+        np.ndarray, dict[str, float]]:
+    """Interpolate a short bout from its immediate finite SE(3) anchors."""
+    lo, hi = bout.start - 1, bout.end + 1
+    rows = np.arange(bout.start, bout.end + 1)
+    duration = hi - lo
+    fraction = (rows - lo) / float(duration)
+    xyz = ((1.0 - fraction[:, None]) * pose[lo, :3]
+           + fraction[:, None] * pose[hi, :3])
+    rotations = Slerp(
+        [0.0, 1.0], Rotation.from_quat(_unit_quaternion(pose[[lo, hi], 3:])))
+    quat = rotations(fraction).as_quat()
+    anchor_translation_mm = float(
+        np.linalg.norm(pose[hi, :3] - pose[lo, :3]) * 1000.0)
+    anchor_rotation_deg = float(_quaternion_angle_deg(
+        pose[lo:lo + 1, 3:], pose[hi:hi + 1, 3:])[0])
+    return np.concatenate([xyz, quat], axis=1), {
+        "left_anchor": int(lo),
+        "right_anchor": int(hi),
+        "anchor_translation_mm": anchor_translation_mm,
+        "anchor_rotation_deg": anchor_rotation_deg,
+        "prediction_translation_max_mm": anchor_translation_mm / duration,
+        "prediction_rotation_max_deg": anchor_rotation_deg / duration,
+    }
+
+
 def _trajectory_is_physical(pose: np.ndarray, config: RepairConfig) -> tuple[bool, float, float]:
     rot, trans = transition_metrics(pose)
     finite = np.isfinite(rot) & np.isfinite(trans)
@@ -481,7 +507,19 @@ def repair_pose_stream(
                 }))
             continue
 
-        predicted, evidence = _predict_bout(raw, bout, left, right)
+        endpoint_method = (
+            1 <= len(rows) <= 5
+            and int(left[-1]) == bout.start - 1
+            and int(right[0]) == bout.end + 1
+        )
+        if endpoint_method:
+            predicted, evidence = _endpoint_se3(raw, bout)
+            evidence.update({
+                "left_context_frames": int(len(left)),
+                "right_context_frames": int(len(right)),
+            })
+        else:
+            predicted, evidence = _predict_bout(raw, bout, left, right)
         observed = raw[rows]
         forced = np.array([int(row) in known_rows for row in rows])
         lo = int(left[-1]); hi = int(right[0])
@@ -518,11 +556,11 @@ def repair_pose_stream(
             "rotation_inlier_threshold_deg": rot_threshold,
             "branch_unambiguous": branch_unambiguous,
         })
-        extreme_prediction_disagreement = (
+        extreme_prediction_disagreement = (not endpoint_method and (
             evidence["prediction_translation_max_mm"]
             > 3.0 * cfg.max_prediction_translation_mm
             or evidence["prediction_rotation_max_deg"]
-            > 3.0 * cfg.max_prediction_rotation_deg)
+            > 3.0 * cfg.max_prediction_rotation_deg))
         if not physical or extreme_prediction_disagreement:
             confidence[rows] = Confidence.LOW
             valid[rows] = False
@@ -535,7 +573,7 @@ def repair_pose_stream(
             continue
         two_full_contexts = (len(left) >= cfg.context_frames
                              and len(right) >= cfg.context_frames)
-        prediction_agrees = (
+        prediction_agrees = endpoint_method or (
             evidence["prediction_translation_max_mm"]
             <= cfg.max_prediction_translation_mm
             and evidence["prediction_rotation_max_deg"]
@@ -551,7 +589,8 @@ def repair_pose_stream(
         confidence[rows] = tier
         valid[rows] = high
         events.append(RepairEvent(
-            eid, bout, tier, "robust_se3_hermite",
+            eid, bout, tier, ("endpoint_se3" if endpoint_method
+                              else "robust_se3_hermite"),
             tuple(rows[replace].astype(int)), evidence))
 
     return PoseRepairResult(
