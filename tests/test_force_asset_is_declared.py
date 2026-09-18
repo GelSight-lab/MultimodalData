@@ -16,6 +16,8 @@ which sends the reader to a stage that does not produce it.
 Two things follow: the message must name what is actually missing and where it
 comes from, and the scheduler must refuse BEFORE the build rather than after.
 """
+from dataclasses import replace
+
 import pytest
 
 import twm.pipeline_stages as PS
@@ -35,17 +37,24 @@ def test_the_refusal_says_where_the_asset_comes_from(tmp_path, monkeypatch):
         f"the message still sends the reader to `build`, which does not produce it: {why}"
 
 
-def test_a_present_asset_does_not_block(tmp_path, monkeypatch):
+@pytest.mark.parametrize("build_ready", [True, False])
+def test_a_present_asset_does_not_block(tmp_path, monkeypatch, build_ready):
     root = tmp_path / "force_recovery"
     (root / "feature_cache").mkdir(parents=True)
     (root / "feature_cache" / "glowtact_round_mm.json").write_text("[]")
     (root / "feature_cache" / "glowtact_round_8_15_di4.json").write_text("[]")
     (root / "lut_calibration").mkdir()
     (root / "lut_calibration" / "glowtact_lut.npz").write_bytes(b"")
-    (root / "rope").mkdir()
-    (root / "rope" / "x.npz").write_bytes(b"")
     monkeypatch.setattr(PS, "FORCE_ROOT", root)
-    assert PS.blocked(PS.BY_NAME["force"], "rope") is None
+    # This test exercises the asset gate, not the build-completion contract.
+    # Scope the prerequisite to this case so host recordings cannot affect it.
+    monkeypatch.setitem(PS.BY_NAME, "build", replace(
+        PS.BY_NAME["build"], produced=lambda task: build_ready))
+    why = PS.blocked(PS.BY_NAME["force"], "rope")
+    if build_ready:
+        assert why is None
+    else:
+        assert why and "needs build" in why
 
 
 @pytest.mark.parametrize('missing', [
