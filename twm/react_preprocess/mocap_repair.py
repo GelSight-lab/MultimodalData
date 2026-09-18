@@ -60,6 +60,7 @@ class TaskGate:
 
     high_confidence_enabled: bool = False
     validated_max_frames: int = 0
+    endpoint_max_frames: int = 0
 
 
 @dataclass(frozen=True)
@@ -355,13 +356,14 @@ def _trajectory_is_physical(pose: np.ndarray, config: RepairConfig) -> tuple[boo
 
 def _residuals(observed: np.ndarray,
                predicted: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    finite = np.isfinite(observed).all(axis=1)
+    finite = _finite_pose_rows(observed)
     trans = np.full(len(observed), np.inf)
     rot = np.full(len(observed), np.inf)
     trans[finite] = np.linalg.norm(
         observed[finite, :3] - predicted[finite, :3], axis=1) * 1000.0
-    rot[finite] = _rotation_error_deg(
-        observed[finite, 3:], predicted[finite, 3:])
+    if finite.any():
+        rot[finite] = _rotation_error_deg(
+            observed[finite, 3:], predicted[finite, 3:])
     return trans, rot, finite
 
 
@@ -525,9 +527,19 @@ def repair_pose_stream(
         lo = int(left[-1]); hi = int(right[0])
         trans_threshold, rot_threshold = _local_inlier_thresholds(
             raw, left, right, cfg)
-        predicted, inlier, trans_residual, rot_residual, iterations, converged = (
-            _robust_branch_fit(observed, predicted, forced, rows - lo,
-                               hi - lo, trans_threshold, rot_threshold))
+        if endpoint_method:
+            # Keep this identical to the benchmarked linear/SLERP model;
+            # fitting a polynomial to possible wrong-branch observations
+            # would quietly turn it into a different estimator.
+            trans_residual, rot_residual, observed_finite = _residuals(observed, predicted)
+            inlier = (observed_finite & ~forced
+                      & (trans_residual <= trans_threshold)
+                      & (rot_residual <= rot_threshold))
+            iterations, converged = 0, True
+        else:
+            predicted, inlier, trans_residual, rot_residual, iterations, converged = (
+                _robust_branch_fit(observed, predicted, forced, rows - lo,
+                                   hi - lo, trans_threshold, rot_threshold))
         replace = ~inlier | forced
         classified_outlier = replace & ~forced
         if classified_outlier.any():
@@ -573,6 +585,13 @@ def repair_pose_stream(
             continue
         two_full_contexts = (len(left) >= cfg.context_frames
                              and len(right) >= cfg.context_frames)
+        # A short boundary seed may actually be one end of a persistent
+        # alternate branch. Physical step limits alone cannot establish
+        # that the two anchors belong to the same trajectory branch.
+        endpoint_return = (not endpoint_method or
+                           evidence["anchor_rotation_deg"] <= 20.0)
+        if endpoint_method:
+            evidence["endpoint_return_consistent"] = endpoint_return
         prediction_agrees = endpoint_method or (
             evidence["prediction_translation_max_mm"]
             <= cfg.max_prediction_translation_mm
@@ -581,6 +600,8 @@ def repair_pose_stream(
         high = (
             gate.high_confidence_enabled
             and len(rows) <= min(cfg.max_high_frames, gate.validated_max_frames)
+            and (not endpoint_method or len(rows) <= gate.endpoint_max_frames)
+            and endpoint_return
             and two_full_contexts and prediction_agrees and physical
             and branch_unambiguous and bool(replace.any()))
         tier = Confidence.HIGH if high else Confidence.MEDIUM

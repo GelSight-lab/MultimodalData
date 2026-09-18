@@ -126,7 +126,8 @@ def test_candidate_keeps_unselected_columns_and_good_poses_exact(tmp_path):
     output = tmp_path / "review" / "candidate_release"
     writer = CandidateWriter(
         source, output, manifest,
-        task_gates={task: TaskGate(True, 60) for task in TASKS})
+        task_gates={task: TaskGate(True, 60, endpoint_max_frames=5)
+                    for task in TASKS})
 
     build = writer.write_all()
 

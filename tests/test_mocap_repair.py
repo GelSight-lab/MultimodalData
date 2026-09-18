@@ -50,7 +50,8 @@ def wrong_branch(pose: np.ndarray, rows: range) -> np.ndarray:
 
 
 def passing_gate() -> TaskGate:
-    return TaskGate(high_confidence_enabled=True, validated_max_frames=60)
+    return TaskGate(high_confidence_enabled=True, validated_max_frames=60,
+                    endpoint_max_frames=5)
 
 
 def rotation_errors_deg(actual: np.ndarray, expected: np.ndarray) -> np.ndarray:
@@ -214,3 +215,37 @@ def test_endpoint_se3_repairs_a_five_frame_branch_without_velocity_agreement():
     assert np.array_equal(result.pose[[39, 45]], observed[[39, 45]])
     assert event.evidence["reconstructed_max_step_translation_mm"] <= 50
     assert event.evidence["reconstructed_max_step_rotation_deg"] <= 30
+
+
+def test_endpoint_repair_stays_medium_until_its_own_benchmark_gate_passes():
+    truth = curved_pose(140)
+    observed = wrong_branch(truth, range(40, 45))
+    gate = TaskGate(high_confidence_enabled=True, validated_max_frames=60,
+                    endpoint_max_frames=0)
+
+    result = repair_pose_stream(observed, "left", task_gate=gate)
+
+    assert result.events[0].method == "endpoint_se3"
+    assert result.events[0].confidence == Confidence.MEDIUM
+    assert not result.valid[40:45].any()
+
+
+def test_short_seed_between_different_branches_is_not_high():
+    truth = smooth_pose(140)
+    observed = truth.copy()
+    observed[60:, 3:] = (R.from_euler('y', 55, degrees=True)
+                          * R.from_quat(truth[60:, 3:])).as_quat()
+    result = repair_pose_stream(observed, 'left', task_gate=passing_gate())
+    assert result.events
+    assert all(event.confidence != Confidence.HIGH for event in result.events)
+
+
+def test_endpoint_known_gap_uses_exact_linear_translation():
+    truth = curved_pose(140)
+    observed = truth.copy()
+    observed[50:55] = np.nan
+    result = repair_pose_stream(observed, 'left', [(50, 5)], task_gate=passing_gate())
+    weights = np.arange(1, 6)[:, None] / 6
+    expected = truth[49, :3] * (1-weights) + truth[55, :3] * weights
+    np.testing.assert_allclose(result.pose[50:55, :3], expected, atol=1e-12)
+    assert result.events[0].evidence['fit_iterations'] == 0

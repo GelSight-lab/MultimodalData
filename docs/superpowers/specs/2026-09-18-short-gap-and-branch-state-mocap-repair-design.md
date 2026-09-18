@@ -1,5 +1,41 @@
 # Short-gap and Branch-state Mocap Repair Design
 
+## September18 implementation outcome and revised safety policy
+
+The original318/40--80 recovery estimates below were planning hypotheses,
+not validated results. Endpoint interpolation with a same-branch anchor check
+reduced unresolved events from510 to345 on the original114-source inventory
+under the earlier trajectory-only confidence policy. It did not reach100--150.
+
+The user's subsequent request to exclude genuine motion prompted negative
+controls: synthetic real abrupt out-and-back trajectories are indistinguishable
+from injected tracker switches using poses alone. These controls refute a
+claim of guaranteed anomaly classification; they are not a measured false
+positive rate on React. The final strict build therefore requires declared
+tracking loss or invalid raw observations before a repair can be automatically
+training-valid. Other corrected candidates remain MEDIUM for review.
+
+Persistent-branch work implements paired body-frame transform proposals and
+full-span invalidation, not the originally proposed globally learned sequence
+decoder. Five synthetic reconstruction benchmarks passed, but branch identity
+still requires independent evidence. No persistent branch was automatically
+promoted merely because its reconstruction was smooth.
+
+Final publication covers218parquets/787407rows, all four main tasks,36old-data
+episodes and9validation episodes, plus872native/15fps action sidecars. There
+are400published event occurrences:1HIGH,274MEDIUM and125LOW. All399nonHIGH
+events have review entries. Exactly25stratified samples include original
+videos and before/after charts; video timing uses frame/30, not capture
+timestamps. These published-event counts are not directly comparable with the
+uncut-source510-event starting population.
+
+Force was rebuilt separately from lossy released MP4 for all36old-data
+episodes/72sides/240040rows. HF force revision:
+`5f5759a71f015d72dfc4feb8e684737d67f3150e`.
+Action/review revision, retaining that force:
+`5b1fa8596be2f73348c19c51bb2526281f8f61ab`.
+All218remote parquet hashes match the staged outputs.
+
 ## Goal
 
 Reduce unresolved OptiTrack lost-track events across motherboard, pushT, rope,

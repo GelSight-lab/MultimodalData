@@ -264,12 +264,16 @@ class CandidateWriter:
     def __init__(self, source_root: Path, output_root: Path,
                  manifest: InputManifest, *,
                  task_gates: dict[str, TaskGate] | None = None,
-                 production_roots: Iterable[Path] = ()):
+                 production_roots: Iterable[Path] = (),
+                 branch_review: bool = False,
+                 require_loss_evidence: bool = False):
         self.source_root = Path(source_root).resolve()
         self.output_root = Path(output_root).resolve()
         self.manifest = manifest
         _validate_manifest(manifest)
         self.task_gates = dict(task_gates or {})
+        self.branch_review = bool(branch_review)
+        self.require_loss_evidence = bool(require_loss_evidence)
         inferred = {
             self.source_root,
             self.source_root.parent / "release_zup",
@@ -344,6 +348,12 @@ class CandidateWriter:
             raw_pose = np.asarray(table[pose_name].to_pylist(), dtype=float)
             result = repair_pose_stream(
                 raw_pose, side, gaps.get(side, ()), task_gate=gate)
+            if self.require_loss_evidence:
+                from .mocap_branch_review import apply_loss_evidence_gate
+                result = apply_loss_evidence_gate(result, raw_pose, gaps.get(side, ()))
+            if self.branch_review:
+                from .mocap_branch_review import apply_review_branches
+                result = apply_review_branches(result, raw_pose, side, gaps.get(side, ()))
             output_table = _set_column(
                 output_table, pose_name, _pose_list_array(result.pose))
             output_table = _set_column(
@@ -403,6 +413,8 @@ class CandidateWriter:
         _atomic_json(self.output_root / "build_config.json", {
             "schema_version": 1,
             "manifest_digest": self.manifest.digest,
+            "branch_review": self.branch_review,
+            "require_loss_evidence": self.require_loss_evidence,
             "task_gates": {
                 task: asdict(self.task_gates.get(task, TaskGate()))
                 for task in self.manifest.tasks
@@ -439,15 +451,30 @@ def _load_candidate(candidate_root: Path) -> tuple[InputManifest, dict[str, Task
     return manifest, gates
 
 
+def _scoped_event_id(path: Path, event_id: str) -> str:
+    return f"{path.parent.parent.parent.name}/{path.parent.name}/{path.stem}::{event_id}"
+
+
 def _event_index(candidate_root: Path) -> dict[str, tuple[Path, dict[str, Any]]]:
+    """Index review IDs as task/date/source_episode::local_event_id.
+
+    Legacy local IDs are accepted only when globally unique. Exported samples
+    keyed remote_path::local_event_id must first be mapped through publication
+    inventory to the unsegmented source episode; segmented filenames are not
+    sufficient to infer this mapping.
+    """
     index: dict[str, tuple[Path, dict[str, Any]]] = {}
+    aliases: dict[str, list[tuple[Path, dict[str, Any]]]] = {}
     for path in sorted(Path(candidate_root).glob("*/repair_events/*/*.json")):
         payload = json.loads(path.read_text())
         for event in payload.get("events", []):
             event_id = str(event["event_id"])
-            if event_id in index:
-                raise ValueError(f"duplicate event in candidate tree: {event_id}")
-            index[event_id] = (path, event)
+            scoped = _scoped_event_id(path, event_id)
+            if scoped in index:
+                raise ValueError(f"duplicate event within episode: {scoped}")
+            index[scoped] = (path, event)
+            aliases.setdefault(event_id, []).append((path, event))
+    index.update({alias: values[0] for alias, values in aliases.items() if len(values) == 1})
     return index
 
 
@@ -464,10 +491,12 @@ def _canonical_decisions(payload: dict[str, Any],
     for row in payload.get("decisions", []):
         event_id = str(row.get("event_id", ""))
         decision = str(row.get("decision", ""))
-        if event_id in seen:
-            raise ValueError(f"duplicate decision for event: {event_id}")
         if event_id not in events:
             raise ValueError(f"unknown event in decisions: {event_id}")
+        path, event = events[event_id]
+        event_id = _scoped_event_id(path, str(event["event_id"]))
+        if event_id in seen:
+            raise ValueError(f"duplicate decision for event: {event_id}")
         if decision not in allowed:
             raise ValueError(f"invalid decision {decision!r} for {event_id}")
         seen.add(event_id)
@@ -492,13 +521,16 @@ def apply_decisions(candidate_root: Path,
     # independent of whatever decision was applied on the previous run.
     writer = CandidateWriter(
         Path(manifest.source_root), candidate_root, manifest,
-        task_gates=gates)
+        task_gates=gates,
+        branch_review=bool(json.loads((candidate_root / "build_config.json").read_text()).get("branch_review", False)),
+        require_loss_evidence=bool(json.loads((candidate_root / "build_config.json").read_text()).get("require_loss_evidence", False)))
     build = writer.write_all()
     events = _event_index(candidate_root)
     grouped: dict[Path, list[dict[str, str]]] = {}
     for row in decisions:
-        path, _ = events[row["event_id"]]
-        grouped.setdefault(path, []).append(row)
+        path, event = events[row["event_id"]]
+        grouped.setdefault(path, []).append({"event_id": str(event["event_id"]),
+                                            "decision": row["decision"]})
 
     for event_path, rows in grouped.items():
         event_payload = json.loads(event_path.read_text())

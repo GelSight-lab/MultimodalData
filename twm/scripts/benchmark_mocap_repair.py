@@ -2,7 +2,7 @@
 """Calibrate mocap repair confidence with deterministic clean-data masking."""
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from typing import Iterable
 
 import numpy as np
@@ -29,6 +29,7 @@ class BenchmarkReport:
     metrics: dict[str, MetricSummary]
     metrics_all: dict[str, MetricSummary]
     gate: TaskGate
+    methods: dict = field(default_factory=dict)
 
     def to_dict(self) -> dict:
         return {
@@ -44,6 +45,7 @@ class BenchmarkReport:
             "metrics_all": {name: asdict(self.metrics_all[name])
                             for name in sorted(self.metrics_all)},
             "gate": asdict(self.gate),
+            "methods": self.methods,
         }
 
 
@@ -201,10 +203,21 @@ def benchmark_task(
     high_by_length: dict[int, dict[str, list[float]]] = {
         length: {name: [] for name in names} for length in lengths}
     high_interval_count = {length: 0 for length in lengths}
+    method_values = {}
+    method_counts = {}
     confidence_counts = {"HIGH": 0, "MEDIUM": 0, "LOW": 0}
-    gate_for_reconstruction = TaskGate(True, max(lengths))
+    endpoint_lengths = [length for length in lengths if length <= 5]
+    endpoint_trial_max = max(endpoint_lengths, default=0)
+    gate_for_reconstruction = TaskGate(
+        True, max(lengths), endpoint_max_frames=endpoint_trial_max)
     for index, interval in enumerate(selected):
-        truth = episodes[interval.episode]
+        # Only the 15-frame contexts influence reconstruction. Evaluating
+        # an entire many-minute clean episode for every masked window adds
+        # quadratic detection work without supplying any extra evidence.
+        context_start = interval.start - 15
+        context_end = interval.start + interval.length + 15
+        truth = episodes[interval.episode][context_start:context_end]
+        interval = _Candidate(interval.episode, 15, interval.length, interval.motion)
         all_rows = np.arange(interval.start, interval.start + interval.length)
         if index % 2:
             corrupt_rows = all_rows[::2]
@@ -245,6 +258,14 @@ def benchmark_task(
             tier = "LOW"
         confidence_counts[tier] += 1
         if tier == "HIGH":
+            methods = {event.method for event in result.events
+                       if event.bout.start <= interval.start + interval.length - 1
+                       and event.bout.end >= interval.start}
+            method = next(iter(methods)) if len(methods) == 1 else "mixed"
+            method_counts[method] = method_counts.get(method, 0) + 1
+            values = method_values.setdefault(method, {name: [] for name in names})
+            for name in names:
+                values[name].extend(interval_values[name])
             high_interval_count[interval.length] += 1
             for name in names:
                 high_values[name].extend(interval_values[name])
@@ -279,9 +300,16 @@ def benchmark_task(
             validated_max = max_length
     gate = TaskGate(
         high_confidence_enabled=validated_max > 0,
-        validated_max_frames=validated_max)
+        validated_max_frames=validated_max,
+        endpoint_max_frames=(endpoint_trial_max if passes(
+            method_values.get("endpoint_se3", {name: [] for name in names}),
+            method_counts.get("endpoint_se3", 0)) else 0))
     return BenchmarkReport(
         task=str(task), seed=int(seed), intervals=len(selected),
         high_intervals=confidence_counts["HIGH"],
         anomaly_lengths=lengths, confidence_counts=confidence_counts,
-        metrics=metrics, metrics_all=metrics_all, gate=gate)
+        metrics=metrics, metrics_all=metrics_all, gate=gate,
+        methods={method: {"intervals": method_counts[method],
+                          "metrics": {name: asdict(_summary(values[name]))
+                                      for name in names}}
+                 for method, values in method_values.items()})

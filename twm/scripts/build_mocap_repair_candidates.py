@@ -195,7 +195,9 @@ def _load_task_gates(candidate_root: Path,
 
 
 def run_build(candidate_root: Path = DEFAULT_OUTPUT, *,
-              task_gates: dict[str, TaskGate] | None = None) -> CandidateBuild:
+              task_gates: dict[str, TaskGate] | None = None,
+              branch_review: bool = False,
+              require_loss_evidence: bool = False) -> CandidateBuild:
     candidate_root = Path(candidate_root).resolve()
     manifest = _load_pinned_manifest(candidate_root)
     gates = task_gates or _load_task_gates(candidate_root, manifest)
@@ -204,7 +206,8 @@ def run_build(candidate_root: Path = DEFAULT_OUTPUT, *,
         raise ValueError(f"task gates missing tasks: {sorted(missing)}")
     writer = CandidateWriter(
         Path(manifest.source_root), candidate_root, manifest,
-        task_gates=gates)
+        task_gates=gates, branch_review=branch_review,
+        require_loss_evidence=require_loss_evidence)
     build = writer.write_all()
     _atomic_json(candidate_root / "candidate_summary.json",
                  summarize_candidate(candidate_root))
@@ -293,7 +296,9 @@ def _parser() -> argparse.ArgumentParser:
     bench = sub.add_parser("benchmark")
     bench.add_argument("--max-intervals", type=int, default=300)
     bench.add_argument("--seed", type=int, default=0)
-    sub.add_parser("build")
+    build = sub.add_parser("build")
+    build.add_argument("--branch-review", action="store_true")
+    build.add_argument("--require-loss-evidence", action="store_true")
     review = sub.add_parser("review")
     review.add_argument("--render", action="store_true")
     review.add_argument("--review-root", type=Path)
@@ -318,7 +323,8 @@ def main(argv: list[str] | None = None) -> int:
                           for task, report in result.items()}, indent=2,
                          sort_keys=True))
     elif args.command == "build":
-        result = run_build(args.output)
+        result = run_build(args.output, branch_review=args.branch_review,
+                           require_loss_evidence=args.require_loss_evidence)
         print(f"episodes={len(result.episodes)} manifest={result.manifest_digest}")
     elif args.command == "review":
         result = run_review(
@@ -342,4 +348,3 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

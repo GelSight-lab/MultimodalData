@@ -58,6 +58,7 @@ def test_accurate_hundred_interval_benchmark_enables_high_confidence():
     assert report.high_intervals >= 100
     assert report.gate.high_confidence_enabled is True
     assert report.gate.validated_max_frames == 5
+    assert report.gate.endpoint_max_frames == 5
 
 
 def test_calibration_is_deterministic():
