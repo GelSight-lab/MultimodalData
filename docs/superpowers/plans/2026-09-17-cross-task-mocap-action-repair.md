@@ -259,7 +259,7 @@ git commit -m "feat: write provenance-safe mocap candidate trees"
 - Create: `twm/scripts/benchmark_mocap_repair.py`
 - Create: `tests/test_mocap_benchmark.py`
 
-- [ ] **Step 1: Write failing benchmark tests**
+- [x] **Step 1: Write failing benchmark tests**
 
 ```python
 def test_benchmark_reports_all_required_errors():
@@ -275,23 +275,23 @@ def test_calibration_is_deterministic():
     assert benchmark_task(clean, seed=7).to_dict() == benchmark_task(clean, seed=7).to_dict()
 ```
 
-- [ ] **Step 2: Run and verify RED**
+- [x] **Step 2: Run and verify RED**
 
 Run: `python -m pytest -q tests/test_mocap_benchmark.py`
 
 Expected: script module cannot be imported.
 
-- [ ] **Step 3: Implement deterministic masking benchmark**
+- [x] **Step 3: Implement deterministic masking benchmark**
 
 Select disjoint clean intervals by task, duration, and motion bin using a seeded generator. Replace intervals with observed wrong-branch and full-gap patterns, reconstruct without exposing truth, and report median/p95 pose plus native-action errors. Emit a versioned JSON task gate. Enable HIGH only for >=100 held-out intervals and thresholds <=2/10 mm pose, <=1/5 degree pose, <=5 mm native translation p95, and <=3 degree native rotation p95.
 
-- [ ] **Step 4: Run benchmark tests**
+- [x] **Step 4: Run benchmark tests**
 
 Run: `python -m pytest -q tests/test_mocap_benchmark.py tests/test_mocap_repair.py`
 
 Expected: all pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add twm/scripts/benchmark_mocap_repair.py tests/test_mocap_benchmark.py
