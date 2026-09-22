@@ -83,11 +83,11 @@ def test_without_a_task_the_half_finished_run_is_still_refused(tree):
 def test_the_cli_accepts_a_task(tree, monkeypatch):
     import sys
     seen = {}
-    def _fake(k, root, task=None):
+    def _fake(k, root, task=None, since=None, until=None):
         seen["task"] = task
         return {"n_episodes": 0, "n_sensor_sides": 0, "total_rows": 0}
     monkeypatch.setattr(EX, "run_export", _fake)
-    monkeypatch.setattr(EX, "verify", lambda root, task=None: {
+    monkeypatch.setattr(EX, "verify", lambda root, task=None, since=None, until=None: {
         "identity_pass": True, "alignment_pass": True, "alignment_rate": 1.0,
         "roundtrip_max_abs_err_n": 0.0, "force_only": False,
         "penetration_over_gel_thickness_frac": 0.0,

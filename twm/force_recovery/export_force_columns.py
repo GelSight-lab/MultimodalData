@@ -79,6 +79,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 from pathlib import Path
 
 import numpy as np
@@ -90,7 +91,15 @@ from .pipeline import STIFFNESS_N_PER_MM, penetration_mm
 from .run_episode import OUT_ROOT as FORCE_ROOT
 from .run_episode import STAGE_ROOT
 
-EXPORT_ROOT = Path("/media/yxma/Disk1/twm/release_force")
+# REDIRECTABLE BY ENVIRONMENT, like `STAGE_ROOT` and `FORCE_ROOT` beside it.
+# This used to be a bare literal, and the export stage runs OUT OF PROCESS
+# (`pipeline_stages.BY_NAME["export"]` is `python -m ...export_force_columns
+# export`, with no `--root`), so nothing a caller monkeypatched could reach it.
+# The end-to-end smoke test therefore wrote its synthetic rope/2026-09-20
+# episode into the real export tree and overwrote the run manifest with it --
+# and `upload_force_columns` publishes from here.
+EXPORT_ROOT = Path(os.environ.get("REACT_FORCE_EXPORT_ROOT",
+                                  "/media/yxma/Disk1/twm/release_force"))
 
 # Stiffness for ``penetration = F / k``.  NOT redeclared here: it comes from
 # ``pipeline.STIFFNESS_N_PER_MM``, itself derived from the single definition in
@@ -195,18 +204,31 @@ def direction_agreement(pose_xyz_mm: np.ndarray, n_hat: np.ndarray,
 # export
 
 
-def _episodes(task: str | None = None) -> list[tuple[str, str, str]]:
+def _in_window(date: str, since: str | None, until: str | None) -> bool:
+    return not ((since and date < since) or (until and date > until))
+
+
+def _episodes(task: str | None = None, since: str | None = None,
+              until: str | None = None) -> list[tuple[str, str, str]]:
     """(task, date, episode) for every release meta parquet, sorted.
 
-    `task` narrows it to one. Per TASK and not per episode on purpose: the
-    missing-npz refusal in `run_export` is what catches a half-finished force
-    run, and narrowing to individual episodes would let a partly computed task
-    through.
+    `task` narrows it to one; `since`/`until` narrow it to a date window.
+    Never to an individual episode: the missing-npz refusal in `run_export` is
+    what catches a half-finished force run, and a per-episode scope would let a
+    partly computed date through. Within the window that refusal still applies
+    in full, so the safety net survives the narrower scope.
+
+    The window exists for CLOSED ARCHIVES, which are a different thing from an
+    unfinished run. Some raw recordings no longer exist, so their force is
+    frozen below `MIN_PIPELINE_VERSION` and `build_side` refuses to ship it --
+    correctly, and forever. Without a date scope one such date made its whole
+    task permanently unexportable.
     """
     pattern = f"{task}/meta/*/*.parquet" if task else "*/meta/*/*.parquet"
     out = []
     for parquet in sorted(STAGE_ROOT.glob(pattern)):
-        out.append((parquet.parts[-4], parquet.parts[-2], parquet.stem))
+        if _in_window(parquet.parts[-2], since, until):
+            out.append((parquet.parts[-4], parquet.parts[-2], parquet.stem))
     return out
 
 
@@ -459,8 +481,9 @@ def export_episode(task: str, date: str, ep: str, stiffness: float | None,
 
 
 def run_export(stiffness: float | None = STIFFNESS_N_PER_MM,
-               root: Path = EXPORT_ROOT, task: str | None = None) -> dict:
-    episodes = _episodes(task)
+               root: Path = EXPORT_ROOT, task: str | None = None,
+               since: str | None = None, until: str | None = None) -> dict:
+    episodes = _episodes(task, since, until)
     have = {p.stem for p in FORCE_ROOT.glob("*/*/*.npz")}
     missing = [(t, d, e, s) for t, d, e in episodes for s in SIDES
                if f"{e}_{s}" not in have
@@ -472,21 +495,55 @@ def run_export(stiffness: float | None = STIFFNESS_N_PER_MM,
     for task, date, ep in episodes:
         out.append(export_episode(task, date, ep, stiffness, root))
         print(f"  {task}/{date}/{ep}  rows={out[-1]['rows']}")
+    # THE MANIFEST DESCRIBES THE TREE, NOT THE RUN. It used to be rebuilt from
+    # the episodes this call wrote, which with `--task` is a subset: exporting
+    # one task replaced the record of every other task. `upload_force_columns`
+    # ships this file to the Hub and records its sha256 as the receipt for what
+    # was pushed, so the truncation was published and then cited as evidence.
+    # Entries this run wrote replace their predecessors; entries for episodes
+    # still present under `root` are kept; entries whose parquet has left the
+    # tree are dropped, so the manifest can never name a file that is not there.
+    entries = {}
+    prior = root / "force_export_manifest.json"
+    if prior.is_file():
+        try:
+            for e in json.loads(prior.read_text()).get("episodes", []):
+                entries[(e["task"], e["date"], e["episode"])] = e
+        except (json.JSONDecodeError, KeyError, TypeError):
+            entries = {}          # unreadable: rebuild from what we can see
+    for o in out:
+        entries[(o["task"], o["date"], o["episode"])] = {
+            "task": o["task"], "date": o["date"], "episode": o["episode"],
+            "rows": o["rows"], "sides": o["sides"],
+            # per entry: a merged manifest spans runs, and a single top-level k
+            # would misdescribe an episode exported under `--force-only`
+            "stiffness_n_per_mm": stiffness,
+        }
+    kept = {k: e for k, e in entries.items()
+            if (root / k[0] / "meta" / k[1] / f"{k[2]}.parquet").is_file()}
+    episodes = [kept[k] for k in sorted(kept)]
+
     manifest = {
         "generator": "twm.force_recovery.export_force_columns",
         "stiffness_n_per_mm": stiffness,
         "gel_thickness_mm": GEL_THICKNESS_MM,
-        "n_episodes": len(out),
-        "n_sensor_sides": 2 * len(out),
-        "total_rows": sum(o["rows"] for o in out),
+        "n_episodes": len(episodes),
+        "n_sensor_sides": 2 * len(episodes),
+        "total_rows": sum(e["rows"] for e in episodes),
         "export_root": str(root),
-        "episodes": [{"task": o["task"], "date": o["date"],
-                      "episode": o["episode"], "rows": o["rows"],
-                      "sides": o["sides"]} for o in out],
+        "episodes": episodes,
     }
+    # only entries that actually carry a k: a legacy entry predating this field
+    # has an UNKNOWN stiffness, which is not the same as force-only's None
+    ks = {e["stiffness_n_per_mm"] for e in episodes
+          if "stiffness_n_per_mm" in e}
+    if len(ks) > 1:
+        # nothing hidden: the top-level value is this run's, and the spread is
+        # stated so a reader cannot take it for the whole tree
+        manifest["stiffness_n_per_mm_spread"] = sorted(
+            ks, key=lambda v: (v is None, v))
     root.mkdir(parents=True, exist_ok=True)
-    (root / "force_export_manifest.json").write_text(
-        json.dumps(manifest, indent=2))
+    prior.write_text(json.dumps(manifest, indent=2))
     return manifest
 
 
@@ -496,6 +553,58 @@ def run_export(stiffness: float | None = STIFFNESS_N_PER_MM,
 
 def _pct(a: np.ndarray, q) -> tuple:
     return tuple(float(x) for x in np.percentile(a, q))
+
+
+def rebuild_manifest(root: Path = EXPORT_ROOT) -> dict:
+    """Rebuild `force_export_manifest.json` from the per-episode sidecars.
+
+    A manifest overwritten by a pre-merge scoped run has lost the entries it
+    dropped, and merging cannot bring back what is no longer in the file. The
+    entries are recoverable because `export_episode` writes `<ep>.force.json`
+    beside every parquet with the same task/date/episode/rows/sides/stiffness.
+    Reading them back is a reproducible repair, which the published receipt
+    deserves: `upload_force_columns` ships this file and cites its sha256.
+
+    A sidecar whose parquet has left the tree is ignored, so the rebuilt
+    manifest names only files that are actually there.
+    """
+    episodes = []
+    for side in sorted(root.glob("*/meta/*/*.force.json")):
+        parquet = side.with_name(side.name[:-len(".force.json")] + ".parquet")
+        if not parquet.is_file():
+            continue
+        try:
+            j = json.loads(side.read_text())
+        except json.JSONDecodeError:
+            continue
+        episodes.append({
+            "task": j.get("task", side.parts[-4]),
+            "date": j.get("date", side.parts[-2]),
+            "episode": j.get("episode", parquet.stem),
+            "rows": j["rows"], "sides": j["sides"],
+            "stiffness_n_per_mm": j.get("stiffness_n_per_mm"),
+        })
+    episodes.sort(key=lambda e: (e["task"], e["date"], e["episode"]))
+    ks = {e["stiffness_n_per_mm"] for e in episodes}
+    manifest = {
+        "generator": "twm.force_recovery.export_force_columns",
+        "rebuilt_from": "per-episode .force.json sidecars",
+        "stiffness_n_per_mm": ks.pop() if len(ks) == 1 else None,
+        "gel_thickness_mm": GEL_THICKNESS_MM,
+        "n_episodes": len(episodes),
+        "n_sensor_sides": 2 * len(episodes),
+        "total_rows": sum(e["rows"] for e in episodes),
+        "export_root": str(root),
+        "episodes": episodes,
+    }
+    if len(ks) >= 1:     # more than one distinct k survived the pop above
+        manifest["stiffness_n_per_mm_spread"] = sorted(
+            {e["stiffness_n_per_mm"] for e in episodes},
+            key=lambda v: (v is None, v))
+    root.mkdir(parents=True, exist_ok=True)
+    (root / "force_export_manifest.json").write_text(
+        json.dumps(manifest, indent=2))
+    return manifest
 
 
 def orphan_force_files(root: Path = EXPORT_ROOT,
@@ -520,12 +629,21 @@ def orphan_force_files(root: Path = EXPORT_ROOT,
     return out
 
 
-def verify(root: Path = EXPORT_ROOT, task: str | None = None) -> dict:
+def verify(root: Path = EXPORT_ROOT, task: str | None = None,
+           since: str | None = None, until: str | None = None) -> dict:
     """Re-read the exported parquets and check every claim, with numbers."""
     manifest = json.loads((root / "force_export_manifest.json").read_text())
     k = manifest["stiffness_n_per_mm"]
-    files = sorted(root.glob(
+    # The manifest describes the TREE and can span runs, so an episode may have
+    # been exported at a different k than this run's -- or, under --force-only,
+    # at none. Use the value the entry was written with; the top-level is only
+    # the fallback for entries from before the merge carried one per episode.
+    k_by_ep = {(e["task"], e["date"], e["episode"]): e["stiffness_n_per_mm"]
+               for e in manifest.get("episodes", [])
+               if "stiffness_n_per_mm" in e}
+    files = [f for f in sorted(root.glob(
         f"{task}/meta/*/*.parquet" if task else "*/meta/*/*.parquet"))
+        if _in_window(f.parts[-2], since, until)]
     orphans = set(orphan_force_files(root))
     if orphans:
         print(f"[verify] {len(orphans)} force file(s) whose source episode has "
@@ -571,8 +689,9 @@ def verify(root: Path = EXPORT_ROOT, task: str | None = None) -> dict:
                                np.float64)
                 # DexForce consistency: an impedance controller at k sitting on
                 # the observed pose with this target exerts exactly the force.
+                k_ep = k_by_ep.get((task, date, ep), k)
                 roundtrip.append(float(np.abs(
-                    k * np.linalg.norm(tgt[:, :3] - pose[:, :3], axis=1)
+                    k_ep * np.linalg.norm(tgt[:, :3] - pose[:, :3], axis=1)
                     * 1000.0 - col).max()))
                 ident_rows += int(free.sum())
                 if free.any():
@@ -864,7 +983,8 @@ def _gate(report: dict) -> int:
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("command", choices=["export", "verify", "digest"])
+    ap.add_argument("command",
+                    choices=["export", "verify", "digest", "rebuild-manifest"])
     ap.add_argument("--stiffness", type=float, default=STIFFNESS_N_PER_MM,
                     help="N/mm used for penetration = force / k")
     ap.add_argument("--force-only", action="store_true",
@@ -876,6 +996,16 @@ def main() -> int:
                          "shipped k=2 N/mm the 4.25 mm gel gate caps usable "
                          "force at 8.5 N.")
     ap.add_argument("--root", type=Path, default=EXPORT_ROOT)
+    ap.add_argument("--since", default=None, metavar="DATE",
+                    help="skip dates before this. For CLOSED ARCHIVES whose "
+                         "raw H5 is gone: their force is frozen below "
+                         "pipeline_version %d and can never be re-run, and "
+                         "without a date scope one such date makes its whole "
+                         "task unexportable. The missing-npz refusal still "
+                         "applies in full inside the window."
+                         % MIN_PIPELINE_VERSION)
+    ap.add_argument("--until", default=None, metavar="DATE",
+                    help="skip dates after this")
     ap.add_argument("--task", default=None,
                     help="export only this task. The whole-tree run refuses if "
                          "ANY sensor-side lacks an npz, so a finished task "
@@ -885,20 +1015,28 @@ def main() -> int:
     args = ap.parse_args()
     k = None if args.force_only else args.stiffness
     if args.command == "export":
-        m = run_export(k, args.root, task=args.task)
+        m = run_export(k, args.root, task=args.task,
+                       since=args.since, until=args.until)
         # verify the same scope that was just written; a whole-tree verify
         # after a scoped export walks parquets this run never touched
 
         print(f"\nwrote {m['n_episodes']} episodes / "
               f"{m['n_sensor_sides']} sensor-sides / {m['total_rows']} rows "
               f"to {args.root}")
-        rep = verify(args.root, task=args.task)
+        rep = verify(args.root, task=args.task,
+                     since=args.since, until=args.until)
         _print(rep)
         return _gate(rep)
     elif args.command == "verify":
-        rep = verify(args.root)
+        rep = verify(args.root, task=args.task,
+                     since=args.since, until=args.until)
         _print(rep)
         return _gate(rep)
+    elif args.command == "rebuild-manifest":
+        m = rebuild_manifest(args.root)
+        print(f"rebuilt from sidecars: {m['n_episodes']} episodes / "
+              f"{m['total_rows']} rows -> {args.root}")
+        return 0
     print(digest(args.root))
     return 0
 

@@ -144,6 +144,7 @@ def test_the_chain_runs_from_a_raw_recording_to_a_cut_segment(sandbox, monkeypat
         "REACT_DATA_ROOT": str(sandbox / "data"),
         "REACT_STAGE_ROOT": str(sandbox / "release"),
         "REACT_FORCE_RECOVERY_ROOT": str(sandbox / "force_recovery"),
+        "REACT_FORCE_EXPORT_ROOT": str(sandbox / "release_force"),
     }
     import os
     for k, v in env.items():
@@ -194,6 +195,11 @@ def test_the_stages_after_build_run_in_an_order_that_works(sandbox, monkeypatch)
     monkeypatch.setattr(PS, "SCOPE_SINCE", "2026-09-20")
     for k, v in (("REACT_DATA_ROOT", "data"), ("REACT_STAGE_ROOT", "release"),
                  ("REACT_FORCE_RECOVERY_ROOT", "force_recovery"),
+                 # the export stage runs out of process and passes no --root,
+                 # so without this its OUTPUT lands in the production tree.
+                 # It did: rope/2026-09-20 sat in the real release_force with
+                 # a sidecar naming this test's tmp dir as its source.
+                 ("REACT_FORCE_EXPORT_ROOT", "release_force"),
                  ("REACT_RELEASE", "release")):
         monkeypatch.setenv(k, str(sandbox / v))
 
