@@ -66,21 +66,42 @@ def test_every_declared_session_names_a_real_epoch_directory():
         assert epoch_of(task, date=date) == CALIB_SESSIONS[(task, date)]
 
 
-def test_the_recorded_sessions_on_disk_are_all_declared():
-    """A session that exists in the release but not here is exactly the gap
-    this table closes."""
+def test_every_recorded_session_resolves_to_an_epoch():
+    """A session in the release whose epoch cannot be RESOLVED is the gap this
+    table closes -- not merely one that lacks a hand-written line.
+
+    This used to demand an explicit `CALIB_SESSIONS` entry per recording day.
+    The operator decision of 2026-09-15 retired that: a session dated on or
+    after `CURRENT_EPOCH` resolves through the current solve, because the live
+    recorder built its own overlay from that solve, so the recording was made
+    THROUGH it. That is a fact about how the rig ran, not a guess from the
+    calendar, which is why it is allowed where inference is not.
+
+    A session dated BEFORE the current solve still has to be declared, and
+    `session_epoch` still raises for it. That refusal is what this test keeps:
+    it asserts resolution, so both the declared and the defaulted paths pass
+    and an unresolvable session fails. On 2026-09-22 the old form failed on
+    pushT/2026-09-17 -- a session that resolves correctly to 2026-09-09, the
+    same epoch as every one of its declared neighbours.
+    """
     import json
     from pathlib import Path
+    from twm.calib_epoch import session_epoch
     root = Path("/media/yxma/Disk1/twm/release")
     if not root.is_dir():
         pytest.skip("release tree not on this machine")
+    unresolved = []
     for task in ("motherboard", "pushT"):
         jsonl = root / task / "episodes.jsonl"
         if not jsonl.is_file():
             continue
         dates = {json.loads(line)["date"] for line in jsonl.read_text().splitlines() if line.strip()}
-        undeclared = sorted(d for d in dates if (task, d) not in CALIB_SESSIONS)
-        assert not undeclared, f"{task}: undeclared sessions {undeclared}"
+        for d in sorted(dates):
+            try:
+                session_epoch(task, d)
+            except Exception as e:
+                unresolved.append(f"{task}/{d}: {e}")
+    assert not unresolved, "sessions with no resolvable epoch: " + "; ".join(unresolved)
 
 
 def test_the_status_line_names_the_session_epoch_not_the_task_default():
