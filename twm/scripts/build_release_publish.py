@@ -317,7 +317,8 @@ def force_overlay_plan(stage, force_stage, tasks, since: str = SCOPE_SINCE):
 
 
 def check_no_column_loss(api, tasks, published_only: bool = False,
-                         allow_dropping=frozenset()) -> list[str]:
+                         allow_dropping=frozenset(),
+                         since: str | None = None) -> list[str]:
     """No upload may leave a published parquet with FEWER columns than it has.
 
     THIS PUBLISHER SILENTLY REVERTED THE FORCE CHANNEL. Two staging trees
@@ -335,6 +336,16 @@ def check_no_column_loss(api, tasks, published_only: bool = False,
     `upload_force_columns.check_superset` has asked exactly this since it was
     written. The publisher never did. It does now, for every parquet it is
     about to overwrite.
+
+    `since` is what "about to overwrite" means. `scoped_patterns` applies the
+    window to every parquet upload, `force_overlay_plan` skips dates below it,
+    and the only deletes are legacy `.pt` paths outside `data/` -- so a run
+    cannot touch a published parquet dated before it. Walking the whole tree
+    anyway refused the pushT/2026-09-17 publish over 68 segments from 09-10 to
+    09-15, whose local copies really do hold fewer columns than the published
+    ones (the action channel comes from another branch) but which that run
+    would neither upload nor delete. Passing no window keeps the old,
+    whole-tree behaviour.
     """
     import pyarrow.parquet as pq
     from huggingface_hub import hf_hub_download
@@ -350,6 +361,8 @@ def check_no_column_loss(api, tasks, published_only: bool = False,
     bad = []
     for task in tasks:
         for local in sorted((STAGE / task).rglob("meta/*/*.parquet")):
+            if since and local.parent.name < since:
+                continue                      # this run cannot overwrite it
             rel = f"data/{task}/" + str(local.relative_to(STAGE / task))
             if rel not in published:
                 continue                      # new file: nothing to lose
@@ -447,7 +460,8 @@ def main():
 
     print("[gate] no published column would be lost ...", flush=True)
     tasks = (args.task,) if args.task else TASKS
-    lost = check_no_column_loss(api, tasks, allow_dropping=withdraw)
+    lost = check_no_column_loss(api, tasks, allow_dropping=withdraw,
+                                since=args.since)
     if lost:
         for b in lost[:20]:
             print("   ", b)
