@@ -1,5 +1,13 @@
 # Force estimation: what a 15 N recalibration should collect, and why
 
+Update, 2026-09-16: the subsequent [model search](2026-09-16-force-model-search-results.md)
+reached 0.305 N on the round holdout and 0.288 N on held-out positions across
+six trained shapes using image/depth features and ridge regression. These
+replace the earlier in-distribution expectations below. Direct PushT transfer
+failed the output-distribution checks; actual React sensor calibration remains
+necessary to establish its absolute force accuracy. The analysis below records
+the earlier five-feature estimator.
+
 Written 2026-09-16 for whoever runs the recalibration. Every number below was
 measured on the existing calibration cache
 (`force_recovery/feature_cache/glowtact_round_mm.json`, 477 presses), not
