@@ -108,9 +108,58 @@ EPS_POSE_BIT = 1e-7
 # frames is bracketed by two hot boundaries; magenta row fill, that off-gamut
 # colour is laid out in scanlines rather than around a contact patch.
 CAM_SCAN_W, CAM_SCAN_H = 160, 120
-CAM_SPIKE_ABS = 25.0          # a frame-to-frame diff this hot is a boundary
-CAM_SPIKE_REL = 4.0           # ... and > REL * median + 5 (motion-adaptive)
+CAM_SPIKE_ABS = 25.0          # floor, for a camera so still its median is ~0
+CAM_SPIKE_REL = 18.0          # ... else REL * median + 5 (motion-adaptive)
 CAM_BURST_MAX = 15            # two boundaries <= this far apart bracket a burst
+
+
+def cam_burst_threshold(median: float) -> float:
+    """How hot a frame-to-frame difference has to be to bound a burst.
+
+    `CAM_SPIKE_REL` was 4.0, calibrated on the three STATIC scene cameras. For
+    them the floor decides: their median is about 1.1, so 4*1.1+5 = 9.4 loses
+    to 25.0, which sits 23x above their median and 2.6x above the worst frame
+    of a whole toy episode. Scene motion cannot reach it.
+
+    The wrist cameras ride the hand, and the same numbers put the threshold ON
+    the 99th percentile of their own motion. Measured on
+    toy/2026-09-17/episode_006:
+
+        stream        median   p99    p99.9   max    old threshold
+        view_middle     1.08    4.7     6.0    9.6       25.0
+        wrist_left      3.28   25.3    33.3   40.0       25.0
+        wrist_right     6.81   34.3    51.8   64.8       32.2
+
+    A real tear is an outlier far from the bulk. These maxima are 1.6-2.0x the
+    threshold with the percentiles rising smoothly through it, which is the
+    tail of one distribution rather than a second one. The tail being cut is
+    ordinary fast hand motion, and cutting it cost toy 9,923 of its 15,608 bad
+    frames -- publishable yield 15.8% against 92.7%, 13.0 minutes against
+    76.4, with three episodes reduced to no segments at all. One of them was
+    reviewed by eye and had nothing wrong with it.
+
+    The multiplier is set from the ratio each stream's WORST frame bears to
+    its own median, measured across four episodes and two tasks rather than
+    fitted to the one that prompted this:
+
+        scene cameras   max/median  3.2 - 9.9   (12 streams)
+        wrist cameras   max/median  9.0 - 17.3  (8 streams)
+
+    A camera on the hand has a motion tail about twice as long as a fixed one,
+    which is the whole asymmetry. 15.4 would put every observed wrist maximum
+    just under the line; 18.0 leaves margin for a faster episode than any of
+    these. The static case is untouched -- for a median of 1.1 the 25.0 floor
+    still wins, and the scene cameras' worst frame in these episodes is 11.0.
+
+    pushT has the same shape (wrist max/median 16.2 and 17.3) and was saved
+    only by its lower median, where the floor decided. Its published yield was
+    never affected, so this widens a threshold it never reached.
+
+    A tear is still caught: it moves the frame mean by tens of units in one
+    frame, against neighbours that differ by a few, so it stands far outside
+    the motion tail on any camera.
+    """
+    return max(CAM_SPIKE_ABS, CAM_SPIKE_REL * float(median) + 5.0)
 GEL_MAGENTA_MARGIN = 50       # R and B this far above G = off-illumination
 GEL_MAGENTA_ROWFILL = 0.25    # widest magenta row, as a fraction of image width.
                               # Nine labelled tears: 0.725-1.000. A probe tip
@@ -325,7 +374,7 @@ def detect_video_corruption(video_dir, T: int, cache=None) -> dict[str, list[lis
         # because its interior diffs are calm and each boundary is hot one
         # way only. Two hot boundaries close together bracket the anomalous
         # run; an unpaired boundary is scene motion and is ignored.
-        thr = max(CAM_SPIKE_ABS, CAM_SPIKE_REL * med + 5)
+        thr = cam_burst_threshold(med)
         hot = [int(i) for i in np.where(fmean > thr)[0]]   # diff k -> k+1
         ev += [(b1 + 1, b2) for b1, b2 in zip(hot, hot[1:])
                if b2 - b1 <= CAM_BURST_MAX]
