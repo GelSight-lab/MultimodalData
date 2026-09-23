@@ -43,6 +43,7 @@ from __future__ import annotations
 import os as _os
 
 import json
+import warnings
 import re
 from functools import lru_cache
 from pathlib import Path
@@ -615,3 +616,96 @@ def world_residual(task: str, date: str) -> dict:
     return dict(WORLD_RESIDUAL.get(date, {"tilt_deg": 0.0, "yaw_deg": 0.0,
                                           "yaw_applied": False,
                                           "in_plane_mm": None}))
+
+# --------------------------------------------------------------------------
+# which physical sensors an epoch was solved with
+
+
+SENSORS_FILE = "sensors.json"
+
+
+def epoch_sensors(epoch_dir) -> dict | None:
+    """The GelSight serials this epoch was measured with, or None if unstated.
+
+    `T_gel_to_rigid_<side>.json` describes where the gel surface sits inside
+    the tracked rigid body. That geometry belongs to a PHYSICAL UNIT: swap the
+    sensor and the answer changes, while the file keeps saying the old one.
+
+    Nothing caught that, because no file on either side named a serial. The
+    rig has always recorded what it used -- `recorder.schema` writes
+    `metadata.attrs["gelsight_serials"]` into every HDF5 -- so the missing
+    half was the epoch's own declaration.
+
+    None means UNSTATED, never "matches". Every epoch solved before this
+    existed declares nothing, and reading silence as agreement is the failure
+    this is here to end.
+    """
+    from pathlib import Path
+    p = Path(epoch_dir) / SENSORS_FILE
+    if not p.is_file():
+        return None
+    try:
+        d = json.loads(p.read_text())
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(d, dict):
+        return None
+    # keys starting with _ are commentary for whoever opens the file, not
+    # sensor sides; returning them would make a side appear that has no unit
+    return {k: str(v) for k, v in d.items() if not k.startswith("_")}
+
+
+def check_sensors(epoch_dir, recorded_serials, *, strict: bool = False) -> None:
+    """Report when a recording's sensors are not the ones the epoch was solved on.
+
+    WARNS by default; `strict` raises. That default is the measured answer,
+    not caution. What a swap can move is bounded:
+
+      * force VALUES are untouched. They come from photometric reconstruction
+        of the gel image and never read this transform.
+      * the projection overlay and `force_<side>_target_pose` DIRECTION do read
+        it -- the target is `pose + (F/k) * R(q) @ gel_axis`.
+
+    And the size of that: `gelball_mean_deviation_mm` in this very file is
+    0.72 with a 1.04 max, and `axis_max_angle_deg` is 1.07. A same-model unit
+    in the same mount differs by manufacturing tolerance, plausibly under the
+    calibration's own repeatability. One degree of axis error at the 7.5 mm
+    displacement a 15 N reading produces is 0.13 mm of lateral offset.
+
+    The rig's own history says the same: epoch_2026-05-12, epoch_2026-06-26
+    and epoch_2026-09-09 ship a BYTE-IDENTICAL T_gel_to_rigid_right, across a
+    period that already included a sensor replacement. Refusing on a mismatch
+    would impose a standard this project has never held itself to, and would
+    block three usable episodes over an error smaller than the measurement.
+
+    What the mismatch is genuinely worth is a record: the operator should know
+    which recordings were made on which unit, so that IF a projection ever
+    looks off, the swap is the first thing to check rather than a mystery.
+
+    `recorded_serials` is `metadata.attrs["gelsight_serials"]` as written by
+    the recorder: left first, then right. An epoch that declares nothing
+    passes silently -- every epoch solved before this existed declares
+    nothing, and reading that silence as a mismatch would flag the library.
+    """
+    declared = epoch_sensors(epoch_dir)
+    if declared is None:
+        return
+    got = [str(x) for x in recorded_serials]
+    seen = dict(zip(("left", "right"), got))
+    bad = [(side, declared[side], seen.get(side))
+           for side in ("left", "right")
+           if side in declared and seen.get(side) != declared[side]]
+    if not bad:
+        return
+    detail = "; ".join(
+        f"{side}: epoch solved with {want}, recording used {got_}"
+        for side, want, got_ in bad)
+    msg = (f"{epoch_dir}: sensor mismatch — {detail}. Force VALUES are "
+           f"unaffected (reconstruction never reads this transform). What "
+           f"moves is the projection overlay and the DIRECTION of "
+           f"force_<side>_target_pose, by an amount this calibration's own "
+           f"consistency (0.72 mm mean, 1.07 deg axis) does not clearly "
+           f"exceed. Re-solve the epoch if a projection looks wrong.")
+    if strict:
+        raise ValueError(msg)
+    warnings.warn(msg, RuntimeWarning, stacklevel=2)
