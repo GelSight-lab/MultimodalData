@@ -32,11 +32,18 @@ GELSIGHT_SERIALS: Dict[str, str] = {
     # serial has been on this rig before. 28YGZL6K is the other spare and is
     # not attached. LEFT has not moved since 2026-09-06.
     #
-    # A swap invalidates that sensor's gel calibration: `T_gel_to_rigid_right`
-    # describes where the gel surface sits in the tracked body, and a new unit
-    # does not sit where the old one did. Recordings made after this line
-    # changed need an epoch whose right-hand solve was measured with THIS
-    # unit, or their projections and force targets point at the wrong place.
+    # A swap does NOT invalidate the force channel. Force comes from
+    # photometric reconstruction of the gel image and never reads
+    # `T_gel_to_rigid_<side>`. What that transform feeds is the projection
+    # overlay and the DIRECTION of `force_<side>_target_pose`, and its own
+    # `consistency` block bounds the error: 0.72 mm mean gelball deviation,
+    # 1.07 deg axis. One degree at the 7.5 mm displacement a 15 N reading
+    # produces is 0.13 mm -- under the calibration's own repeatability for a
+    # same-model unit in the same mount. epoch_2026-05-12, epoch_2026-06-26
+    # and epoch_2026-09-09 in fact ship a byte-identical
+    # T_gel_to_rigid_right across a period that already contained a swap.
+    # `calib_epoch.check_sensors` warns on a mismatch; judge by whether a
+    # projection looks wrong, not by whether the serial changed.
     "left": "2DUPB53G",
     "right": "2BGLKZNT",
 }
