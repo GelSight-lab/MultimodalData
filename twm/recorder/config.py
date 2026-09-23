@@ -26,10 +26,19 @@ def realsense_position(serial: str) -> str:
 
 
 GELSIGHT_SERIALS: Dict[str, str] = {
-    # The units on the rig as of 2026-09-06 (confirmed by the operator).
-    # 28YGZL6K / 2BGLKZNT were the 2026-08-07 replacements; not attached now.
+    # The units on the rig as of 2026-09-22 (confirmed by the operator).
+    # RIGHT was swapped on 2026-09-22: 2BKRDTAD failed and came off the rig;
+    # 2BGLKZNT went on in its place -- one of the 2026-08-07 spares, so this
+    # serial has been on this rig before. 28YGZL6K is the other spare and is
+    # not attached. LEFT has not moved since 2026-09-06.
+    #
+    # A swap invalidates that sensor's gel calibration: `T_gel_to_rigid_right`
+    # describes where the gel surface sits in the tracked body, and a new unit
+    # does not sit where the old one did. Recordings made after this line
+    # changed need an epoch whose right-hand solve was measured with THIS
+    # unit, or their projections and force targets point at the wrong place.
     "left": "2DUPB53G",
-    "right": "2BKRDTAD",
+    "right": "2BGLKZNT",
 }
 DATA_DIR = Path("/media/yxma/Disk1/twm/data")
 FPS = 30
