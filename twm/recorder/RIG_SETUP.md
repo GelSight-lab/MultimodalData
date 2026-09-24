@@ -101,3 +101,20 @@ python -m twm.visualize /path/to/a/closed_episode.h5
 `validate` reports what the file actually contains. The viewer's projection
 overlay is the fastest way to catch a wrong camera mapping or a stale
 calibration: the gel centre should sit on the gel in all three views.
+
+## 6. Two things that will bite you on a fresh machine
+
+**The recorder tests need room on /tmp.** Each e2e case writes a synthetic
+recording of a few hundred MB, and pytest keeps the last three runs. A session
+that runs them repeatedly filled a 469 GB root partition to 98% here, and the
+next run failed with ENOSPC reported as a test failure. Point them elsewhere:
+
+```bash
+TMPDIR=/path/with/room python -m pytest tests/recorder/ -q     --basetemp=/path/with/room/pytest
+```
+
+**`test_run_headless_records_a_valid_episode` is load-sensitive.** It asserts a
+60 fps tick holds within 10%, so anything else saturating the CPU fails it on
+timing alone — measured here at 24-27 ms median against 16.67 expected, while
+the writer itself was fine at 248 MB/s with the queue at 2.6%. Run it on an
+idle machine before believing a failure.
