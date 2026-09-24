@@ -81,19 +81,30 @@ def collect(folder: str, keys: list[str], fetch) -> dict:
     tree to read), and local parquets rewritten after upload. Reading the
     published copy makes the figure incapable of describing anything else.
     """
-    o = dict(segs=0, frames=0, f=[], cL=0, cR=0, both=0, newL=0, srcs=set())
+    o = dict(segs=0, frames=0, f=[], cL=0, cR=0, both=0, newL=0, srcs=set(),
+             no_force=False)
     for key in keys:
         date, ep = key.split("/")
         t = pq.read_table(fetch(f"data/{folder}/meta/{date}/{ep}.parquet"))
         col = lambda c: np.asarray(t.column(c).to_numpy(zero_copy_only=False), float)
-        fl, fr = col("force_left_normal_n"), col("force_right_normal_n")
-        n = len(fl)
+        # A task may publish without force — `toy` does, while a new estimator
+        # is written. Zero-filling would be WORSE than the crash this replaces:
+        # panels B and C are derived from force alone, and a zero-filled task
+        # appears on the figure as one that never makes contact. That is a
+        # claim about the data, and it would be false. So the absence
+        # propagates and the force-derived panels leave the task out.
+        has_force = "force_left_normal_n" in t.column_names
+        if not has_force:
+            o["no_force"] = True
+        n = t.num_rows
         o["segs"] += 1
         o["frames"] += n
-        o["f"].append(np.concatenate([fl, fr]))
-        o["cL"] += int((fl > CONTACT_N).sum())
-        o["cR"] += int((fr > CONTACT_N).sum())
-        o["both"] += int(((fl > CONTACT_N) & (fr > CONTACT_N)).sum())
+        if has_force:
+            fl, fr = col("force_left_normal_n"), col("force_right_normal_n")
+            o["f"].append(np.concatenate([fl, fr]))
+            o["cL"] += int((fl > CONTACT_N).sum())
+            o["cR"] += int((fr > CONTACT_N).sum())
+            o["both"] += int(((fl > CONTACT_N) & (fr > CONTACT_N)).sum())
         o["newL"] += int(np.asarray(
             t.column("tactile_left_is_new").to_numpy(zero_copy_only=False)).sum())
         o["srcs"].add(f"{date}/{_SEG.sub('', ep)}")
@@ -101,6 +112,19 @@ def collect(folder: str, keys: list[str], fetch) -> dict:
 
 
 def summarise(o: dict) -> dict:
+    # A force-free task still has scale and tactile validity — what it does not
+    # have is anything the force-derived fields could honestly report. They come
+    # back None rather than 0, so a consumer that plots them leaves the task out
+    # instead of drawing it as one that never makes contact.
+    if o.get("no_force") or not o["f"]:
+        return dict(
+            segs=o["segs"], sources=len(o["srcs"]),
+            minutes=o["frames"] / 1800, frames=o["frames"],
+            no_force=True,
+            contact_frames=None, sat_pct=None,
+            contact_pct_L=None, contact_pct_R=None, both_pct=None,
+            new_pct=o["newL"] / o["frames"] * 100,
+            f_q=None, f_ecdf_x=None, f_ecdf_y=None)
     f = np.concatenate(o["f"])
     c = f[f > CONTACT_N]
     saturated = c >= CEILING_N - 1e-6
@@ -108,6 +132,7 @@ def summarise(o: dict) -> dict:
     return dict(
         segs=o["segs"], sources=len(o["srcs"]),
         minutes=o["frames"] / 1800, frames=o["frames"],
+        no_force=False,
         contact_frames=int(len(c)),
         sat_pct=float(saturated.mean() * 100),
         contact_pct_L=o["cL"] / o["frames"] * 100,
