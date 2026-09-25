@@ -1,0 +1,90 @@
+"""`python -m twm.recorder run|soak|bench|validate|integrity ...`."""
+from __future__ import annotations
+
+import argparse
+import json
+import logging
+import sys
+from pathlib import Path
+
+from twm.recorder.config import WriterConfig, build_parser, config_from_namespace
+from twm.recorder.preflight import check_write_bandwidth
+
+
+def _configure_logging() -> None:
+    from twm.recorder.app import configure_logging
+    configure_logging()
+
+
+def main(argv=None) -> int:
+    argv = list(sys.argv[1:] if argv is None else argv)
+    if argv and argv[0] == "soak":
+        from twm.recorder.app import run_headless
+        p = build_parser()
+        p.add_argument("--duration", type=float, required=True,
+                       help="Recording duration in seconds.")
+        a = p.parse_args(argv[1:])
+        if a.duration <= 0:
+            p.error("--duration must be positive")
+        cfg = config_from_namespace(a)
+        _configure_logging()
+        try:
+            return run_headless(cfg, a.duration)
+        except KeyboardInterrupt:
+            # recorder.close() (in run_headless's finally) already finalized
+            # the open episode; a bare Ctrl-C exit code beats a traceback.
+            return 130
+    if argv and argv[0] == "bench":
+        p = argparse.ArgumentParser(prog="python -m twm.recorder bench",
+                                    description="Measure sustained writer throughput "
+                                                "into a directory using the real HDF5 path.")
+        p.add_argument("--dir", required=True)
+        p.add_argument("--seconds", type=float, default=5.0)
+        p.add_argument("--fps", type=int, default=30)
+        p.add_argument("--margin", type=float, default=1.5)
+        p.add_argument("--arducams", type=int, default=2)
+        a = p.parse_args(argv[1:])
+        r = check_write_bandwidth(Path(a.dir), a.fps, a.seconds, a.margin, WriterConfig(),
+                                  n_arducam=a.arducams)
+        print(("ok   " if r.ok else "FAIL ") + r.detail)
+        return 0 if r.ok else 1
+    if argv and argv[0] == "validate":
+        from twm.recorder.validate import validate_episode
+        p = argparse.ArgumentParser(prog="python -m twm.recorder validate",
+                                    description="Validate a recorded episode's format, "
+                                                "timing, and content.")
+        p.add_argument("path")
+        p.add_argument("--fps", type=int, default=None,
+                       help="Expected recording fps; defaults to metadata.attrs['fps'].")
+        p.add_argument("--expected-duration", type=float, default=None)
+        p.add_argument("--max-tick-gap", type=float, default=0.5)
+        p.add_argument("--warmup-frames", type=int, default=10)
+        p.add_argument("--report", default=None,
+                       help="Also write the JSON report to this path.")
+        a = p.parse_args(argv[1:])
+        report = validate_episode(a.path, fps=a.fps, expected_duration=a.expected_duration,
+                                  max_tick_gap_s=a.max_tick_gap,
+                                  warmup_frames=a.warmup_frames)
+        text = json.dumps(report.to_dict(), indent=2)
+        print(text)
+        if a.report:
+            report_path = Path(a.report)
+            report_path.parent.mkdir(parents=True, exist_ok=True)
+            report_path.write_text(text)
+        return 0 if report.ok else 1
+    if argv and argv[0] == "integrity":
+        from twm.recorder.integrity import main as integrity_main
+        return integrity_main(argv[1:])
+    if argv and argv[0] == "run":
+        argv = argv[1:]
+    from twm.recorder.app import main as run_main
+    try:
+        return run_main(argv)
+    except KeyboardInterrupt:
+        # Recorder.close() has already finalized the open episode by the
+        # time a KeyboardInterrupt reaches here; exit cleanly instead.
+        return 130
+
+
+if __name__ == "__main__":
+    sys.exit(main())

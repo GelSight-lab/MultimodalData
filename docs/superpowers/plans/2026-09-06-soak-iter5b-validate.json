@@ -1,0 +1,72 @@
+{
+  "path": "/media/yxma/Disk1/twm/data/soak_test/2026-09-06/episode_000.h5",
+  "ok": true,
+  "checks": [
+    {
+      "name": "metadata",
+      "ok": true,
+      "detail": "valid=True, ended_by=operator, frame_count=17839, gap_count=0"
+    },
+    {
+      "name": "shapes",
+      "ok": true,
+      "detail": "17 dataset(s) match (T=17839) and expected dtype"
+    },
+    {
+      "name": "tick_rate",
+      "ok": true,
+      "detail": "median dt 33.46 ms, max dt 120.60 ms, late 0.17% (31 tick(s))"
+    },
+    {
+      "name": "duration",
+      "ok": true,
+      "detail": "T=17839 >= required 0.97 x (600.0s x 30fps - 10 warmup) = 17450.3"
+    },
+    {
+      "name": "sensor_sync",
+      "ok": true,
+      "detail": "gelsight/left: lag [18.9, 182.7] ms, 17.0 Hz distinct; gelsight/right: lag [18.2, 163.3] ms, 17.0 Hz distinct; arducam/cam0: lag [0.2, 44.2] ms, 29.7 Hz distinct; arducam/cam1: lag [0.1, 46.4] ms, 29.7 Hz distinct"
+    },
+    {
+      "name": "content",
+      "ok": true,
+      "detail": "realsense/cam0/color (min std 56.74, 19/19 differ); realsense/cam0/depth (min std 525.29, 19/19 differ); realsense/cam1/color (min std 46.35, 19/19 differ); realsense/cam1/depth (min std 304.92, 19/19 differ); realsense/cam2/color (min std 27.65, 19/19 differ); realsense/cam2/depth (min std 324.61, 19/19 differ); gelsight/left/frames (min std 38.34, 19/19 differ); gelsight/right/frames (min std 24.83, 19/19 differ); arducam/cam0/frames (min std 63.06, 19/19 differ); arducam/cam1/frames (min std 55.54, 19/19 differ)"
+    },
+    {
+      "name": "optitrack",
+      "ok": true,
+      "detail": "no samples (ok if recorded with --no_optitrack)"
+    },
+    {
+      "name": "writer",
+      "ok": true,
+      "detail": "queue_peak_fraction=0.244, writer_mean_mb_s=247.3"
+    }
+  ],
+  "stats": {
+    "T": 17839,
+    "median_dt": 0.03345775604248047,
+    "max_dt": 0.12059926986694336,
+    "late_fraction": 0.0017378629891243412,
+    "late_count": 31,
+    "sensor_lag_min_s.gelsight/left": 0.018869400024414062,
+    "sensor_lag_max_s.gelsight/left": 0.18268895149230957,
+    "sensor_late_count.gelsight/left": 0,
+    "distinct_sensor_hz.gelsight/left": 16.970355379453178,
+    "sensor_lag_min_s.gelsight/right": 0.018234729766845703,
+    "sensor_lag_max_s.gelsight/right": 0.16327714920043945,
+    "sensor_late_count.gelsight/right": 0,
+    "distinct_sensor_hz.gelsight/right": 17.012043390113128,
+    "sensor_lag_min_s.arducam/cam0": 0.0002315044403076172,
+    "sensor_lag_max_s.arducam/cam0": 0.04415559768676758,
+    "sensor_late_count.arducam/cam0": 0,
+    "distinct_sensor_hz.arducam/cam0": 29.720216559692833,
+    "sensor_lag_min_s.arducam/cam1": 0.00014829635620117188,
+    "sensor_lag_max_s.arducam/cam1": 0.0463719367980957,
+    "sensor_late_count.arducam/cam1": 0,
+    "distinct_sensor_hz.arducam/cam1": 29.700206314576057,
+    "optitrack_samples": 0,
+    "queue_peak_fraction": 0.24444444444444444,
+    "writer_mean_mb_s": 247.3260055832265
+  }
+}

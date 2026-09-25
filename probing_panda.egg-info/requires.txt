@@ -1,9 +1,0 @@
-numpy
-hydra-core
-tqdm
-autolab_core
-scipy
-frankapy
-pillow
-opencv-python
-digit-interface

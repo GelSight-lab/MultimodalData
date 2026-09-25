@@ -1,0 +1,489 @@
+"""Re-run force estimation on every dataset, each beside its shuffle control.
+
+One protocol everywhere, so the four numbers are comparable: within each
+group (indenter family / probe / capture group / gel pad) the frames are
+split half fit, half eval; a 5-feature least-squares fit is calibrated by
+isotonic regression on the fit half; predictions are pooled across groups and
+scored by Spearman rho and MAE. 5 seeds, median reported with the spread.
+
+Beside every row, the SAME protocol with the force labels permuted WITHIN
+each group. A within-group shuffle is the control that matters here: it keeps
+the group structure and the marginal force distribution and destroys only the
+frame-to-force pairing, so it measures what the protocol scores when the
+features carry nothing. (A global shuffle would be too easy to beat — on
+FeelAnyForce the pooled rho survived global shuffling at 0.442 vs 0.455,
+which is how we caught that its frame join had never been demonstrated.)
+
+Why this run exists: the marker-inpainting step was integrated into the
+DEPTH / 3D path (`marker_removal.stages_depth`). The force path
+(`debug_gallery.stages`) was deliberately left untouched, because marker
+removal does not help force — so every number here must be unchanged, and
+`spotcheck` proves the reconstruction itself is bit-identical by recomputing
+cached features from the raw frames.
+
+Run:
+  python -m force_recovery.force_eval_all            # table + force_matrix.json
+  python -m force_recovery.force_eval_all spotcheck  # regression check only
+"""
+from __future__ import annotations
+
+import json
+import sys
+from pathlib import Path
+
+import numpy as np
+from scipy.stats import spearmanr
+from sklearn.isotonic import IsotonicRegression
+
+from .run_episode import OUT_ROOT
+
+CACHE = OUT_ROOT / "feature_cache"
+CACHE_SP = OUT_ROOT / "feature_cache_sparshlut"
+DG = OUT_ROOT / "site_assets" / "debug_gallery"
+SEEDS = 5
+OUT_JSON = CACHE / "force_matrix.json"
+
+
+# ------------------------------------------------------------------ protocol
+def _fit_apply(Xf, ff, Xe):
+    w, *_ = np.linalg.lstsq(Xf, ff, rcond=None)
+    iso = IsotonicRegression(out_of_bounds="clip").fit(Xf @ w, ff)
+    return iso.predict(Xe @ w)
+
+
+def heldout_pred(X, f, groups, seed=0, shuffle=False):
+    """Held-out predictions ALIGNED TO THE INPUT INDICES; NaN where not scored.
+
+    Exists so that anything wanting to know *which frame* got which prediction
+    — the error-analysis figures, for one — reads the protocol instead of
+    re-implementing it. The first version of that module carried its own copy
+    of this loop and agreed with it only because `1000 * seed + 7 * gi`
+    happens to equal `7 * gi` at seed 0; one edit here and the figures would
+    have ranked frames by a different model than the tables report.
+
+    Returns (pred, labels_used) — labels differ from `f` only when shuffling.
+    """
+    pred = np.full(len(f), np.nan)
+    fuse = f.copy()
+    for gi, g in enumerate(sorted(set(groups))):
+        idx = np.where(groups == g)[0]
+        if shuffle:
+            fuse[idx] = f[idx][np.random.default_rng(9000 + 13 * gi + seed)
+                               .permutation(len(idx))]
+        idx = idx[np.random.default_rng(1000 * seed + 7 * gi)
+                  .permutation(len(idx))]
+        h = len(idx) // 2
+        fi, ei = idx[:h], idx[h:]
+        if len(fi) < 8:
+            continue
+        pred[ei] = _fit_apply(X[fi], fuse[fi], X[ei])
+    return pred, fuse
+
+
+def _one_seed(X, f, groups, seed, shuffle=False):
+    """Per-group half/half + isotonic -> pooled (truth, pred) for the eval half."""
+    pred, fuse = heldout_pred(X, f, groups, seed, shuffle)
+    ok = np.isfinite(pred)
+    return fuse[ok], pred[ok], groups[ok]
+
+
+def evaluate(X, f, groups, seeds=SEEDS) -> dict:
+    """Pooled rho/MAE (median of `seeds`), per-group rho range, shuffle control.
+
+    THE FIT IS PER GROUP, THE SCORE IS POOLED
+    -----------------------------------------
+    `_one_seed` loops over groups and calls `_fit_apply` inside the loop, so
+    EVERY group gets its own least-squares weights and its own isotonic
+    calibration; the predictions are then pooled and one Spearman is taken
+    over the pool. The rationale is that different indenters have different
+    depth-to-force maps, so a shared model would be measuring shape transfer
+    rather than the reconstruction.
+
+    That choice can hide a cross-group failure, so it was checked against the
+    alternative — ONE model per dataset, still split half/half within each
+    group (calibration-free arm, presses imaged whole):
+
+        dataset        per group   pooled floor | one model   pooled floor
+        cnc_mini_26      0.9930       0.033     |  0.9911        0.156
+        FoTa cnc         0.9714      -0.015     |  0.9729        0.023
+        Sparsh           0.9284       0.226     |  0.9343        0.249
+        FEATS            0.5392      -0.116     |  0.5602       -0.070
+
+    Within 0.02 everywhere, and the single model is not worse — so the
+    per-group fit is not propping the numbers up; the features transfer across
+    indenters inside a dataset. Its floor is LOWER, though (0.033 vs 0.156 on
+    cnc_mini_26): a global fit on within-group-shuffled labels can still learn
+    the between-group part of the relation, which the per-group fit cannot.
+    That is why the per-group protocol is the one reported.
+
+    NOTE: this is the CROSS-DATASET comparison protocol, not the deployed
+    estimator. React's own force channel (`react_calib.fit`) is a SINGLE model
+    — one least squares plus one isotonic over the GlowTact `round` presses,
+    with a position gain field and a clipping correction — held out by press
+    position rather than by group.
+
+    WHAT A POSITIVE SHUFFLE MEANS, MEASURED
+    ---------------------------------------
+    The shuffle permutes labels WITHIN each group, so the pairing dies but each
+    group keeps its own force range. Predictions for a group therefore still
+    land in that group's range, and pooling across groups reproduces the
+    BETWEEN-group ordering for free. The shuffle rho is that floor.
+
+    Verified by replacing the features with pure noise and running the same
+    protocol — if the reading above is right, the two must agree:
+
+        dataset       rho(group mean, f)   noise features   measured shuffle
+        cnc_mini_26        0.268               0.074            0.033
+        FoTa cnc           0.089              -0.005           -0.015
+        Sparsh             0.364               0.230            0.226
+        FEATS              0.135              -0.028           -0.116
+        FeelAnyForce       0.893               0.826            0.823
+
+    They agree to within 0.04, and both track how far apart the groups' force
+    ranges are. So the shuffle is not a formality: it is the score this
+    protocol returns when the reconstruction contributes nothing, and a rho
+    must be read against it. FeelAnyForce's 42 captures each cover a different
+    force band, which is why its floor is 0.83 and why its rows are withheld.
+    """
+    X = np.asarray(X, float)
+    f = np.asarray(f, float)
+    groups = np.asarray(groups)
+    rr, mm, sh, per = [], [], [], {g: [] for g in sorted(set(groups))}
+    n_eval = 0
+    for s in range(seeds):
+        t, p, g = _one_seed(X, f, groups, s)
+        rr.append(float(spearmanr(p, t).statistic))
+        mm.append(float(np.abs(p - t).mean()))
+        n_eval = len(t)
+        for gg in per:
+            m = g == gg
+            if m.sum() >= 8:
+                per[gg].append(float(spearmanr(p[m], t[m]).statistic))
+        ts, ps, _ = _one_seed(X, f, groups, s, shuffle=True)
+        sh.append(float(spearmanr(ps, ts).statistic))
+    pg = {k: float(np.median(v)) for k, v in per.items() if v}
+    # How many groups the protocol could actually FIT on. `_one_seed` skips a
+    # group with fewer than 8 frames in its fit half, silently, so a row could
+    # report a clean rho computed on two of its six indenters. That is not
+    # hypothetical: rebuilding the caches on the current reconstruction grew
+    # the thresholded contact area (r_eff median 73 -> 107 px), the scope
+    # filter is written against that radius, and cnc_mini_26 fell to 134
+    # frames with ONE star press left. The number is reported with the
+    # population it came from.
+    sizes = {g: int((groups == g).sum()) for g in set(groups)}
+    scored = sum(1 for g, n in sizes.items() if n // 2 >= 8)
+    return {"rho": float(np.median(rr)), "mae": float(np.median(mm)),
+            "n_groups_scored": scored, "group_sizes": sizes,
+            "rho_min": float(np.min(rr)), "rho_max": float(np.max(rr)),
+            "rho_sd": float(np.std(rr)), "shuffle_rho": float(np.median(sh)),
+            "n_eval": int(n_eval), "n_groups": len(set(groups)),
+            "per_group_rho": pg}
+
+
+def raw_margin(a: dict) -> float:
+    """rho above what a within-group label shuffle already scores."""
+    return float(a["rho"]) - float(a["shuffle_rho"])
+
+
+def kappa_margin(a: dict) -> float:
+    """The same margin as a FRACTION of the margin that was available.
+
+    The raw margin is unfair to whichever arm scores higher, arithmetically
+    and not as a matter of taste: an arm at 0.998 over a floor of 0.930 has
+    0.070 of headroom in total, so it cannot out-margin an arm at 0.900 over
+    the same floor no matter how good it is. Calibration-free lost 2 of 5
+    datasets to precisely that, having beaten the LUT on raw rho in all 5.
+
+    Dividing by what was left is Cohen's kappa applied to rho: "of the
+    distance from the floor to a perfect score, how much did this arm cover".
+    A perfect arm reads 1.0 at any floor; an arm below its own floor stays
+    negative, because a correction that laundered failure into a small
+    positive number would be worse than no correction.
+
+    The floor is clamped at zero — cnc's LUT floor is -0.040 and dividing by
+    1.040 would report 1.04 for a perfect arm. A floor below chance is chance.
+    """
+    floor = max(0.0, float(a["shuffle_rho"]))
+    return (float(a["rho"]) - floor) / max(1.0 - floor, 1e-9)
+
+
+def _basis(x, y):
+    return np.column_stack([np.ones_like(x), x, y, x * x, y * y, x * y])
+
+
+# ------------------------------------------------------------------ datasets
+def ds_cnc_mini_26(cache: str = "lut_full.json") -> dict:
+    """GelSight Mini CNC presses (2026): 6 indenter families, 0-20 N.
+
+    NAMING. This was called `ds_glowtact` and its row read "GlowTact", which
+    is wrong and was wrong everywhere it was published. The GlowTact release
+    ships one press protocol recorded on TWO sensors; this is the **GelSight
+    Mini** arm (manifest: controlled_source ".../GelSight_Mini_clean_final"),
+    kept on disk as `cnc_mini_26/`. The self-made GlowTact pad is the other
+    directory and is used only by `glowtact_selfmade`.
+
+    The mislabel is not cosmetic: it made the validation table look like it
+    covered two gel technologies when two of its four rows are the same
+    sensor model, and it sent a reader (and this author) chasing a
+    cross-sensor explanation for React's reconstruction that does not exist.
+
+    Scope is physical, not cherry-picked: contact fully inside the frame and
+    the gel not bottomed out (z <= 4.2 mm).
+    """
+    # `cache` selects the RECONSTRUCTION and nothing else. Both files carry
+    # the identical schema over the identical presses, so the gain field, the
+    # scope filter and the scoring below are byte-for-byte the same work —
+    # which is the only way the two rows on the results page are comparable.
+    rows = json.loads((CACHE / cache).read_text())
+    rows = [r for r in rows if r["f"] > 0.15
+            and np.isfinite(r.get("cx", np.nan))]
+    a = lambda k: np.array([r[k] for r in rows])            # noqa: E731
+    x, y, z, f = a("x"), a("y"), a("z"), a("f")
+    V, V2, A, D, cx, cy = (a("vol"), a("vol2"), a("area"), a("maxd"),
+                           a("cx"), a("cy"))
+    grp = np.array([r["fam"] for r in rows])
+    m = (grp == "round") & (x > 3.5) & (x < 14.5) & (y > 3.0) & (y < 13.5)
+    PHI = _basis(x[m], y[m])
+    w, *_ = np.linalg.lstsq(np.hstack([PHI * z[m][:, None], -PHI]), D[m],
+                            rcond=None)
+    u = 1.0 / np.clip(_basis(x, y) @ w[:6], 0.15, 3.0)
+    X = np.column_stack([V * u, V2 * u ** 2, D * u,
+                         np.sqrt(np.clip(A, 0, None)) * D * u, A])
+    # Scope: is the press inside the field of view, and the gel not bottomed
+    # out. Decided from the COMMANDED position, which the rig set and no
+    # reconstruction can move. The previous test derived an effective contact
+    # radius from the thresholded area and compared it to the frame margins;
+    # area is an output of the reconstruction, so improving the reconstruction
+    # shrank the population from ~400 presses to 134 and left the star family
+    # with a single press, while the docstring promised the filter was what
+    # made two reconstructions comparable. Same window `visible_eval` uses.
+    from .visible_eval import FOV_MM
+    lo_x, hi_x, lo_y, hi_y = FOV_MM
+    sc = ((x > lo_x) & (x < hi_x) & (y > lo_y) & (y < hi_y) & (z <= 4.2))
+    return evaluate(X[sc], f[sc], grp[sc])
+
+
+def ds_cnc() -> dict:
+    """FoTa cnc_Mini, strictly in view (the press grid is bigger than the FOV)."""
+    rows = json.loads((DG / "features_cnc_full.json").read_text())
+    a = lambda k: np.array([r[k] for r in rows])            # noqa: E731
+    x, y, z, f = a("x"), a("y"), a("z"), a("f")
+    grp = np.array([r["group"] for r in rows])
+    inner = (x > 5) & (x < 13) & (y > 4) & (y < 12)
+    PHI = _basis(x[inner], y[inner])
+    w, *_ = np.linalg.lstsq(np.hstack([PHI * z[inner][:, None], -PHI]),
+                            a("maxd")[inner], rcond=None)
+    u = 1.0 / np.clip(_basis(x, y) @ w[:6], 0.15, 3.0)
+    X = np.column_stack([a("vol") * u, a("vol2") * u ** 2, a("maxd") * u,
+                         a("area"),
+                         np.sqrt(np.clip(a("area"), 0, None)) * a("maxd") * u])
+    return evaluate(X[inner], f[inner], grp[inner])
+
+
+# THE FIVE FEATURES: HOW MUCH EACH IS WORTH, MEASURED
+#
+# They are five functions of the same depth map and they are collinear —
+# Spearman between them, pooled over all datasets:
+#
+#          vol   vol2   maxd   area    h1
+#   vol   1.00  0.959  0.779  0.480  0.918
+#   vol2        1.000  0.917  0.246  0.984
+#   maxd               1.000 -0.096  0.955
+#   area                      1.000  0.176
+#
+# Only `area` is close to independent (-0.10 against maxd). vol2 and h1 agree
+# at 0.984, which is why the fitted weights put them on OPPOSITE signs and
+# partly cancel (standardised: vol +0.94..+1.73, h1 -0.48..-0.86 on four of
+# five datasets). That is collinearity, not two mechanisms.
+#
+# Held-out rho (15 seeds, median, +-sd) and MAE [N] by feature subset:
+#
+#   dataset       all five            drop maxd      vol+vol2         vol only
+#   cnc_mini_26  0.993+-.001 0.49   0.992 0.51    0.991 0.55     0.989 0.61
+#   cnc          0.970+-.007 0.17   0.970 0.17    0.970 0.17     0.952 0.22
+#   FEATS        0.544+-.068 3.77   0.569 3.71    0.555 3.66     0.589 3.56
+#   Sparsh       0.937+-.006 0.05   0.930 0.06    0.920 0.06     0.909 0.07
+#   FeelAnyForce 0.649+-.020 2.57   0.653 2.57    0.650 2.63     0.642 2.65
+#
+# NO, all five are not necessary for rho: `vol` alone lands within 0.03 of the
+# full set on every dataset. They are kept because MAE — which is what an
+# exported newton is judged on — degrades monotonically as they are removed
+# (0.49 -> 0.61 on cnc_mini_26, 0.17 -> 0.22 on FoTa, 0.05 -> 0.07 on Sparsh),
+# and because the full set is best or tied on rho everywhere.
+#
+# `maxd` is the one that earns least: dropping it moves nothing beyond noise on
+# any dataset.
+#
+# A CLAIM THAT DID NOT SURVIVE MORE SEEDS. At 5 seeds this read "on FEATS `vol`
+# alone scores 0.599 against the full set's 0.513, so the extra features hurt
+# there". FEATS has by far the widest seed spread (+-0.068, against +-0.001 on
+# cnc_mini_26); at 15 seeds the gap is 0.589 vs 0.544, inside one sd. There is
+# no FEATS-specific feature effect to report.
+FE = ("vol", "vol2", "maxd", "area", "h1")
+
+
+def ds_feats(inpaint: bool = False) -> dict:
+    """FEATS, recomputed from the images — the actual regression check.
+
+    `inpaint=True` runs the same frames through the DEPTH-path marker
+    removal and fits force on those features. It is reported so the site can
+    show the cost of the step it did NOT adopt for force, on identical
+    frames and identical splits.
+
+    WHAT THE COST ACTUALLY IS. "Inpainting is worse for force" is how this has
+    been summarised, and the per-group numbers say something sharper: every
+    group ties or improves, and only the POOLED number falls.
+
+        group      plain   inpainted
+        cuboid     0.852     0.858
+        sphere     0.629     0.666
+        unknown    0.794     0.799
+        ellipse    0.217     0.217
+        POOLED     0.775     0.737
+
+    So inpainting does not damage within-group ranking — it damages
+    cross-group comparability, shifting each group's predictions relative to
+    the others. That is still a reason to keep it out of the force path, since
+    force is pooled across groups, but it is a different reason from the one
+    the one-line summary implies, and a reader who adopts the step for a
+    single-object application should know it costs them nothing there.
+
+    `debug_gallery.RNG` is module-level and every loader draws from it, so
+    the frame sample depends on which datasets ran earlier in the process.
+    Reseeding here makes this evaluation order-independent, makes the two
+    passes here a genuinely paired comparison, and reproduces the baseline
+    the marker study published (rho 0.7747 / MAE 5.03 N).
+    """
+    from . import debug_gallery as dg
+    from .debug_gallery import load_feats, stages
+    from .marker_removal import marker_mask, stages_depth
+
+    dg.RNG = np.random.default_rng(0)
+    frames, get = load_feats()
+    _, ref = get(frames[0])
+    mask = marker_mask(ref)
+    rows = []
+    for j, fr in enumerate(frames):
+        img, r = get(fr)
+        st = (stages_depth(img, r, mask=mask) if inpaint else stages(img, r))
+        rows.append({"group": fr["group"], "f": fr["f"], **st["feats"]})
+        if (j + 1) % 130 == 0:
+            print(f"    feats{' (inpainted)' if inpaint else ''}: "
+                  f"{j+1}/{len(frames)}", flush=True)
+    # published so results_page scores the identical frames, not a second
+    # random sample of the same parquet
+    if not inpaint:
+        (CACHE / "feats_rows.json").write_text(json.dumps(rows))
+    X = np.array([[r[k] for k in FE] for r in rows])
+    f = np.array([r["f"] for r in rows])
+    grp = np.array([r["group"] for r in rows])
+    return evaluate(X, f, grp)
+
+
+def ds_sparsh() -> dict:
+    """Sparsh (Meta), Sparsh-native LUT, in-view frames, per (probe, batch).
+
+    NOT "per gel pad", which is what this line said. `sparsh_data.BATCHES` is
+    [(sphere,1..6), (flat,1..2), (sharp,1..2)] — indenter shape and capture
+    batch. Nothing in that dataset's layout says a batch is a different pad,
+    and the grouping variable has to be named for what it is, because the
+    protocol fits one model per group and the reader has to know what is being
+    held apart.
+    """
+    from .sparsh_figure import _inview_mask, _load, _xy
+
+    data = _load("sparsh")
+    Xs, fs, gs = [], [], []
+    for name, rows in data.items():
+        m = _inview_mask(name, rows)
+        if m.sum() < 40:
+            continue
+        X, f = _xy([r for r, k in zip(rows, m) if k])
+        Xs.append(X)
+        fs.append(f)
+        gs += [name] * len(f)
+    return evaluate(np.vstack(Xs), np.concatenate(fs), np.array(gs))
+
+
+# ------------------------------------------------------------------ regression
+def spotcheck(n: int = 40) -> dict:
+    """Recompute cached cnc features from the raw frames — bit-for-bit.
+
+    `debug_gallery.stages` is the single force path for every dataset, so if
+    it reproduces a cached feature exactly on real frames it is unchanged
+    everywhere. This is the check that the marker work did not leak into
+    force.
+    """
+    import os
+
+    os.environ.setdefault("CNC_N", "390")
+    from .debug_gallery import load_cnc, stages
+
+    cached = {}
+    for r in json.loads((DG / "features_cnc_full.json").read_text()):
+        cached[(r["group"], round(r["f"], 4), round(r["x"], 4),
+                round(r["y"], 4), round(r["z"], 4))] = r
+    frames, get = load_cnc()
+    worst, hits = 0.0, 0
+    for fr in frames:
+        key = (fr["group"], round(fr["f"], 4), round(fr["x"], 4),
+               round(fr["y"], 4), round(fr["z"], 4))
+        if key not in cached:
+            continue
+        img, ref = get(fr)
+        got = stages(img, ref)["feats"]
+        for k in FE:
+            worst = max(worst, abs(got[k] - cached[key][k]))
+        hits += 1
+        if hits >= n:
+            break
+    print(f"spotcheck: {hits} cnc frames recomputed from raw, "
+          f"max |cached - fresh| over {FE} = {worst:.3e}")
+    assert hits >= 10, "no cached frames matched — cache/loader drift"
+    assert worst < 1e-9, f"stages() changed: max feature delta {worst}"
+    return {"n_frames": hits, "max_abs_delta": float(worst)}
+
+
+# ------------------------------------------------------------------ report
+ROWS = [
+    ("cnc_mini_26 (markerless, 0-20 N)", ds_cnc_mini_26),
+    ("FoTa cnc_Mini (markerless, in view)", ds_cnc),
+    ("FEATS (marker gel)", ds_feats),
+    ("Sparsh / Meta (markerless, Sparsh LUT, in view)", ds_sparsh),
+]
+
+
+def main() -> dict:
+    out = {"protocol": "per-group half/half + isotonic, 5 seeds, median; "
+                       "control = force labels permuted within each group",
+           "spotcheck": spotcheck(),
+           "datasets": {}}
+    for name, fn in ROWS:
+        print(f"== {name}", flush=True)
+        out["datasets"][name] = fn()
+    # A CONTROL, not a fifth dataset — the same 186 FEATS frames and the same
+    # splits, differing only in whether the marker dots are inpainted before
+    # differencing. Read as a dataset row it looks like FEATS appears twice,
+    # which is how it was read. The label now says so.
+    print("\n-- control: the SAME FEATS frames with marker dots inpainted",
+          flush=True)
+    out["datasets"]["  ↳ control: same frames, dots inpainted "
+                    "(depth path; not used for force)"] = ds_feats(inpaint=True)
+
+    print(f"\n{'dataset':52s} {'n':>6s} {'rho':>7s} {'[min,max]':>15s} "
+          f"{'MAE [N]':>9s} {'shuffle':>8s}")
+    # Rows beginning with the hook are controls paired to the row above them.
+    for k, v in out["datasets"].items():
+        print(f"{k:52s} {v['n_eval']:6d} {v['rho']:7.4f} "
+              f"[{v['rho_min']:.3f},{v['rho_max']:.3f}]".ljust(85)
+              + f"{v['mae']:9.3f} {v['shuffle_rho']:8.3f}")
+    OUT_JSON.write_text(json.dumps(out, indent=1))
+    print(f"\n-> {OUT_JSON}")
+    return out
+
+
+if __name__ == "__main__":
+    if len(sys.argv) > 1 and sys.argv[1] == "spotcheck":
+        spotcheck()
+    else:
+        main()

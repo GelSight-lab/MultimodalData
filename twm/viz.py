@@ -25,38 +25,45 @@ from pathlib import Path
 from typing import Iterable, Optional
 
 import cv2
+import functools
 import numpy as np
 from PIL import Image
 from scipy.spatial.transform import Rotation
+
+from twm.force_overlay import draw_force_halo
 
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Display configuration
 # ──────────────────────────────────────────────────────────────────────────────
 
-# H5 stores cameras in REALSENSE_SERIALS order:
-#   cam0 = serial 143...538 (right)
-#   cam1 = serial 104...574 (left)
-#   cam2 = serial 217...989 (middle)
-# We display them in spatial left → right order, which means cam1, cam2, cam0.
-DISPLAY_ORDER: list[int] = [1, 2, 0]
+# H5 stores cameras in REALSENSE_SERIALS order (cam0 right, cam1 left, cam2
+# middle: `twm.recorder.config.REALSENSE_POSITIONS`). We display them in
+# spatial left → right order, i.e. cam1, cam2, cam0.
+from twm.recorder.config import REALSENSE_POSITIONS as _POSITIONS
+DISPLAY_ORDER: list[int] = [_POSITIONS.index(p) for p in ("left", "middle", "right")]
 DISPLAY_LABELS: list[str] = ["left cam", "middle cam", "right cam"]
 # Inverse mapping: H5 cam_idx → its slot (0, 1, or 2) on the displayed panel.
 DISPLAY_POSITION: dict[int, int] = {cam_idx: pos for pos, cam_idx in enumerate(DISPLAY_ORDER)}
 
-# Default calibration filenames for each H5 cam_idx (within
-# `twm/calibration/result/`). Kept here so visualization tools don't have to
+# Default calibration FILENAMES for each H5 cam_idx (the directory is the
+# task's epoch, from `calib_epoch`). Kept here so visualization tools don't have to
 # repeat the mapping.
 CAM_CALIB_NAME: dict[int, str] = {
-    0: "T_mocap_to_cam_right.json",
-    1: "T_mocap_to_cam_left.json",
-    2: "T_mocap_to_cam_middle.json",
+    i: f"T_mocap_to_cam_{p}.json" for i, p in enumerate(_POSITIONS)
 }
 
 # Layout constants — match what the live recording UI used historically.
 RS_THUMB_W, RS_THUMB_H = 320, 240   # one RealSense thumbnail
+STATUS_STRIP_H = 48                 # text strip under the image rows: status bar + health line
 GS_THUMB_W, GS_THUMB_H = 240, 240   # one GelSight thumbnail (raw or diff)
-PANEL_W, PANEL_H = 1280, 480
+ROW2_Y = RS_THUMB_H                 # top of row 2 (the tactile strip)
+# Derived, never typed: several builders feed PANEL_H to ffmpeg as the raw
+# frame height, so a layout change that leaves the constant behind encodes
+# garbage. PANEL_H is the two-row panel; a three-row one (wrist cameras)
+# is RS_THUMB_H taller.
+PANEL_W = 4 * RS_THUMB_W
+PANEL_H = 2 * RS_THUMB_H + STATUS_STRIP_H
 
 # OptiTrack tracker colors (BGR, drawn into the BGR panel).
 TRACKER_COLORS: dict[str, tuple[int, int, int]] = {
@@ -73,6 +80,45 @@ GEL_DOT_BGR: dict[str, tuple[int, int, int]] = {
 }
 FROZEN_BGR: tuple[int, int, int] = (0, 0, 255)
 AXIS_BGR = [(0, 0, 255), (0, 255, 0), (255, 128, 0)]
+# DexForce virtual target: distinct from every axis colour and from the two
+# gel dots, because its job is to be told apart from the pose it is drawn
+# next to. Magenta is unused elsewhere on this panel.
+TARGET_BGR = (255, 0, 220)
+# DRAWING-ONLY EXAGGERATION OF THE VIRTUAL-TARGET GAP, and it is printed on
+# the panel so nobody reads the drawn gap as the real one.
+#
+# At true scale the picture does not exist. The displacement is force / k —
+# millimetres — while a camera thumbnail spans about a metre, so on
+# motherboard/2026-05-10/episode_004 the projected gap over 199 contact frames
+# measures p50 0.00 px, p90 1.00 px, max 1.41 px. The force disc at the same
+# force has radius 16.9 px, so the target ring sat entirely inside it: 112
+# magenta pixels in a full panel.
+#
+# I FIRST WROTE 20x AND JUSTIFIED IT WRONGLY. The note here said "20x puts the
+# p90 gap at about 20 px, just outside that disc", extrapolated from an earlier
+# measurement of "p90 = 1.00 px". That 1.00 was `_scale_to_thumb`'s ROUNDED
+# value, not the sub-pixel gap, so multiplying it by the gain overestimated by
+# about 5x. Measured properly, over 199 contact frames of
+# motherboard/2026-05-10/episode_004:
+#
+#     gain    p50    p90    max     ring outside the force disc
+#       20    2.0    4.1   10.0                0.0%
+#       40    3.2    7.3   19.1                0.4%
+#       80    5.8   13.4   34.1                5.3%
+#      160   10.6   23.0   56.2               28.8%
+#
+# So 20x never cleared the disc at all. 40x is what it is because it was asked
+# for, and it is visibly larger; it still sits inside the disc on 99.6% of
+# frames, which is a property of the picture worth knowing rather than a
+# defect — the disc is where the sensor is, and the ring is a few millimetres
+# past it, exaggerated. Clearing the disc reliably needs 120-160x, at which
+# point the gap is no longer readable as "a small offset".
+#
+# The gain multiplies the drawn OFFSET only. The stiffness stays
+# `dexforce.STIFFNESS_N_PER_M`, the one the published
+# `force_<side>_target_pose` column uses, because a second stiffness would put
+# two different DexForce targets on one dataset.
+TARGET_GAIN = 40.0
 AXIS_LABELS = ["X", "Y", "Z"]
 
 
@@ -84,8 +130,17 @@ def pose7_to_T(pose_7) -> Optional[np.ndarray]:
     """7-vec (x,y,z in meters, qx,qy,qz,qw) → 4×4 pose matrix in millimeters.
 
     Returns None if the quaternion has zero norm (= no valid pose, e.g. an
-    OptiTrack frame where the body was never tracked).
+    OptiTrack frame where the body was never tracked). The same pose is
+    projected into every calibrated camera each frame, so the conversion is
+    memoised on the pose values (the live preview runs it at 30 Hz on a CPU
+    the writer needs).
     """
+    T = _pose7_to_T_cached(tuple(float(v) for v in pose_7))
+    return None if T is None else T.copy()
+
+
+@functools.lru_cache(maxsize=16)
+def _pose7_to_T_cached(pose_7: tuple) -> Optional[np.ndarray]:
     p = np.asarray(pose_7, np.float64)
     pos_mm = p[:3] * 1000.0
     q = p[3:]
@@ -138,6 +193,48 @@ def project_gel_pose(rigid_pose_7, gel_center_in_rigid_mm,
         return None
     axes = [_project(t) for t in tips_world]
     return center, axes
+
+
+PRESS_BGR = (60, 220, 255)          # amber; not one of the three axis colours
+
+
+def press_arrow_pixels(rigid_pose_7, gel_center_in_rigid_mm,
+                       gel_axis_in_rigid, cam, length_mm: float = 70.0):
+    """Pixel endpoints of the pressing-direction arrow, or None.
+
+    GelSight Mini's normal force acts along the gel normal expressed in the
+    SENSOR's own frame (`gel_axis_in_rigid`). Rotating the world does not move
+    it; it is not one of the body axes either -- (-0.17, -0.93, -0.32) on the
+    left unit -- so a viewer cannot infer it from the axes already drawn, and
+    the natural guess of "straight down" is off by a median 7.7 deg on
+    motherboard and 23.3 deg on pushT.
+
+    Returned rather than only drawn so a test can compare the drawn arrow
+    against this geometry instead of against the drawing itself.
+    """
+    # `rigid_pose_7` is METRES + quaternion, exactly like project_gel_pose:
+    # one unit convention for both, so the arrow cannot drift from the axes.
+    T = pose7_to_T(np.asarray(rigid_pose_7, float))
+    if T is None or np.allclose(rigid_pose_7, 0.0):
+        return None
+    R = T[:3, :3]
+    P_gel = (T @ np.append(np.asarray(gel_center_in_rigid_mm, float), 1.0))[:3]
+    n = np.asarray(gel_axis_in_rigid, float)
+    n = n / (np.linalg.norm(n) or 1.0)
+    Tm = np.asarray(cam["T_mocap_to_cam"], float)
+    K = cam["intrinsics"]
+
+    def _p(P):
+        C = (Tm @ np.append(P, 1.0))[:3]
+        if C[2] <= 0:
+            return None
+        u = K["fx"] * C[0] / C[2] + K["ppx"]
+        v = K["fy"] * C[1] / C[2] + K["ppy"]
+        return (float(u), float(v)) if np.isfinite(u) and np.isfinite(v) else None
+
+    a = _p(P_gel)
+    b = _p(P_gel + R @ (n * length_mm))
+    return None if (a is None or b is None) else (a, b)
 
 
 def load_calibrations(cam_calib_paths: Iterable[str | Path],
@@ -259,12 +356,18 @@ def make_optitrack_panel(optitrack_poses, w: int = RS_THUMB_W, h: int = RS_THUMB
 def build_preview_panel(color_frames, gs_frames, gs_ref, optitrack_poses,
                          recording: bool, frame_count: int, elapsed: float,
                          buf: int = 0, fps: float = 0.0, task_name: str = "",
-                         status_override: Optional[str] = None) -> np.ndarray:
-    """The canonical 1280×480 BGR panel used everywhere.
+                         status_override: Optional[str] = None,
+                         arducam_frames=None,
+                         arducam_labels=None) -> np.ndarray:
+    """The canonical BGR panel used everywhere.
 
     Layout:
       Row 1 (y=0..240):    [cam slot 0 | slot 1 | slot 2 | OptiTrack text]
       Row 2 (y=240..480):  [gs_L_raw | gs_L_diff | gs_R_raw | gs_R_diff | blank]
+      Optional row 3:      [Arducam cam0 | Arducam cam1 | blank | blank]
+      Status strip:        STATUS_STRIP_H px of black under the rows; the
+                           status bar is its first line, the recorder's
+                           health line its second. Text never covers an image.
 
     `color_frames` is indexed by H5 cam_idx (0=right, 1=left, 2=middle as per
     `REALSENSE_SERIALS`). This function reorders to the spatial **left,
@@ -300,6 +403,30 @@ def build_preview_panel(color_frames, gs_frames, gs_ref, optitrack_poses,
 
     panel = np.vstack([row1, row2])
 
+    if arducam_frames is not None:
+        if not 1 <= len(arducam_frames) <= 2:
+            raise ValueError("arducam_frames must hold one or two frames")
+        sensor_thumbs = [_rs_thumb(frame) for frame in arducam_frames]
+        # The row is always four tiles wide; a single camera leaves the rest
+        # blank rather than stretching to fill, so the layout does not change
+        # shape when a camera is unplugged.
+        pad = [blank.copy() for _ in range(4 - len(sensor_thumbs))]
+        sensor_row = np.hstack(sensor_thumbs + pad)
+        panel = np.vstack([panel, sensor_row])
+
+        labels = arducam_labels or ["cam0", "cam1"][:len(arducam_frames)]
+        if len(labels) != len(arducam_frames):
+            raise ValueError("arducam_labels must match arducam_frames")
+        for slot, label in enumerate(labels):
+            cv2.putText(
+                panel, str(label), (slot * RS_THUMB_W + 8, 2 * RS_THUMB_H + 16),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.42, (200, 200, 200), 1,
+                cv2.LINE_AA,
+            )
+
+    # Text strip under the image rows (status bar + room for the health line)
+    panel = np.vstack([panel, np.zeros((STATUS_STRIP_H, panel.shape[1], 3), np.uint8)])
+
     # Bottom status bar
     if status_override is not None:
         status = status_override
@@ -313,7 +440,7 @@ def build_preview_panel(color_frames, gs_frames, gs_ref, optitrack_poses,
             status = f"{task_prefix}[IDLE]  s=start  e=end  r=reset-ref  q=quit  |  {fps:.1f}fps"
             color = (0, 200, 0)
 
-    cv2.putText(panel, status, (10, panel.shape[0] - 10),
+    cv2.putText(panel, status, (10, panel.shape[0] - STATUS_STRIP_H + 20),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
 
     # Tile-label headers at the top of each cam thumb
@@ -342,6 +469,9 @@ def draw_projection_overlay(panel: np.ndarray,
                              gel_center_right: np.ndarray,
                              *,
                              frozen_side: Optional[str] = None,
+                             forces_n: Optional[dict] = None,
+                             targets_7: Optional[dict] = None,
+                             press_axis=None,
                              axis_len_mm: float = 120.0) -> None:
     """Draw GelSight projection (center dot + 3 axis tips) on each cam thumb.
 
@@ -355,15 +485,53 @@ def draw_projection_overlay(panel: np.ndarray,
     If `frozen_side ∈ {"left", "right"}`, a second red ring + label is drawn
     on top of that sensor's dot in every cam.
 
+    `forces_n` = {"left": N, "right": N} adds the semi-transparent press-force
+    disc, centred on the SAME projected point as that sensor's axes. It is
+    drawn here rather than by the caller for exactly that reason: two
+    independent projections of the sensor would eventually disagree, and the
+    disagreement would look like a calibration error rather than a drawing
+    bug. Drawn before the axes so the crisp pose marker stays readable
+    through it.
+
+    `targets_7` = {"left": pose7, "right": pose7} adds the DexForce VIRTUAL
+    TARGET: a hollow ring at where a stiffness controller would have been
+    commanded, joined to the sensor dot by a line. The gap between the two is
+    the force, drawn in the units and the view of the motion — which is the
+    whole point of the picture, and the reason it is worth showing beside a
+    disc whose area already encodes the same newtons.
+
+    Projected by the SAME `project_gel_pose` call that places the sensor,
+    with the target pose substituted. The target shares the observed
+    quaternion (the exporter copies it), so this is one function evaluated at
+    two positions rather than two functions that must be kept in agreement.
+
+    In free space the exporter sets target == pose exactly, so nothing is
+    drawn there: a marker hovering over a sensor that is touching nothing
+    would read as contact.
+
+    The stiffness behind the gap is `dexforce.STIFFNESS_N_PER_M`, the same one
+    the published `force_<side>_target_pose` column uses. A second stiffness
+    for the picture would put two different DexForce targets on one project.
+    Measured over the release, that k also puts the gap on the scale of the
+    motion it sits beside: per row, along the pressing direction, contact
+    frames give |dp.n| p90 2.51 mm and p95 3.72 mm against force/k p90 3.65
+    and p95 3.94.
+
     Modifies `panel` in place.
     """
     sl = optitrack_poses.get("sensor_left") if optitrack_poses else None
     sr = optitrack_poses.get("sensor_right") if optitrack_poses else None
+    if sl is None and sr is None:
+        return          # nothing to draw: skip the supersample round trip
 
-    # 2x supersample buffer for sub-integer line widths.
+    # 2x supersample buffer for sub-integer line widths. Only the camera row
+    # is drawn on, so only that region is scaled (a 3-row panel would cost
+    # 3.75x more for pixels the overlay never touches; the live preview
+    # redraws this every GUI frame).
     SCALE = 2
-    H, W = panel.shape[:2]
-    big = cv2.resize(panel, (W * SCALE, H * SCALE), interpolation=cv2.INTER_NEAREST)
+    H, W = min(panel.shape[0], RS_THUMB_H), min(panel.shape[1], 3 * RS_THUMB_W)
+    region = panel[:H, :W]
+    big = cv2.resize(region, (W * SCALE, H * SCALE), interpolation=cv2.INTER_NEAREST)
 
     for pc in project_cams:
         cam_idx = pc["index"]
@@ -386,6 +554,12 @@ def draw_projection_overlay(panel: np.ndarray,
             cx, cy = _scale_to_thumb(center[0], center[1])
             cx += x_offset
             cx_b, cy_b = cx * SCALE, cy * SCALE
+            # Press force, under the axes, at this same projected centre.
+            if forces_n and forces_n.get(side) is not None:
+                draw_force_halo(big, (cx, cy), float(forces_n[side]),
+                                scale=SCALE,
+                                bounds=(x_offset, 0,
+                                        x_offset + RS_THUMB_W, RS_THUMB_H))
             # Axes (thickness 3 on 2x canvas = 1.5 effective px after downsize)
             for tip, ac, al in zip(axes, AXIS_BGR, AXIS_LABELS):
                 if tip is None:
@@ -397,6 +571,81 @@ def draw_projection_overlay(panel: np.ndarray,
                 if 0 <= tx < W and 0 <= ty < H:
                     cv2.putText(big, al, (tx_b + 6, ty_b - 6),
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.64, ac, 2, cv2.LINE_AA)
+            # WHICH WAY THE FORCE ACTS. The panel prints a scalar "2.0 N"
+            # and draws three body axes; neither says that GelSight Mini's
+            # normal force acts along the gel normal in the SENSOR's frame.
+            # The natural guess -- straight down -- is off by a median 7.7 deg
+            # on motherboard and 23.3 deg on pushT, where 70% of contact
+            # frames exceed 15 deg. Drawn in amber so it cannot be mistaken
+            # for one of the axes.
+            if press_axis is not None:
+                pa = press_arrow_pixels(pose_tuple[1],
+                                        gel, press_axis.get(side)
+                                        if isinstance(press_axis, dict)
+                                        else press_axis,
+                                        {"T_mocap_to_cam": pc["T_mocap_to_cam"],
+                                         "intrinsics": pc["intrinsics"]})
+                if pa is not None:
+                    (pu0, pv0), (pu1, pv1) = pa
+                    ax0 = _scale_to_thumb(pu0, pv0)
+                    ax1 = _scale_to_thumb(pu1, pv1)
+                    p0 = (int((ax0[0] + x_offset) * SCALE), int(ax0[1] * SCALE))
+                    p1 = (int((ax1[0] + x_offset) * SCALE), int(ax1[1] * SCALE))
+                    span = float(np.hypot(p1[0] - p0[0], p1[1] - p0[1])) / SCALE
+                    if span >= 7.0:
+                        cv2.arrowedLine(big, p0, p1, PRESS_BGR, 3, cv2.LINE_AA,
+                                        tipLength=0.22)
+                        lab = (p1[0] + 6, p1[1] + 14)
+                    else:
+                        # The press direction points into the table and the
+                        # middle camera looks down at it, so the arrow
+                        # foreshortens to nothing there. A 3 px stub reads as
+                        # "no force direction"; the circled cross is the same
+                        # convention the world gizmo uses for an axis aimed
+                        # away from the viewer.
+                        r = 7 * SCALE
+                        cv2.circle(big, p0, r, PRESS_BGR, 3, cv2.LINE_AA)
+                        d = int(r * 0.62)
+                        cv2.line(big, (p0[0] - d, p0[1] - d),
+                                 (p0[0] + d, p0[1] + d), PRESS_BGR, 3, cv2.LINE_AA)
+                        cv2.line(big, (p0[0] - d, p0[1] + d),
+                                 (p0[0] + d, p0[1] - d), PRESS_BGR, 3, cv2.LINE_AA)
+                        lab = (p0[0] + r + 4, p0[1] + 5 * SCALE)
+                    if 0 <= ax1[0] + x_offset < W and 0 <= ax1[1] < H:
+                        cv2.putText(big, "F", lab,
+                                    cv2.FONT_HERSHEY_SIMPLEX, 0.62, PRESS_BGR,
+                                    2, cv2.LINE_AA)
+
+            # DexForce virtual target: same projection, target pose.
+            tgt7 = (targets_7 or {}).get(side)
+            # NO CONTACT IS DECIDED ON THE POSE, NOT ON PIXELS. The exporter
+            # guarantees target == observed pose exactly when force == 0, so
+            # equality is the honest test. A pixel threshold was the first
+            # version and it is wrong in the direction that matters: a real
+            # 1 N press at a metre projects to under a pixel and would have
+            # been silently drawn as free space.
+            if tgt7 is not None and not np.allclose(
+                    np.asarray(tgt7, float)[:3],
+                    np.asarray(pose_tuple[1], float)[:3]):
+                # Exaggerate the OFFSET, in world millimetres, before
+                # projecting — so the ring stays on the ray the real target
+                # lies on and only its distance along that ray is scaled.
+                # Scaling the projected pixels instead would move it off the
+                # pressing direction wherever the camera is oblique.
+                obs7 = np.asarray(pose_tuple[1], float)
+                shown7 = np.asarray(tgt7, float).copy()
+                shown7[:3] = obs7[:3] + TARGET_GAIN * (shown7[:3] - obs7[:3])
+                tres = project_gel_pose(shown7, gel, pc["T_mocap_to_cam"],
+                                        pc["intrinsics"],
+                                        axis_len_mm=axis_len_mm)
+                if tres is not None:
+                    tx, ty = _scale_to_thumb(tres[0][0], tres[0][1])
+                    tx += x_offset
+                    tx_b, ty_b = tx * SCALE, ty * SCALE
+                    cv2.line(big, (cx_b, cy_b), (tx_b, ty_b),
+                             TARGET_BGR, 3, cv2.LINE_AA)
+                    cv2.circle(big, (tx_b, ty_b), 7, TARGET_BGR, 3,
+                               cv2.LINE_AA)
             # Dot (effective: inner r=2, outer r=3 -> doubled to 4 / 6 on 2x canvas)
             dot = GEL_DOT_BGR[side]
             cv2.circle(big, (cx_b, cy_b), 4, dot, -1, cv2.LINE_AA)
@@ -407,7 +656,7 @@ def draw_projection_overlay(panel: np.ndarray,
             if frozen_side is not None and side == frozen_side:
                 cv2.circle(big, (cx_b, cy_b), 12, FROZEN_BGR, 3, cv2.LINE_AA)
 
-    panel[:] = cv2.resize(big, (W, H), interpolation=cv2.INTER_AREA)
+    region[:] = cv2.resize(big, (W, H), interpolation=cv2.INTER_AREA)
 
 
 # ──────────────────────────────────────────────────────────────────────────────

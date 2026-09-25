@@ -1,0 +1,17 @@
+{
+	"folders": [
+		{
+			"path": ".."
+		},
+		{
+			"path": "../../../../media/yxma/Disk1/twm"
+		},
+		{
+			"path": "../../src/twm"
+		},
+		{
+			"path": "../../../../media/yxma/Disk1/yuxiang/mini_data_parquet"
+		}
+	],
+	"settings": {}
+}

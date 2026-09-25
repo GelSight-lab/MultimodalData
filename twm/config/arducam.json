@@ -1,0 +1,22 @@
+{
+  "cameras": [
+    {
+      "slot": "cam0",
+      "serial": "TWML0001",
+      "position": "left",
+      "width": 640,
+      "height": 480,
+      "fps": 30,
+      "pixel_format": "MJPG"
+    },
+    {
+      "slot": "cam1",
+      "serial": "TWMR0001",
+      "position": "right",
+      "width": 640,
+      "height": 480,
+      "fps": 30,
+      "pixel_format": "MJPG"
+    }
+  ]
+}

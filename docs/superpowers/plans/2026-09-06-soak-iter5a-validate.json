@@ -1,0 +1,64 @@
+{
+  "path": "/media/yxma/Disk1/twm/data/soak_test/2026-09-06/episode_001.h5",
+  "ok": true,
+  "checks": [
+    {
+      "name": "metadata",
+      "ok": true,
+      "detail": "valid=True, ended_by=operator, frame_count=17839, gap_count=0"
+    },
+    {
+      "name": "shapes",
+      "ok": true,
+      "detail": "13 dataset(s) match (T=17839) and expected dtype"
+    },
+    {
+      "name": "tick_rate",
+      "ok": true,
+      "detail": "median dt 33.42 ms, max dt 84.64 ms, late 0.16% (29 tick(s))"
+    },
+    {
+      "name": "duration",
+      "ok": true,
+      "detail": "T=17839 >= required 0.97 x (600.0s x 30fps - 10 warmup) = 17450.3"
+    },
+    {
+      "name": "sensor_sync",
+      "ok": true,
+      "detail": "gelsight/left: lag [18.7, 157.3] ms, 16.7 Hz distinct; gelsight/right: lag [17.9, 148.1] ms, 17.1 Hz distinct"
+    },
+    {
+      "name": "content",
+      "ok": true,
+      "detail": "realsense/cam0/color (min std 61.45, 19/19 differ); realsense/cam0/depth (min std 511.57, 19/19 differ); realsense/cam1/color (min std 51.26, 19/19 differ); realsense/cam1/depth (min std 303.16, 19/19 differ); realsense/cam2/color (min std 36.17, 19/19 differ); realsense/cam2/depth (min std 325.83, 19/19 differ); gelsight/left/frames (min std 38.06, 19/19 differ); gelsight/right/frames (min std 24.70, 19/19 differ)"
+    },
+    {
+      "name": "optitrack",
+      "ok": true,
+      "detail": "no samples (ok if recorded with --no_optitrack)"
+    },
+    {
+      "name": "writer",
+      "ok": true,
+      "detail": "queue_peak_fraction=0.133, writer_mean_mb_s=263.2"
+    }
+  ],
+  "stats": {
+    "T": 17839,
+    "median_dt": 0.03341841697692871,
+    "max_dt": 0.08463716506958008,
+    "late_fraction": 0.0016257427962776095,
+    "late_count": 29,
+    "sensor_lag_min_s.gelsight/left": 0.018676042556762695,
+    "sensor_lag_max_s.gelsight/left": 0.15733861923217773,
+    "sensor_late_count.gelsight/left": 0,
+    "distinct_sensor_hz.gelsight/left": 16.677838879936928,
+    "sensor_lag_min_s.gelsight/right": 0.017894983291625977,
+    "sensor_lag_max_s.gelsight/right": 0.14809536933898926,
+    "sensor_late_count.gelsight/right": 0,
+    "distinct_sensor_hz.gelsight/right": 17.081402224496944,
+    "optitrack_samples": 0,
+    "queue_peak_fraction": 0.13333333333333333,
+    "writer_mean_mb_s": 263.15038622522775
+  }
+}

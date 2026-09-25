@@ -1,0 +1,287 @@
+"""Command-line entry point.
+
+    python -m react_preprocess build --task pushT [--date D] [--with-depth]
+    python -m react_preprocess segment --task pushT
+    python -m react_preprocess audit --root /path/to/data/pushT
+    python -m react_preprocess backfill-flags --root /path/to/data/pushT
+    python -m react_preprocess verify-flags --root /path/to/data/pushT
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+from pathlib import Path
+
+from . import backfill, curation, segment as segment_mod
+from .config import H5_ROOTS, STAGE_ROOT
+from .h5io import discover
+from .pipeline import build_episode
+
+
+def cmd_build(args) -> int:
+    root = H5_ROOTS[args.task]
+    paths = discover(args.task, root, args.date, args.episodes)
+    if not paths:
+        print(f"no source recordings under {root}", file=sys.stderr)
+        return 1
+    print(f"[build] {args.task}: {len(paths)} episodes -> {STAGE_ROOT}", flush=True)
+    failures = refused = 0
+    for p in paths:
+        report = build_episode(p, args.task, force=args.force,
+                               with_depth=args.with_depth,
+                               encode_video=not args.meta_only,
+                               auto_repair=not args.no_repair,
+                               single_pass=args.single_pass)
+        print(f"  {report}", flush=True)
+        failures += report.status == "FAIL"
+        refused += report.status == "RECOVERED-NOT-PUBLISHABLE"
+    # A refusal is not a failure, but it must not vanish into the log either:
+    # it means a recording exists that the release does not contain.
+    tail = f" ({failures} failed"
+    tail += f", {refused} recovered but not publishable" if refused else ""
+    print(f"[build] done{tail})")
+    return 1 if failures else 0
+
+
+def _resolve_roots(args) -> list[Path]:
+    if args.root:
+        return [Path(args.root)]
+    return [STAGE_ROOT / t for t in (H5_ROOTS if not args.task else [args.task])]
+
+
+def cmd_audit(args) -> int:
+    for root in _resolve_roots(args):
+        reports = backfill.process_tree(root, dry_run=True)
+        if not reports:
+            print(f"[audit] {root}: no parquet found")
+            continue
+        summary = backfill.aggregate(reports)
+        print(f"[audit] {root}")
+        print(f"  episodes={summary['episodes']} rows={summary['rows']}")
+        print(f"  unique tactile frames = {summary['unique_tactile']} "
+              f"({summary['duplicate_ratio']*100:.1f}% duplicated)")
+        print(f"  effective tactile rate = {summary['effective_fps']:.1f} fps "
+              f"(rows written at 30 fps)")
+        print(f"  longest frozen run    = {summary['max_repeat_run']} frames "
+              f"({summary['max_repeat_run']/30:.2f} s)")
+        if args.json:
+            Path(args.json).write_text(json.dumps(
+                {"summary": summary, "episodes": reports}, indent=2))
+            print(f"  wrote {args.json}")
+    return 0
+
+
+def cmd_backfill(args) -> int:
+    for root in _resolve_roots(args):
+        reports = backfill.process_tree(root, dry_run=args.dry_run)
+        if not reports:
+            print(f"[backfill] {root}: no parquet found")
+            continue
+        summary = backfill.aggregate(reports)
+        verb = "would update" if args.dry_run else "updated"
+        print(f"[backfill] {verb} {len(reports)} parquet under {root}")
+        print(f"  duplicate ratio {summary['duplicate_ratio']*100:.1f}% "
+              f"-> effective {summary['effective_fps']:.1f} fps")
+    return 0
+
+
+def cmd_verify(args) -> int:
+    """Check the recovered flags.
+
+    Against source H5 this is exact. Against the published MP4s it can only be
+    approximate, because H.264 is lossy: a duplicated source frame does not
+    decode back to identical pixels.
+    """
+    task = args.task or "pushT"
+    root = Path(args.root) if args.root else STAGE_ROOT / task
+    pqs = sorted(root.rglob("meta/**/episode_*.parquet"))[: args.limit_episodes]
+    if not pqs:
+        print(f"no parquet under {root}", file=sys.stderr)
+        return 1
+
+    bad = 0
+    for pq_path in pqs:
+        date, ep = pq_path.parent.name, pq_path.stem
+        if args.against == "h5":
+            h5 = H5_ROOTS[task] / date / f"{ep}.h5"
+            if not h5.exists():
+                print(f"  {ep}: source H5 missing, skipped")
+                continue
+            search = range(args.shift_min, args.shift_max + 1) if args.shift is None else None
+            res = backfill.verify_against_h5(pq_path, h5, args.side, args.frames,
+                                             shift=args.shift, search=search)
+            ok = res["mismatches"] == 0
+            bad += not ok
+            how = "detected" if res["shift_detected"] else "given"
+            print(f"  {ep}: {'OK      ' if ok else 'MISMATCH'} "
+                  f"n={res['compared']} mismatches={res['mismatches']} "
+                  f"tactile_shift={res['shift']:+d} ({how}) "
+                  f"unique proxy/source = {res['proxy_unique']}/{res['source_unique']}")
+        else:
+            video = root / "videos" / date / ep / f"tactile_{args.side}.mp4"
+            if not video.exists():
+                print(f"  {ep}: no video, skipped")
+                continue
+            res = backfill.verify_against_video(pq_path, video, args.frames, args.tol)
+            ok = res["mismatches"] == 0
+            bad += not ok
+            print(f"  {ep}: {'OK      ' if ok else 'MISMATCH'} "
+                  f"n={res['compared']} mismatches={res['mismatches']} "
+                  f"unique proxy/video = {res['proxy_unique']}/{res['video_unique']} "
+                  f"MAD dup<={res['mad_duplicate_max']:.2f} new>={res['mad_new_min']:.2f}")
+    print(f"[verify] against {args.against}: {len(pqs)} episodes, {bad} mismatching")
+    return 1 if bad else 0
+
+
+def cmd_curate(args) -> int:
+    """Rebuild bad_frames.json / segments.json / episodes.jsonl for a task."""
+    for task in ([args.task] if args.task else sorted(H5_ROOTS)):
+        try:
+            root = Path(args.root) if getattr(args, "root", None) else STAGE_ROOT
+            s = curation.build_task(task, root, write=not args.dry_run)
+        except FileNotFoundError as exc:
+            print(f"[curate] {task}: {exc}", file=sys.stderr)
+            continue
+        verb = "would write" if args.dry_run else "wrote"
+        print(f"[curate] {task}: {s['episodes']} episodes, {s['segments']} segments, "
+              f"{s['total_frames']:,} frames, {s['bad_frames']} bad "
+              f"({s['bad_fraction']*100:.2f}%), clean {s['clean_frames']:,} "
+              f"({s['clean_minutes']:.1f} min) — {verb}")
+    return 0
+
+
+def cmd_segment(args) -> int:
+    """Cut built episodes down to their clean spans, one span per episode."""
+    rc = 0
+    for task in ([args.task] if args.task else sorted(H5_ROOTS)):
+        try:
+            s = segment_mod.build_task(
+                task, args.src or STAGE_ROOT, args.out, args.dates,
+                min_frames=int(round(args.min_seconds * 30.0)),
+                verify=not args.no_verify, dry_run=args.dry_run,
+                detect_root=args.detect_root, force=args.force)
+        except FileNotFoundError as exc:
+            print(f"[segment] {task}: {exc}", file=sys.stderr)
+            continue
+        except RuntimeError as exc:
+            # A frame-count mismatch means the cut did not land where curation
+            # said it would, which is the one thing this stage promises.
+            print(f"[segment] {task}: {exc}", file=sys.stderr)
+            rc = 1
+            continue
+        verb = "would write" if args.dry_run else "wrote"
+        print(f"[segment] {task}: {s['episodes']} segments, "
+              f"{s['kept_minutes']:.1f} min kept of "
+              f"{s['raw_frames']/30.0/60:.1f} min "
+              f"({s['kept_fraction']*100:.1f}%), "
+              f"{len(s['dropped_spans'])} spans below "
+              f"{s['min_publish_seconds']:g}s dropped, "
+              f"{s.get('skipped_already_cut', 0)} 集已剪过跳过 — {verb}")
+        for u in s.get("unreadable", []):
+            print(f"  ★ {u['episode']} 无法解码，需修复: {u['why']}", file=sys.stderr)
+            rc = 1
+    return rc
+
+
+def main(argv=None) -> int:
+    ap = argparse.ArgumentParser(prog="react_preprocess")
+    sub = ap.add_subparsers(dest="cmd", required=True)
+
+    b = sub.add_parser("build", help="source H5 -> published release")
+    b.add_argument("--task", required=True, choices=sorted(H5_ROOTS))
+    b.add_argument("--date")
+    b.add_argument("--episodes", nargs="*")
+    b.add_argument("--force", action="store_true")
+    b.add_argument("--with-depth", action="store_true")
+    b.add_argument("--meta-only", action="store_true",
+                   help="recompute parquet without re-encoding video")
+    b.add_argument("--no-single-pass", dest="single_pass",
+                   action="store_false",
+                   help="the per-stream path: the reference the single-pass\n"
+                        "equivalence was measured against")
+    b.add_argument("--single-pass", action="store_true", default=True,
+                   help="encode every colour stream from one traversal of "
+                          "the recording instead of one per stream. Same "
+                          "output, 1.8x faster: the recording interleaves "
+                          "streams frame by frame, so per-stream encoding "
+                          "walks the whole file seven times. SEEK-bound, "
+                          "not bandwidth-bound -- measured 1.81 vs 1.90 GB "
+                          "read for the same episode (pipeline._rgb_plan)")
+    b.add_argument("--no-repair", action="store_true",
+                   help="do not attempt to recover a recording that will not "
+                        "open; report the diagnosis and move on. Recovery "
+                        "rewrites the recording's worth of bytes and can take "
+                        "half an hour")
+    b.set_defaults(func=cmd_build)
+
+    a = sub.add_parser("audit", help="report tactile duplication")
+    a.add_argument("--root")
+    a.add_argument("--task", choices=sorted(H5_ROOTS))
+    a.add_argument("--json")
+    a.set_defaults(func=cmd_audit)
+
+    f = sub.add_parser("backfill-flags", help="add tactile_*_is_new to parquet")
+    f.add_argument("--root")
+    f.add_argument("--task", choices=sorted(H5_ROOTS))
+    f.add_argument("--dry-run", action="store_true")
+    f.set_defaults(func=cmd_backfill)
+
+    c = sub.add_parser("curate", help="rebuild bad_frames/segments/episodes indices")
+    c.add_argument("--task", choices=sorted(H5_ROOTS))
+    c.add_argument("--root", default=None,
+                   help="tree to curate (default STAGE_ROOT). The cut tree "
+                        "needs its own indices: cutting creates new publishing "
+                        "units, and one absent from splits.json is read as "
+                        "TRAIN by ReactVideoDataset — a silent leak.")
+    c.add_argument("--dry-run", action="store_true")
+    c.set_defaults(func=cmd_curate)
+
+    g = sub.add_parser("segment", help="cut episodes down to their clean spans")
+    g.add_argument("--task", choices=sorted(H5_ROOTS))
+    g.add_argument("--dates", nargs="*")
+    g.add_argument("--src", help="tree to cut (default: STAGE_ROOT). In the "
+                        "real chain this is the Z-up output, which is what "
+                        "ships; --detect-root stays on the tree the defects "
+                        "were measured on")
+    g.add_argument("--out", help="destination tree (default: <STAGE_ROOT>_cut)")
+    g.add_argument("--detect-root",
+                   help="tree holding the _detect.pt sidecars and the videos "
+                        "the corruption detectors read (default: --task's "
+                        "source tree). Differs from the cut tree in the real "
+                        "chain: defects are measured on the master, the cut is "
+                        "applied to the force+Z-up tree that is published")
+    g.add_argument("--min-seconds", type=float,
+                   default=segment_mod.MIN_PUBLISH_SECONDS,
+                   help="drop clean spans shorter than this")
+    g.add_argument("--no-verify", action="store_true",
+                   help="skip the per-stream frame-count check (it decodes "
+                        "every written video)")
+    g.add_argument("--force", action="store_true",
+                   help="re-cut episodes already present in the output tree; "
+                        "by default a wave only cuts what is new")
+    g.add_argument("--dry-run", action="store_true")
+    g.set_defaults(func=cmd_segment)
+
+    v = sub.add_parser("verify-flags", help="check flags against ground truth")
+    v.add_argument("--root")
+    v.add_argument("--task", choices=sorted(H5_ROOTS))
+    v.add_argument("--against", choices=("h5", "video"), default="h5",
+                   help="h5 = exact (source pixels); video = approximate (lossy)")
+    v.add_argument("--side", choices=("left", "right"), default="left")
+    v.add_argument("--frames", type=int, default=600)
+    v.add_argument("--tol", type=float, default=1.0,
+                   help="mean-abs-diff threshold when checking against video")
+    v.add_argument("--shift", type=int, default=None,
+                   help="known baked-in tactile shift; omit to auto-detect")
+    v.add_argument("--shift-min", type=int, default=0)
+    v.add_argument("--shift-max", type=int, default=20)
+    v.add_argument("--limit-episodes", type=int, default=2)
+    v.set_defaults(func=cmd_verify)
+
+    args = ap.parse_args(argv)
+    return args.func(args)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

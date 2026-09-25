@@ -1,0 +1,462 @@
+"""Step-by-step pipeline debug gallery: raw image -> force, on 3 datasets.
+
+Answers: is cnc_Mini's low rho a dataset-quality problem or a recon problem?
+Shows every intermediate stage on sampled frames:
+
+    raw -> ref -> dI (difference) -> valid mask -> LUT gradients -> Poisson
+    depth -> features (vol, maxd, area) -> calibrated force vs GT
+
+Datasets:
+  glowtact  markerless, the LUT's home sensor (control: recon known good)
+  cnc       markerless, FOREIGN sensor, no reference frames shipped
+            (ref = per-probe median of 10 lightest presses)
+  feats     dot/marker type (ref = global median of 200 frames)
+
+Per-dataset diagnostics printed and saved:
+  ref RGB mean (sensor color shift), LUT observed-bin coverage on contact
+  pixels (out-of-domain measure), rho(maxd, |z| or F), rho(F_pred, F_gt).
+
+Run:
+  python -m force_recovery.debug_gallery features   # compute + diagnose
+  python -m force_recovery.debug_gallery gallery    # render 18 samples/dataset
+"""
+from __future__ import annotations
+
+import io
+import json
+import sys
+import tarfile
+from pathlib import Path
+
+import cv2
+import numpy as np
+from PIL import Image
+
+sys.path.append(str(Path(__file__).resolve().parents[1]))
+from force_recovery.lut_calibration import (  # noqa: E402
+    crop, GLOWTACT, PAT, BINS, DI_RANGE, CAL_OUT, GEL_THICKNESS_MM,
+    MM_PER_PIXEL, W, H)
+
+OUT = Path("/media/yxma/Disk1/twm/force_recovery/site_assets/debug_gallery")
+CNC = Path("/media/yxma/Disk1/twm/force_recovery/fota_cnc/cnc/cnc_Mini")
+FEATS_PQ = Path("/media/yxma/Disk1/yuxiang/mini_data_parquet/feats")
+N_FIT = 350          # frames per dataset for feature fit + diagnostics
+N_GALLERY = 18
+RNG = np.random.default_rng(0)
+
+_cal = np.load(CAL_OUT / "glowtact_lut.npz")
+LUT, CNT = _cal["lut"], _cal["count"]
+
+
+# ---------------------------------------------------------------- pipeline
+def stages(img: np.ndarray, ref: np.ndarray,
+           bc_ref: np.ndarray | None = None) -> dict:
+    """All intermediate stages from raw to depth + features.
+
+    `bc_ref` is the reference the BOUNDARY CONDITION is decided from, when that
+    differs from the reference the difference image is taken against. Exactly
+    one caller needs it and the reason is a trap: `marker_removal.stages_depth`
+    inpaints the dots out of both images first, and the boundary rule decides
+    "marker gel, so clamp" BY DETECTING THOSE DOTS. Inpainting destroys the
+    evidence the rule reads, so the reference handed to `stages` no longer
+    looked like a marker gel — measured on 40 FEATS frames, the rule flipped
+    to the free boundary on 3 of them and moved the depth by up to 1.18 mm on
+    a surface only 1-2 mm deep. The other 37 were saved by a second test (no
+    anchor region), which is luck, not a design.
+    """
+    dI = img - ref
+    q = np.clip((dI + DI_RANGE) / (2 * DI_RANGE) * (BINS - 1),
+                0, BINS - 1).astype(np.int32)
+    g = LUT[q[..., 0], q[..., 1], q[..., 2]].copy()
+    observed = CNT[q[..., 0], q[..., 1], q[..., 2]] > 0
+    mag = np.maximum(np.maximum(np.abs(dI[..., 0]), np.abs(dI[..., 1])),
+                     np.abs(dI[..., 2]))
+    mag = cv2.GaussianBlur(mag, (5, 5), 1.5)
+    valid = mag > 8.0
+    valid = cv2.morphologyEx(valid.astype(np.uint8), cv2.MORPH_OPEN,
+                             np.ones((3, 3), np.uint8)).astype(bool)
+    g[~valid] = 0.0
+    # Boundary condition chosen from the data, not assumed (force_recovery.
+    # poisson.integrate). The DST solver this used to call unconditionally
+    # pins the frame border to zero, which is false for any contact that
+    # reaches the sensor edge — and on these datasets 294-409 of every ~400
+    # frames do. Measured effect on force rho: cnc_mini_26 +0.116,
+    # FoTa cnc +0.146; FEATS is left on the clamped solver by the rule because
+    # its marker lattice leaves no flat gel to anchor a free boundary on.
+    from .poisson import integrate
+    if valid.any():
+        depth, _bc = integrate(g[..., 0], g[..., 1], valid,
+                              ref=ref if bc_ref is None else bc_ref)
+    else:
+        depth = np.zeros(valid.shape, np.float64)
+    if depth[valid].size and np.median(depth[valid]) < 0:
+        depth = -depth
+    d = np.maximum(depth, 0.0)
+    # THE GEL IS 4.25 mm THICK AND THE INDENTER CANNOT COMPRESS MORE THAN THAT
+    #
+    # On a contact the sensor images WHOLE this bound never binds (0 of 46
+    # sampled frames reach it). It binds on contacts cut by the frame edge,
+    # where the visible flank says "the surface is descending" and the depth at
+    # which it stops is outside the image — so the free boundary integrates a
+    # ramp with nothing to stop it: peaks to 9.26 mm with a constant anchor,
+    # 6.54 with a plane, 5.25 with the quadratic actually used. Better
+    # detrending only mitigates; the depth of a contact you can see half of is
+    # not identifiable, and no boundary condition makes it so.
+    #
+    # So the bound is applied as what it is — physics, not a fit — and the
+    # frame is flagged rather than silently trusted. Measured on 300 presses:
+    # peak p95 5.12 -> 4.25 mm, 15% over the gel -> 0%, and force rho
+    # 0.5348 -> 0.5622 (dropping those frames entirely gives 0.5225, so the
+    # bounded value carries more than their absence).
+    over = float((d > GEL_THICKNESS_MM).mean())
+    d = np.minimum(d, GEL_THICKNESS_MM)
+    m = d > 0.05
+    px_mm2 = MM_PER_PIXEL ** 2
+    feats = {
+        "vol": float(d[m].sum() * px_mm2), "vol2": float((d[m] ** 2).sum() * px_mm2),
+        "maxd": float(np.percentile(d, 99.8)), "area": float(m.sum() * px_mm2),
+    }
+    feats["h1"] = np.sqrt(feats["area"]) * feats["maxd"]
+    cov = float(observed[valid].mean()) if valid.any() else 0.0
+    # gx/gy are returned, not just their magnitude: the gradient field is what
+    # the LUT actually predicts, and re-integrating it under a different
+    # boundary condition must use THESE arrays, not a second lookup that could
+    # drift from this one.
+    return {"dI": dI, "gx": g[..., 0], "gy": g[..., 1],
+            "gmag": np.hypot(g[..., 0], g[..., 1]), "valid": valid,
+            "depth": d, "feats": feats, "lut_coverage": cov,
+            "over_gel_frac": over}
+
+
+def feat_vec(f):
+    return [f["vol"], f["vol2"], f["maxd"], f["area"], f["h1"]]
+
+
+# ---------------------------------------------------------------- datasets
+def _num(s):                       # cnc filenames use '-' as decimal point
+    sign = -1.0 if s.startswith("-") else 1.0
+    return sign * float(s.lstrip("-").replace("-", "."))
+
+
+def load_glowtact():
+    fams = ["round", "quad", "star", "triangle", "B", "quad_small"]
+    frames, refs = [], {}
+    for fam in fams:
+        refs[fam] = crop(np.asarray(Image.open(
+            GLOWTACT / fam / "initial.jpg").convert("RGB"))).astype(np.float32)
+        rows = []
+        for p in (GLOWTACT / fam).glob("*.jpg"):
+            m = PAT.search(p.name)
+            if m and float(m["f"]) > 0.3:
+                rows.append({"path": p, "group": fam, "f": float(m["f"]),
+                             "z": -float(m["z"]), "x": float(m["x"]),
+                             "y": float(m["y"])})
+        rows = [rows[i] for i in RNG.permutation(len(rows))]
+        frames += rows[:N_FIT // len(fams) + 20]
+    def get(fr):
+        img = crop(np.asarray(Image.open(fr["path"]).convert("RGB"))
+                   ).astype(np.float32)
+        return img, refs[fr["group"]]
+    return frames, get
+
+
+def load_cnc():
+    import re
+    pat = re.compile(r"(Mini_[A-F])\|(\d+)pos\|([-\d]+), ([-\d]+), "
+                     r"([-\d]+) f\|([-\d]+)\.jpg$")
+    blobs, metas = {}, []
+    for split in ("train", "val"):
+        with tarfile.open(CNC / split / "data-000000.tar") as tf:
+            for mem in tf.getmembers():
+                m = pat.search(mem.name)
+                if not m:
+                    continue
+                f = _num(m[6])
+                if f <= 0.15:
+                    pass                      # keep light frames for refs
+                blobs[mem.name] = tf.extractfile(mem).read()
+                metas.append({"key": mem.name, "group": m[1], "f": f,
+                              "z": abs(_num(m[5])), "x": _num(m[3]),
+                              "y": _num(m[4])})
+    refs = {}
+    for probe in sorted({m["group"] for m in metas}):
+        light = sorted([m for m in metas if m["group"] == probe],
+                       key=lambda r: r["f"])[:10]
+        refs[probe] = np.median(np.stack([
+            crop(np.asarray(Image.open(io.BytesIO(blobs[r["key"]]))
+                            .convert("RGB"))).astype(np.float32)
+            for r in light]), 0)
+    frames = [m for m in metas if m["f"] > 0.3]
+    import os
+    n = int(os.environ.get("CNC_N", N_FIT + 40))
+    frames = [frames[i] for i in RNG.permutation(len(frames))][:n]
+    def get(fr):
+        img = crop(np.asarray(Image.open(io.BytesIO(blobs[fr["key"]]))
+                              .convert("RGB"))).astype(np.float32)
+        return img, refs[fr["group"]]
+    return frames, get
+
+
+# FEATS ships six parquet splits. Four are the SAME sensor and gel and differ
+# only in which indenters they hold; two (`test_diff_sensor_*`) are a different
+# sensor with a different pad, and pooling those would break the one assumption
+# the per-group least squares makes — that one sensor's response is being
+# fitted. They are excluded here and are a transfer test, not training data.
+FEATS_SAME_SENSOR = ("train-00000-of-00001.parquet",
+                     "val-00000-of-00001.parquet",
+                     "test-00000-of-00001.parquet",
+                     "test_unknown_indenters-00000-of-00001.parquet")
+
+
+def load_feats(n: int = N_FIT + 40, splits=FEATS_SAME_SENSOR):
+    """FEATS frames, pooled over the same-sensor splits.
+
+    This read only `val` (704 rows) and then cut to 390, so every FEATS number
+    on the site was computed from 2.3% of the 16,969 rows on disk while the
+    prose called 390 "the dataset". The default `n` is unchanged so figure code
+    keeps its old cost; evaluation asks for the pool it wants.
+    """
+    import pyarrow.parquet as pq
+    parts = [pq.read_table(FEATS_PQ / s,
+                           columns=["image", "f_z", "indenter"]).to_pandas()
+             for s in splits]
+    import pandas as pd
+    t = pd.concat(parts, ignore_index=True)
+    imgs = t["image"].to_list()
+    def decode(i):
+        a = np.asarray(Image.open(io.BytesIO(imgs[i])).convert("RGB"))
+        return cv2.resize(a, (W, H)).astype(np.float32)
+    ridx = RNG.permutation(len(t))[:200]
+    ref = np.median(np.stack([decode(i) for i in ridx]), 0)
+    frames = [{"idx": int(i), "group": t["indenter"].iloc[i],
+               "f": float(abs(t["f_z"].iloc[i])), "z": float("nan"),
+               "x": float("nan"), "y": float("nan")}
+              for i in RNG.permutation(len(t))[:n]]
+    def get(fr):
+        return decode(fr["idx"]), ref
+    return frames, get
+
+
+DATASETS = {"glowtact": load_glowtact, "cnc": load_cnc, "feats": load_feats}
+
+
+# ---------------------------------------------------------------- commands
+def cmd_features():
+    from scipy.stats import spearmanr
+    OUT.mkdir(parents=True, exist_ok=True)
+    for name, loader in DATASETS.items():
+        frames, get = loader()
+        out = []
+        for fr in frames:
+            img, ref = get(fr)
+            st = stages(img, ref)
+            out.append({**{k: fr[k] for k in ("group", "f", "z", "x", "y")},
+                        **st["feats"], "cov": st["lut_coverage"],
+                        "ref_rgb": [float(v) for v in ref.mean((0, 1))]})
+        path = OUT / f"features_{name}.json"
+        json.dump(out, open(path, "w"))
+        f = np.array([r["f"] for r in out])
+        z = np.array([r["z"] for r in out])
+        maxd = np.array([r["maxd"] for r in out])
+        cov = np.array([r["cov"] for r in out])
+        print(f"== {name}: n={len(out)} ref_rgb={np.round(out[0]['ref_rgb'],1)}"
+              f" LUT-coverage med={np.median(cov):.2f}")
+        if np.isfinite(z).all():
+            for g in sorted({r['group'] for r in out}):
+                m = np.array([r['group'] == g for r in out])
+                print(f"   {g:10s} rho(maxd,z)={spearmanr(maxd[m], z[m]).statistic:.3f}"
+                      f" rho(maxd,F)={spearmanr(maxd[m], f[m]).statistic:.3f}")
+        else:
+            print(f"   rho(maxd,F)={spearmanr(maxd, f).statistic:.3f}")
+
+
+def _fit_predict(rows):
+    """Per-group half/half fit -> predictions for the eval half."""
+    from sklearn.isotonic import IsotonicRegression
+    X = np.array([feat_vec(r) for r in rows])
+    f = np.array([r["f"] for r in rows])
+    groups = np.array([r["group"] for r in rows])
+    pred = np.full(len(f), np.nan)
+    for g in sorted(set(groups)):
+        m = np.where(groups == g)[0]
+        half = len(m) // 2
+        fi, ei = m[:half], m[half:]
+        if len(fi) < 8:
+            continue
+        wl, *_ = np.linalg.lstsq(X[fi], f[fi], rcond=None)
+        iso = IsotonicRegression(out_of_bounds="clip").fit(X[fi] @ wl, f[fi])
+        pred[ei] = iso.predict(X[ei] @ wl)
+    return pred
+
+
+def cmd_gallery():
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    from scipy.stats import spearmanr
+
+    for name, loader in DATASETS.items():
+        frames, get = loader()
+        # feature pass for calibration
+        rows = []
+        for fr in frames:
+            img, ref = get(fr)
+            rows.append({**fr, **stages(img, ref)["feats"]})
+        pred = _fit_predict(rows)
+        ok = np.isfinite(pred)
+        f = np.array([r["f"] for r in rows])
+        rho = spearmanr(pred[ok], f[ok]).statistic
+        mae = np.abs(pred[ok] - f[ok]).mean()
+        # stratified gallery picks among predicted rows
+        cand = np.where(ok)[0]
+        order = cand[np.argsort(f[cand])]
+        picks = order[np.linspace(0, len(order) - 1, N_GALLERY).astype(int)]
+        gdir = OUT / name
+        gdir.mkdir(parents=True, exist_ok=True)
+        items = []
+        for k, i in enumerate(picks):
+            fr = rows[i]
+            img, ref = get(fr)
+            st = stages(img, ref)
+            # 2 rows of 4: a 7-wide strip in the 880 px page column gives
+            # each panel 126 px and a ~3.4 px effective title.
+            fig, axg = plt.subplots(2, 4, figsize=(15.5, 15.5 / (4 * 4 /
+                                                   (2 * 3)) * 1.30))
+            ax = axg.ravel()
+            panels = [
+                (img / 255, f"raw  [{fr['group']}]", None),
+                (ref / 255, "reference", None),
+                (np.clip(st["dI"] * 2 + 128, 0, 255) / 255, "dI = img - ref (x2)", None),
+                (st["valid"], "valid mask (|dI|>8)", "gray"),
+                (st["gmag"], "|LUT gradient|", "magma"),
+                (st["depth"], "depth [mm] (Poisson)", "viridis"),
+            ]
+            for a, (im, ti, cm) in zip(ax, panels):
+                a.imshow(im, cmap=cm)
+                a.set_title(ti, fontsize=11)
+                a.axis("off")
+            zs = "" if not np.isfinite(fr.get("z", np.nan)) else f"z={fr['z']:.2f}mm\n"
+            ax[6].text(0.02, 0.95, (
+                f"{zs}F_gt={fr['f']:.2f}N\nF_pred={pred[i]:.2f}N\n\n"
+                f"maxd={fr['maxd']:.2f}mm\nvol={fr['vol']:.1f}mm3\n"
+                f"area={fr['area']:.0f}mm2\nLUT cov={st['lut_coverage']*100:.0f}%"),
+                va="top", fontsize=12, family="monospace",
+                transform=ax[6].transAxes)
+            ax[6].axis("off")
+            ax[7].axis("off")            # 8th cell of the 2x4 grid is spare
+            fig.suptitle(f"{name} sample {k+1}/{N_GALLERY}", fontsize=13)
+            fig.tight_layout()
+            fp = gdir / f"sample_{k:02d}.png"
+            fig.savefig(fp, dpi=90, bbox_inches="tight")
+            plt.close(fig)
+            items.append(fp.name)
+        html = ["<html><body style='font-family:sans-serif;background:#111;color:#eee'>",
+                f"<h2>{name} — raw→force step-by-step "
+                f"(rho={rho:.3f}, MAE={mae:.2f}N on {ok.sum()} eval frames)</h2>"]
+        html += [f"<img src='{it}' style='width:100%;max-width:1600px'><br>"
+                 for it in items]
+        html.append("</body></html>")
+        (gdir / "index.html").write_text("\n".join(html))
+        print(f"{name}: rho={rho:.3f} MAE={mae:.2f}N -> {gdir}/index.html")
+
+
+if __name__ == "__main__":
+    {"features": cmd_features, "gallery": cmd_gallery}[
+        sys.argv[1] if len(sys.argv) > 1 else "features"]()
+
+
+# ── loaders for the two datasets the rebuilt site adds ─────────────────────
+# Both return the same (rows, get) contract as load_glowtact/load_cnc/
+# load_feats: `rows` is a list of dicts with at least {group, f} and `get(fr)`
+# returns (img, ref) as float32 crops. Written here so `site2_figures` has one
+# place to reach every dataset, rather than each figure knowing five layouts.
+
+def load_sparsh(n: int = 60):
+    """Sparsh / Meta gel pads, via the batch loader the metrics already use.
+
+    This took `BATCHES[:8]` while sizing `per` by `len(BATCHES)` — so it asked
+    for n frames, returned 0.8n, and silently dropped BOTH `sharp` batches,
+    which are the only sharp indenter Sparsh has and 35,356 of its 174,866
+    frames. Nothing recorded why the slice was there; it reads as a leftover
+    from when the last two batches would not load.
+    """
+    from .sparsh_data import BATCHES, load_frames
+
+    rows = []
+    per = max(-(-n // max(len(BATCHES), 1)), 2)
+    missing = []
+    for probe, b in BATCHES:
+        try:
+            fr, _ref_global = load_frames(probe, b, n=per)
+        except Exception as exc:                               # noqa: BLE001
+            missing.append(f"{probe}{b}: {type(exc).__name__}")
+            continue
+        for r in fr[:per]:
+            r = dict(r)
+            r["group"] = f"{probe}{b}"
+            r["f"] = float(r.get("f", r.get("fz", 0.0)))
+            rows.append(r)
+    if not rows:
+        raise LookupError("no Sparsh batches could be loaded")
+    if missing:
+        # A batch that will not load must SAY so. The previous silent `except`
+        # plus the [:8] slice is exactly how two whole batches went missing
+        # without anyone noticing.
+        print(f"  load_sparsh: {len(missing)} batch(es) unavailable: "
+              f"{'; '.join(missing)}", flush=True)
+
+    def get(fr):
+        # SPARSH FRAMES REACH US WITH R AND B EXCHANGED relative to this
+        # project's Mini, and the calibration-free solve reads each CHANNEL as
+        # one LED direction, so the swap rotates its whole gradient field.
+        #
+        # Measured, not assumed. For a sphere press the surface gradient points
+        # radially outward, so the dipole direction of each channel's dI IS
+        # that channel's LED azimuth. Over 30 sphere presses per sensor:
+        #
+        #                   rest hue      R        G        B
+        #     our Mini        172.1 deg  259.2    5.1     51.1
+        #     Sparsh, as-is    42.1 deg   75.7    4.3    259.8
+        #     Sparsh, R<->B   197.9 deg  259.8    4.3     75.7
+        #
+        # Swapped, R and G land within 1 deg of ours and the rest hue moves
+        # from 130 deg away to 26 deg away. A different gel tint would not
+        # align the LED azimuths; a channel-order difference does exactly this.
+        #
+        # `sparsh_data.load_frames` already normalises R/B ACROSS batches (all
+        # ten come out at hue 48-50), so this is the remaining global
+        # convention difference between that sensor and ours. A uniform channel
+        # permutation cannot disturb that per-batch normalisation.
+        img = crop(np.asarray(fr["img"], np.float32))
+        ref = crop(np.asarray(fr["ref"], np.float32))
+        return (np.ascontiguousarray(img[..., ::-1]),
+                np.ascontiguousarray(ref[..., ::-1]))
+    return rows, get
+
+
+def load_faf(n: int = 60):
+    """FeelAnyForce captures, from the extracted PNG tree."""
+    from PIL import Image
+
+    from .faf_extract import IMG_DIR
+    caps = sorted(d for d in IMG_DIR.iterdir() if d.is_dir())
+    if not caps:
+        raise LookupError(f"no FeelAnyForce captures under {IMG_DIR}")
+    rows, refs = [], {}
+    per = max(n // max(len(caps), 1), 1)
+    for c in caps:
+        pngs = sorted(c.glob("*.png"))
+        if len(pngs) < 3:
+            continue
+        refs[c.name] = crop(np.asarray(
+            Image.open(pngs[0]).convert("RGB"))).astype(np.float32)
+        for p in pngs[1:1 + per]:
+            rows.append({"path": p, "group": c.name, "f": None})
+    if not rows:
+        raise LookupError("FeelAnyForce captures held no usable frames")
+
+    def get(fr):
+        img = crop(np.asarray(
+            Image.open(fr["path"]).convert("RGB"))).astype(np.float32)
+        return img, refs[fr["group"]]
+    return rows, get

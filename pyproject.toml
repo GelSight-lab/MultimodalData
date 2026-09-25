@@ -20,3 +20,19 @@ dependencies = [
 
 [tool.setuptools]
 packages = ["probing_panda", "camera_stream", "optitrack", "ft_sensor", "misc", "twm"]
+
+[tool.pytest.ini_options]
+# `--import-mode=importlib` is load-bearing, not a preference. 66 test files
+# share a basename with another one (`test_frames.py`, `test_config.py`,
+# `test_detection.py`, ...), and pytest's default "prepend" mode derives a
+# module's import name from that basename, so the second file of each pair
+# collides with the first. Bare `pytest` collected 30 tests and 80 collection
+# ERRORS; under importlib it collects 616. That is what "the verifiers exist
+# but nothing can run them" looked like from the outside.
+addopts = "--import-mode=importlib"
+testpaths = ["tests", "twm"]
+# pytest keeps the last three runs' tmp_path trees. The gates here render real
+# MP4s, and /tmp/pytest-of-yxma reached 23 GB and left the 469 G root
+# partition with 148 K free, which blocked every tool in the session. Disk1
+# has the room.
+tmp_path_retention_count = 1

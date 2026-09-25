@@ -1,0 +1,5 @@
+{
+  "left": "2DUPB53G",
+  "right": "2BKRDTAD",
+  "_why": "The GelSight units this epoch's T_gel_to_rigid_* were solved on. Read from the recordings made against it: every HDF5 under data/*/2026-09-09..2026-09-22 up to toy/2026-09-22/episode_006 carries metadata.attrs['gelsight_serials'] = ['2DUPB53G', '2BKRDTAD']. The right unit was replaced on 2026-09-22 at about 18:00, so toy/2026-09-22/episode_007 onwards record '2BGLKZNT' and do NOT belong to this epoch."
+}

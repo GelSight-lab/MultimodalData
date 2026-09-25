@@ -1,0 +1,7 @@
+numpy
+pyarrow
+av
+opencv-python
+# optional (depth):
+# torch
+# scipy

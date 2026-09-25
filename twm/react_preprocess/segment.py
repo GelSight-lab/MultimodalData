@@ -1,0 +1,590 @@
+"""Cut published episodes down to their clean spans.
+
+    python -m react_preprocess segment --task pushT
+
+An episode built by ``pipeline`` is whatever the operator recorded, defects and
+all; ``curation`` then writes the defects to ``bad_frames.json`` and their
+complement to ``segments.json``. That is an honest description, but it is only
+a description: a reader who loads the parquet and the MP4s and never opens the
+sidecar trains on the frozen tactile and the teleported poses without ever
+being told. Nine of nineteen 2026-09 episodes carry at least one such span, one
+of them for its last two minutes.
+
+This stage makes the description structural instead. Each clean span becomes
+its own published episode, so every frame that ships is a frame that passed
+every detector, and there is no annotation left for a reader to skip. What was
+``bad_frames.json`` becomes the gaps between episodes.
+
+The cut is the LAST stage, after force recovery and the Z-up conversion, so
+every column those stages added is carried through by the same row slice and
+neither has to learn about segments.
+
+Cost, measured over the 2026-09 sessions: 132.2 min of recording becomes
+122.5 min across 38 episodes — 7.3% discarded, of which 4.7% is defective and
+2.6% is clean-but-too-short (see ``MIN_PUBLISH_SECONDS``).
+"""
+from __future__ import annotations
+
+import json
+import shutil
+import subprocess
+from pathlib import Path
+
+import numpy as np
+import pyarrow.parquet as pq
+
+from . import curation, detect as D
+from .config import FPS, STAGE_ROOT
+from .detect import UnreadableVideo
+
+# A published segment must be long enough to be a demonstration, not a
+# fragment. The measured span lengths are strongly bimodal: 19 spans under 1.3
+# seconds (the slivers between two nearby defects) and then a clean jump to
+# 2.5s, 11.6s and up. Anything below the floor is dropped rather than shipped,
+# because a 0.4-second "episode" costs a reader more to notice and exclude than
+# it can possibly contribute.
+#
+# 30s over 10s was the operator's call on 2026-09-11: at 10s the release keeps
+# 125.9 min in 48 episodes, at 30s it keeps 122.5 min in 38, and every one of
+# those 38 is long enough to hold a complete manipulation attempt.
+MIN_PUBLISH_SECONDS = 30.0
+MIN_PUBLISH_FRAMES = int(round(MIN_PUBLISH_SECONDS * FPS))
+
+# The streams every complete episode has. Named here so a partial build is
+# caught at cut time rather than silently shipping an episode missing a view.
+EXPECTED_STREAMS = ("view_left", "view_middle", "view_right",
+                    "tactile_left", "tactile_right",
+                    "wrist_left", "wrist_right")
+
+
+def _already_cut(out: Path, date: str, episode: str) -> bool:
+    """Has this source episode produced its parquet(s) in the cut tree?
+
+    Matches both shapes a cut can take: the whole episode copied under its own
+    name, or one file per span named ``<episode>_segNN``.
+    """
+    meta = out / "meta" / date
+    if not meta.is_dir():
+        return False
+    return bool(list(meta.glob(f"{episode}.parquet"))
+                or list(meta.glob(f"{episode}_seg*.parquet")))
+
+
+def _merge_jsonl_list(old: list, new: list) -> list:
+    """Union of two lists of dicts, order preserved, duplicates dropped."""
+    seen, out = set(), []
+    for r in list(old) + list(new):
+        k = json.dumps(r, sort_keys=True)
+        if k not in seen:
+            seen.add(k)
+            out.append(r)
+    return out
+
+
+def _merge_jsonl(path: Path, new_rows: list[dict], key: str) -> list[dict]:
+    """Existing rows first and unchanged, then the new ones; a repeat of the
+    same key is replaced, so re-cutting an episode updates it in place."""
+    old: list[dict] = []
+    if path.is_file():
+        old = [json.loads(l) for l in path.read_text().splitlines() if l.strip()]
+    seen = {r.get(key): i for i, r in enumerate(old)}
+    out = list(old)
+    for r in new_rows:
+        i = seen.get(r.get(key))
+        if i is None:
+            out.append(r)
+        else:
+            out[i] = r
+    return out
+
+
+def segment_name(episode: str, idx: int) -> str:
+    """``episode_003`` + span 1 -> ``episode_003_seg01``.
+
+    The source episode stays legible in the name on purpose. A renumbered flat
+    sequence would make the release tidier and make it impossible to ask "which
+    recording did this come from" without a lookup table.
+    """
+    return f"{episode}_seg{idx:02d}"
+
+
+def publishable_spans(report: dict, min_frames: int = MIN_PUBLISH_FRAMES):
+    """The clean spans of one episode report that are worth publishing.
+
+    Inclusive ``[a, b]`` in episode-video coordinates, which is what
+    ``segments.json`` uses, so these index the built MP4s and parquet directly.
+    """
+    T = int(report["n_frames"])
+    return [(a, b) for a, b in D.find_clean_segments(T, curation._bad_intervals(report))
+            if b - a + 1 >= min_frames]
+
+
+# ── video ────────────────────────────────────────────────────────────────────
+
+def dimensions(path: Path) -> tuple[int, int]:
+    """Frame size of a stream, and the first place a broken one is noticed.
+
+    Raises `UnreadableVideo` rather than CalledProcessError so the caller can
+    tell "this file is broken and wants repair" apart from any other
+    subprocess failure.
+    """
+    # A file that is not there is a different problem from one that will not
+    # decode, and saying "did not decode" for a missing path sends the reader
+    # looking for corruption. It happened: an interrupted stage_zup left a
+    # partial tree and four rope episodes were reported as undecodable when
+    # the streams simply had not been written yet.
+    if not Path(path).exists():
+        raise UnreadableVideo(f"{path} 不存在（上游阶段尚未产出或被中断）")
+    r = subprocess.run(
+        ["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries",
+         "stream=width,height", "-of", "csv=p=0:s=x", str(path)],
+        capture_output=True, text=True)
+    out = r.stdout.strip()
+    if r.returncode != 0 or "x" not in out:
+        raise UnreadableVideo(
+            f"{path} did not decode: {r.stderr.strip().splitlines()[0] if r.stderr.strip() else 'no output'}")
+    w, h = out.split("x")[:2]
+    return int(w), int(h)
+
+
+def cut_video(src: Path, spans, dsts) -> None:
+    """Write one output per span, frame-exactly, from a single decode pass.
+
+    The routing is done here, on decoded frames, rather than by an ffmpeg
+    filter graph. The obvious formulation —
+    ``select=between(n\\,a\\,b),setpts=N/FRAME_RATE/TB`` per output — is not
+    frame-exact: on a 120-frame probe, asking for [10,29] returned twenty
+    frames whose contents were 10, 10, 12, 13, … . The count was right and the
+    pixels were not, which is the failure mode this stage exists to remove and
+    the one a count check cannot see. Frames carrying their own index made it
+    visible; a real cut would just have shipped a duplicated frame.
+
+    Counting frames off the decoder in Python has no such subtlety, and reuses
+    ``encode.rgb_writer``, so a cut stream cannot drift from the encoder
+    settings the rest of the release is published with.
+
+    The input is still decoded ONCE for all of a stream's spans: on the 12-span
+    pushT episode a call per span would mean 12 full decodes of each of its 7
+    streams.
+
+    This re-encodes, so a cut stream is a second H.264 generation. At CRF 18
+    yuv444p that is visually lossless again, and it is unavoidable: the sessions
+    whose source HDF5 was deleted (``config.RAW_DELETED``) have no other master,
+    so cutting from the H5 would work for some episodes and not others.
+    """
+    from contextlib import ExitStack
+
+    from .encode import VideoWriter
+
+    spans = list(spans)
+    dsts = list(dsts)
+    w, h = dimensions(src)
+    stride = w * h * 3
+    last = max(b for _, b in spans)
+
+    proc = subprocess.Popen(
+        ["ffmpeg", "-hide_banner", "-loglevel", "error", "-i", str(src),
+         "-f", "rawvideo", "-pix_fmt", "bgr24", "-"],
+        stdout=subprocess.PIPE, bufsize=stride)
+    try:
+        with ExitStack() as stack:
+            writers = []
+            for dst in dsts:
+                dst.parent.mkdir(parents=True, exist_ok=True)
+                writers.append(stack.enter_context(
+                    VideoWriter(dst, pix_fmt="bgr24", codec="libx264",
+                                width=w, height=h)))
+            n = 0
+            while n <= last:
+                buf = proc.stdout.read(stride)
+                if len(buf) < stride:
+                    raise RuntimeError(
+                        f"{src}: decode ended at frame {n}, but a span needs "
+                        f"frame {last}")
+                block = np.frombuffer(buf, np.uint8).reshape(1, h, w, 3)
+                for (a, b), wr in zip(spans, writers):
+                    if a <= n <= b:
+                        wr.write(block)
+                n += 1
+    finally:
+        proc.stdout.close()
+        proc.wait()
+
+
+def frame_count(path: Path) -> int:
+    """Frames in a video, by decode. Slower than the container's count and the
+    only one worth trusting: ``nb_frames`` is whatever the muxer wrote.
+
+    This is also what guards the COPY path. An episode with no defects is
+    copied verbatim rather than re-encoded, so nothing decodes it on the way
+    through -- a truncated source would be published unchanged. Counting its
+    frames here decodes it, and an unreadable file raises.
+    """
+    if not Path(path).exists():
+        raise UnreadableVideo(f"{path} 不存在（上游阶段尚未产出或被中断）")
+    r = subprocess.run(
+        ["ffprobe", "-v", "error", "-count_frames", "-select_streams", "v:0",
+         "-show_entries", "stream=nb_read_frames", "-of", "csv=p=0", str(path)],
+        capture_output=True, text=True)
+    out = r.stdout.strip().rstrip(",")
+    if r.returncode != 0 or not out.isdigit():
+        raise UnreadableVideo(
+            f"{path} did not decode: "
+            f"{r.stderr.strip().splitlines()[0] if r.stderr.strip() else 'no output'}")
+    return int(out)
+
+
+# ── parquet ──────────────────────────────────────────────────────────────────
+
+def cut_table(table, a: int, b: int, source_episode: str, name: str):
+    """Rows ``[a, b]`` of an episode table, renumbered as a standalone episode.
+
+    Per-row identity is rewritten (``frame_idx``, ``frame_index``, ``episode``)
+    and per-row provenance is added, so a segment can be traced back to the
+    frame of the recording it came from without consulting an index file.
+    ``timestamp`` and ``source_h5_frame`` are NOT rebased: they are statements
+    about when the data was recorded and where it sits in the raw file, and both
+    stay true of a slice.
+    """
+    import pyarrow as pa
+
+    sub = table.slice(a, b - a + 1)
+    n = sub.num_rows
+    cols = {
+        "frame_idx": pa.array(np.arange(n, dtype=np.int32)),
+        "source_episode": pa.array([source_episode] * n, pa.string()),
+        "source_frame_idx": pa.array(np.arange(a, b + 1, dtype=np.int32)),
+    }
+    # Only rewritten if the enrichment step has already run; adding them here
+    # would invent an episode_index this stage has no basis to choose.
+    if "frame_index" in sub.column_names:
+        cols["frame_index"] = pa.array(np.arange(n, dtype=np.int64))
+    if "episode" in sub.column_names:
+        cols["episode"] = pa.array([name] * n, pa.string())
+
+    for col, arr in cols.items():
+        i = sub.schema.get_field_index(col)
+        sub = (sub.set_column(i, col, arr) if i >= 0
+               else sub.append_column(col, arr))
+    return sub
+
+
+# ── one episode ──────────────────────────────────────────────────────────────
+
+# The wrist pair arrived mid-project: the 2026-05 sessions have neither video
+# and are complete without them. Requiring all seven refused all 32 of those
+# episodes and cut the task to nothing. `dataset_layout` already draws this
+# line — none is fine, exactly one is a broken build — and the two gates have
+# to agree on what "complete" means.
+_WRIST_STREAMS = ("wrist_left", "wrist_right")
+
+
+def present_streams(video_dir: Path) -> list[str]:
+    """The streams this episode actually has, in EXPECTED_STREAMS order.
+
+    What gets CUT has to come from here, not from EXPECTED_STREAMS: accepting
+    an episode whose wrist pair is absent and then iterating the full list
+    anyway just moves the failure to the line that opens the file.
+    """
+    return [s for s in EXPECTED_STREAMS if (video_dir / f"{s}.mp4").is_file()]
+
+
+def missing_streams(video_dir: Path) -> list[str]:
+    """Streams whose absence makes this episode incomplete."""
+    have = {s for s in EXPECTED_STREAMS if (video_dir / f"{s}.mp4").is_file()}
+    wrist_present = [w for w in _WRIST_STREAMS if w in have]
+    required = [s for s in EXPECTED_STREAMS
+                if s not in _WRIST_STREAMS or wrist_present]
+    return [s for s in required if s not in have]
+
+
+def cut_episode(task: str, date: str, episode: str, spans,
+                src_root: Path, dst_root: Path, verify: bool = True,
+                expected_T: int | None = None) -> list[dict]:
+    """Cut one built episode into its publishable segments.
+
+    Returns one row per emitted segment. An episode whose only span covers the
+    whole recording is copied rather than re-encoded: it has nothing to cut, and
+    re-encoding it would cost a generation of quality for no change.
+
+    ``expected_T`` is the length the detector reports saw. The spans are frame
+    indices, and they are computed on one tree and applied to another (the
+    sidecars live with the uncut master, the cut is applied to the Z-up tree
+    that is actually published). Every stage between them preserves row order
+    and row count -- which is exactly the kind of assumption that holds until
+    it does not, and would fail silently by cutting at the wrong frames.
+    """
+    src_vid = src_root / "videos" / date / episode
+    src_pq = src_root / "meta" / date / f"{episode}.parquet"
+    table = pq.read_table(str(src_pq))
+    T = table.num_rows
+    if expected_T is not None and T != expected_T:
+        raise RuntimeError(
+            f"{task}/{date}/{episode}: the spans were computed on {expected_T} "
+            f"frames but this tree has {T} rows. The frame numbering differs "
+            f"between the two trees, so the cut would land elsewhere.")
+
+    missing = missing_streams(src_vid)
+    if missing:
+        raise FileNotFoundError(
+            f"{task}/{date}/{episode}: incomplete build, no {', '.join(missing)}. "
+            f"Cutting it would publish an episode missing a stream.")
+
+    whole = len(spans) == 1 and spans[0] == (0, T - 1)
+    names = [episode if whole else segment_name(episode, i)
+             for i in range(len(spans))]
+
+    for stream in present_streams(src_vid):
+        src = src_vid / f"{stream}.mp4"
+        dsts = [dst_root / "videos" / date / nm / f"{stream}.mp4" for nm in names]
+        if whole:
+            dsts[0].parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src, dsts[0])
+        else:
+            cut_video(src, spans, dsts)
+
+    rows = []
+    for (a, b), nm in zip(spans, names):
+        sub = cut_table(table, a, b, f"{date}/{episode}", nm)
+        out_pq = dst_root / "meta" / date / f"{nm}.parquet"
+        out_pq.parent.mkdir(parents=True, exist_ok=True)
+        pq.write_table(sub, str(out_pq))
+
+        if verify:
+            # The whole point of the stage is that a published frame index means
+            # what it says, so the row count and every stream's frame count have
+            # to agree before the segment counts as written.
+            # The streams this episode HAS, same as the cut loop — verifying
+            # a stream that was never cut just re-raises on the missing file.
+            for stream in present_streams(src_vid):
+                got = frame_count(dst_root / "videos" / date / nm / f"{stream}.mp4")
+                if got != sub.num_rows:
+                    raise RuntimeError(
+                        f"{task}/{date}/{nm}: {stream}.mp4 has {got} frames but "
+                        f"the parquet has {sub.num_rows} rows")
+
+        rows.append({
+            "episode": f"{date}/{nm}", "date": date, "task": task,
+            "source_episode": f"{date}/{episode}",
+            "source_frame_range": [int(a), int(b)],
+            "n_frames": int(sub.num_rows),
+            "duration_s": round(sub.num_rows / FPS, 3),
+            "recut": not whole,
+        })
+    return rows
+
+
+# ── one task ─────────────────────────────────────────────────────────────────
+
+EPOCH_ROOT = Path(__file__).resolve().parents[1] / "calibration"
+
+
+def stage_calibration(task_root, task: str, epoch_root=None, sessions=None,
+                      since: str | None = "2026-09-10") -> str:
+    """Put the epoch the sessions DECLARE into the task's release tree.
+
+    `copy_calibration` carries whatever is in `release/<task>/calibration/`
+    forward. Nothing put the right thing there: on 2026-09-16 motherboard
+    staged epoch_2026-05-12 and pushT epoch_2026-06-26 while both published
+    September sessions, and rope had none at all. The publish gate catches the
+    mismatch, but only at publish — and a fix applied to the CUT tree by hand
+    held for one day, until segment re-ran and copied the stale source forward.
+
+    So this is DERIVED, not maintained. Idempotent: the files are rebuilt from
+    the epoch every time, so a re-run repairs instead of rotating twice.
+    """
+    import json
+    import shutil
+    import numpy as np
+    from twm.calibration_frame import to_zup
+    from twm.calib_epoch import session_epoch
+
+    task_root = Path(task_root)
+    epoch_root = Path(epoch_root) if epoch_root is not None else EPOCH_ROOT
+    meta = task_root / "meta"
+    dates = sorted({p.name for p in meta.iterdir() if p.is_dir()}) \
+        if meta.is_dir() else []
+    if since:
+        dates = [d for d in dates if d >= since]
+    if sessions is not None:
+        epochs = {sessions[d] for d in dates if d in sessions}
+    else:
+        epochs = {session_epoch(task, d) for d in dates}
+    if not epochs:
+        raise ValueError(f"{task}: no in-scope session declares an epoch")
+    if len(epochs) > 1:
+        raise ValueError(
+            f"{task}: its sessions declare more than one epoch {sorted(epochs)} "
+            f"— one tree cannot ship two sets of extrinsics beside one set of "
+            f"poses")
+    epoch = epochs.pop()
+    src = epoch_root / f"epoch_{epoch}"
+    if not src.is_dir():
+        raise FileNotFoundError(f"{task} declares epoch {epoch}, missing: {src}")
+
+    dst = task_root / "calibration"
+    if dst.exists():
+        shutil.rmtree(dst)
+    shutil.copytree(src, dst)
+    for f in sorted(dst.glob("T_*.json")):
+        d = json.loads(f.read_text())
+        if "T_mocap_to_cam" in d:
+            to_zup(f)
+        else:
+            # The gel transform is in the rigid body's own frame; the world
+            # rotation does not touch it.
+            d["up_axis"] = "n/a (rigid-body frame)"
+            f.write_text(json.dumps(d, indent=1))
+    for f in sorted(dst.glob("T_mocap_to_cam_*.npy")):
+        np.save(f, np.asarray(
+            json.loads(f.with_suffix(".json").read_text())["T_mocap_to_cam"],
+            float))
+    return epoch
+
+
+def copy_calibration(src_root: Path, out: Path) -> int:
+    """Carry the calibration into the cut tree.
+
+    The Z-up conversion copies `calibration/` so the Z-up poses and the Z-up
+    `T_mocap_to_cam` travel together. Cutting did not, so the tree the chain
+    PUBLISHES had none — and the publish runs with `--no_delete`, leaving on
+    the Hub whatever an earlier uncut publish put there. Poses in one
+    convention read against a matrix in the other put every projection half a
+    frame out, with nothing in either file admitting it.
+
+    Replaced, not merged: a stale file from an earlier convention surviving
+    because nothing overwrote it is the same failure by a slower route.
+    """
+    src = Path(src_root) / "calibration"
+    if not src.is_dir():
+        return 0
+    dst = Path(out) / "calibration"
+    if dst.exists():
+        shutil.rmtree(dst)
+    shutil.copytree(src, dst)
+    return len(list(dst.glob("*")))
+
+
+def build_task(task: str, src_root: Path = STAGE_ROOT,
+               dst_root: Path | None = None, dates=None,
+               min_frames: int = MIN_PUBLISH_FRAMES,
+               verify: bool = True, dry_run: bool = False,
+               detect_root: Path | None = None, force: bool = False) -> dict:
+    """Cut every built episode of a task into its publishable segments.
+
+    ``detect_root`` is where the ``_detect.pt`` sidecars and the videos the
+    corruption detectors read live; ``src_root`` is the tree actually cut.
+    They differ in the real chain: defects are a property of the recording and
+    are measured once on the master, while what gets published has been through
+    force recovery and the Z-up conversion. Frame numbering is checked to match
+    rather than assumed (see ``cut_episode``).
+    """
+    src_root = Path(src_root) / task
+    det_root = Path(detect_root) / task if detect_root else src_root
+    dst_root = Path(dst_root) if dst_root else Path(str(STAGE_ROOT) + "_cut")
+    out = dst_root / task
+
+    # Enumerate the tree being CUT, not the tree the defects were measured on.
+    # Those are the same set in a full run and are not during a partial one: a
+    # wave that publishes the 20 episodes built so far has 20 parquets and 33
+    # sidecars, and discovering by sidecar would try to cut 13 episodes this
+    # tree does not contain.
+    parquets = sorted((src_root / "meta").rglob("episode_*.parquet"))
+    if not parquets:
+        raise FileNotFoundError(f"no episode parquet under {src_root/'meta'}")
+
+    rows, dropped, raw_frames, skipped = [], [], 0, 0
+    unreadable: list[dict] = []
+    for pq_path in parquets:
+        date, episode = pq_path.parent.name, pq_path.stem
+        if dates and date not in dates:
+            continue
+        # Already cut by an earlier wave. Re-cutting is the expensive part of
+        # the stage -- it re-encodes every stream -- and it would produce the
+        # same bytes, so a wave only does what is new unless told otherwise.
+        if not force and not dry_run and _already_cut(out, date, episode):
+            skipped += 1
+            continue
+        # The sidecar when there is one, the published parquet when there is
+        # not — `episode_report` derives the same arrays from either. The
+        # pre-2026-07 episodes' source H5 is deleted so their sidecar can never
+        # be rebuilt, and refusing on that account would leave exactly the
+        # episodes this stage exists to cut permanently uncuttable.
+        det = det_root / "meta" / date / f"{episode}._detect.pt"
+        if not det.is_file():
+            det = det_root / "meta" / date / f"{episode}.parquet"
+        if not det.is_file():
+            raise FileNotFoundError(
+                f"{task}/{date}/{episode}: neither a _detect.pt nor a parquet "
+                f"under {det_root}. The spans cannot be computed, and "
+                f"publishing it uncut would ship the defects this stage exists "
+                f"to remove.")
+        report, _ = curation.episode_report(
+            det, video_dir=det_root / "videos" / date / episode)
+        raw_frames += int(report["n_frames"])
+        spans = publishable_spans(report, min_frames)
+        kept = {(a, b) for a, b in spans}
+        for a, b in D.find_clean_segments(int(report["n_frames"]),
+                                          curation._bad_intervals(report)):
+            if (a, b) not in kept:
+                dropped.append({"episode": f"{date}/{episode}",
+                                "frame_range": [int(a), int(b)],
+                                "n_frames": int(b - a + 1)})
+        if not spans:
+            dropped.append({"episode": f"{date}/{episode}", "frame_range": None,
+                            "n_frames": 0, "note": "no span reached the floor"})
+            continue
+        if dry_run:
+            rows += [{"episode": f"{date}/{segment_name(episode, i)}",
+                      "n_frames": int(b - a + 1)} for i, (a, b) in enumerate(spans)]
+            continue
+        # One broken stream must not cost the other episodes. A file that
+        # will not decode is a repair job, not a reason to abandon the run:
+        # it is recorded, and the wave publishes everything that IS readable.
+        try:
+            rows += cut_episode(task, date, episode, spans, src_root, out,
+                                verify, expected_T=int(report["n_frames"]))
+        except (UnreadableVideo, FileNotFoundError) as exc:
+            unreadable.append({"episode": f"{date}/{episode}", "why": str(exc)})
+            continue
+
+    kept_frames = sum(r["n_frames"] for r in rows)
+    summary = {
+        "task": task, "episodes": len(rows),
+        "raw_frames": raw_frames, "kept_frames": kept_frames,
+        "kept_minutes": round(kept_frames / FPS / 60, 2),
+        "discarded_frames": raw_frames - kept_frames,
+        "kept_fraction": round(kept_frames / raw_frames, 4) if raw_frames else 0.0,
+        "min_publish_seconds": MIN_PUBLISH_SECONDS,
+        "skipped_already_cut": skipped,
+        "unreadable": unreadable,
+        "dropped_spans": dropped,
+    }
+    if not dry_run:
+        out.mkdir(parents=True, exist_ok=True)
+        # MERGE, do not overwrite. The stage is run in waves -- the episodes
+        # whose force estimation has finished are cut while the rest are still
+        # being estimated -- and a second pass writing only its own rows would
+        # erase the first pass's episodes from the index while their videos and
+        # parquet stayed in the tree: published but unlisted, which is the same
+        # defect the curation indices guard against upstream.
+        copy_calibration(src_root, out)
+        rows = _merge_jsonl(out / "episodes.jsonl", rows, "episode")
+        (out / "episodes.jsonl").write_text(
+            "".join(json.dumps(r) + "\n" for r in rows))
+        prov_path = out / "segment_provenance.json"
+        prior = {}
+        if prov_path.is_file():
+            try:
+                prior = json.loads(prov_path.read_text())
+            except ValueError:
+                prior = {}
+        prov_path.write_text(
+            json.dumps({"summary": {k: v for k, v in summary.items()
+                                    if k != "dropped_spans"},
+                        "thresholds": D.thresholds(),
+                        "min_publish_seconds": MIN_PUBLISH_SECONDS,
+                        "dropped_spans": _merge_jsonl_list(
+                            prior.get("dropped_spans", []), dropped),
+                        "segments": rows}, indent=2))
+    return summary

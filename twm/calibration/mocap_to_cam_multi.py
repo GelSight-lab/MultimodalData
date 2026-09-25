@@ -62,6 +62,7 @@ All 3D coordinates are in millimetres. OptiTrack input/stream is scaled by
 """
 
 import argparse
+import datetime as _dt
 import json
 import time
 from pathlib import Path
@@ -698,6 +699,10 @@ def main():
     ap.add_argument("--serials", nargs="*", default=REALSENSE_SERIALS,
                     help="RealSense serials in H5 cam-index order "
                          f"(default: {REALSENSE_SERIALS})")
+    ap.add_argument("--only", nargs="*", default=None,
+                    choices=["left", "middle", "right"],
+                    help="Calibrate only these view(s) (e.g. --only left). Other "
+                         "cameras' existing calibration files are left untouched.")
     ap.add_argument("--num_points", type=int, default=8,
                     help="Number of calibration points to collect (≥4 per camera).")
     ap.add_argument("--method", choices=["pnp", "svd"], default="pnp",
@@ -711,9 +716,16 @@ def main():
                          "the live stream (e.g. 'calib_ball'). Omit to type x y z.")
     ap.add_argument("--mocap_scale", type=float, default=1000.0,
                     help="OptiTrack units → mm (default 1000, i.e. metres).")
+    # Dated by default so a new calibration can never overwrite the one a
+    # recorded session was made through: on 2026-09-09 a fresh solve landed on
+    # top of the June-26 epoch and only a hand-made copy saved it.
     ap.add_argument("--out_dir", type=str,
-                    default=str(Path(__file__).resolve().parent / "result"),
-                    help="Directory for the per-view T_mocap_to_cam_*.json files.")
+                    default=str(Path(__file__).resolve().parent
+                                / f"epoch_{_dt.date.today().isoformat()}"),
+                    help="Directory for the per-view T_mocap_to_cam_*.json files "
+                         "(default: calibration/epoch_<today>). Register it in "
+                         "twm/calib_epoch.py EPOCH_DIRS, and declare which "
+                         "sessions use it in CALIB_SESSIONS.")
     ap.add_argument("--depth_patch", type=int, default=7,
                     help="Patch size for median depth reading (SVD only; default 7).")
     ap.add_argument("--no_snap", action="store_true",
@@ -749,6 +761,8 @@ def main():
           f"Snap: {'OFF' if args.no_snap else f'ON (r={args.snap_radius:.0f}px)'}   Cameras:")
     cams = []
     for cam_idx, serial in enumerate(args.serials):
+        if args.only and _view_label(cam_idx) not in args.only:
+            continue
         print(f"  cam{cam_idx} ({_view_label(cam_idx)}): {serial}")
         cams.append(_Cam(cam_idx, serial, source=args.source, snap=not args.no_snap,
                          snap_radius=args.snap_radius,

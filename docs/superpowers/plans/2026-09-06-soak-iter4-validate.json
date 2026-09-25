@@ -1,0 +1,59 @@
+{
+  "path": "/media/yxma/Disk1/twm/data/soak_test/2026-09-06/episode_001.h5",
+  "ok": false,
+  "checks": [
+    {
+      "name": "metadata",
+      "ok": false,
+      "detail": "valid=False (overload: writer queue full (90 ticks, 581 of 581 MB)); ended_by='overload' not in ('operator', 'quit', 'watchdog')"
+    },
+    {
+      "name": "shapes",
+      "ok": true,
+      "detail": "13 dataset(s) match (T=15641) and expected dtype"
+    },
+    {
+      "name": "tick_rate",
+      "ok": true,
+      "detail": "median dt 33.42 ms, max dt 177.97 ms, late 0.20%"
+    },
+    {
+      "name": "duration",
+      "ok": false,
+      "detail": "T=15641 < required 17460.0 (0.97 x 600.0s x 30fps)"
+    },
+    {
+      "name": "sensor_sync",
+      "ok": true,
+      "detail": "gelsight/left: lag [17.7, 159.5] ms, 18.4 Hz distinct; gelsight/right: lag [16.4, 159.0] ms, 18.3 Hz distinct"
+    },
+    {
+      "name": "content",
+      "ok": true,
+      "detail": "realsense/cam0/color (min std 61.14, 19/19 differ); realsense/cam0/depth (min std 508.68, 19/19 differ); realsense/cam1/color (min std 51.23, 19/19 differ); realsense/cam1/depth (min std 301.67, 19/19 differ); realsense/cam2/color (min std 35.80, 19/19 differ); realsense/cam2/depth (min std 262.06, 19/19 differ); gelsight/left/frames (min std 38.09, 19/19 differ); gelsight/right/frames (min std 24.74, 19/19 differ)"
+    },
+    {
+      "name": "optitrack",
+      "ok": true,
+      "detail": "no samples (ok if recorded with --no_optitrack)"
+    },
+    {
+      "name": "writer",
+      "ok": false,
+      "detail": "queue_peak_fraction 1.000 not < 0.5"
+    }
+  ],
+  "stats": {
+    "T": 15641,
+    "median_dt": 0.03341507911682129,
+    "max_dt": 0.17797446250915527,
+    "late_fraction": 0.001982097186700767,
+    "sensor_lag_max_s.gelsight/left": 0.15946412086486816,
+    "distinct_sensor_hz.gelsight/left": 18.36584162624317,
+    "sensor_lag_max_s.gelsight/right": 0.15897703170776367,
+    "distinct_sensor_hz.gelsight/right": 18.299271156388315,
+    "optitrack_samples": 0,
+    "queue_peak_fraction": 1.0,
+    "writer_mean_mb_s": 320.8664787557378
+  }
+}

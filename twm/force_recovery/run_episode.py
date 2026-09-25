@@ -1,0 +1,280 @@
+"""Batch normal-force estimation over release episodes.
+
+Row alignment: published parquet row ``i`` corresponds to the GelSight frame
+``react_preprocess.h5io.open_episode(...).align[side].index_map[i]`` — the same
+map the preprocess used to build that row. It is a nearest-capture-time lookup
+on timestamp-aligned recordings and the tick index on legacy ones, and it is
+READ here rather than recomputed. A constant ``+15`` lived here until it met
+the first timestamp-aligned session, which is already aligned: the constant
+double-corrected it and shipped force 13-15 frames (~0.45 s) ahead of the
+tactile it was computed from.
+
+Only rows flagged ``tactile_<side>_is_new`` are reconstructed; duplicated
+rows reuse the previous estimate, which is exact (identical pixels give an
+identical estimate) and cuts the work by ~3.6x on legacy recordings.
+
+Select up to 15 low-intensity fresh rows, spaced at least 30 rows apart,
+then use the first 12 in temporal order for a median reference image.
+Leave-one-out reference residuals set the contact-area noise floor. The pool
+is assumed to approximate unloaded contact; this is not a force-zero label.
+"""
+from __future__ import annotations
+
+from pathlib import Path
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
+import h5py
+import hdf5plugin  # noqa: F401
+import numpy as np
+import pyarrow.parquet as pq
+
+from .depth_force import DepthForceEstimator
+from . import calib_free as CF
+
+# Overridable by env, matching `react_preprocess.config`, which parameterises
+# exactly these paths. They were hardcoded here, and `export_force_columns`
+# imports STAGE_ROOT from this module to decide which episodes to export --
+# then REFUSES if any of them lacks an npz. With the path fixed to the whole
+# release that meant the export could only ever run when every episode in the
+# tree, across every task and date, had force estimated. Publishing one task at
+# a time, or one wave of episodes at a time, was impossible; the env var makes
+# the caller able to say which subset it means. Defaults are unchanged.
+import os
+
+DATA_ROOT = Path(os.environ.get("REACT_DATA_ROOT", "/media/yxma/Disk1/twm/data"))
+STAGE_ROOT = Path(os.environ.get("REACT_STAGE_ROOT", "/media/yxma/Disk1/twm/release"))
+OUT_ROOT = Path(os.environ.get("REACT_FORCE_RECOVERY_ROOT",
+                               "/media/yxma/Disk1/twm/force_recovery"))
+
+# THE map from published row to GelSight frame comes from the preprocess that
+# built the row, never from a formula re-derived here. `LEGACY_SHIFT` used to
+# be imported and added directly, which was right only while every recording
+# was legacy: a timestamp-aligned recording is already aligned, so the constant
+# double-corrected it and put the force 13-15 frames (~0.45 s) ahead of the
+# tactile it was computed from. Shipped that way in the 2026-09-09 validation
+# set. The comment below already named the hazard -- "two modules evaluate
+# trim + row + LEGACY_SHIFT and get the same answer" -- so this reads the
+# answer instead of evaluating it a second time.
+from twm.react_preprocess.h5io import open_episode  # noqa: E402
+N_REFERENCE = 15
+FIELDS = ("force_normal_n", "volume_mm3", "contact_area_mm2", "max_depth_mm")
+
+
+def _reference_rows(intensity: np.ndarray, is_new: np.ndarray,
+                    n: int = N_REFERENCE) -> np.ndarray:
+    """Lowest-intensity fresh rows, at most one per second of recording."""
+    fresh = np.where(is_new)[0]
+    order = fresh[np.argsort(intensity[fresh])]
+    picked: list[int] = []
+    for row in order:
+        if all(abs(row - p) >= 30 for p in picked):
+            picked.append(int(row))
+        if len(picked) == n:
+            break
+    return np.array(sorted(picked))
+
+
+def reference_stack(frames, index_map, intensity, is_new) -> np.ndarray:
+    """Raw reference images selected through the authoritative capture map."""
+    index_map = np.asarray(index_map, np.int64)
+    if len(index_map) != len(intensity) or len(is_new) != len(intensity):
+        raise ValueError("Reference alignment length mismatch")
+    rows = _reference_rows(np.asarray(intensity), np.asarray(is_new))[:12]
+    if not len(rows):
+        raise ValueError("No fresh frames available for a reference")
+    indices = index_map[rows]
+    if np.any((indices < 0) | (indices >= len(frames))):
+        raise ValueError("Reference alignment points outside the recording")
+    return np.stack([np.asarray(frames[int(i)]) for i in indices])
+
+
+def reference_noise_area(cropped_stack: np.ndarray) -> float:
+    """Leave-one-out reference residual area; assumes the pool is unloaded."""
+    from .lut_calibration import MM_PER_PIXEL
+
+    images = np.asarray(cropped_stack, np.float32)
+    if len(images) < 2:
+        raise ValueError("At least two reference frames are required")
+    areas = [CF.contact_mask(im - np.median(np.delete(images, i, axis=0), axis=0)).sum()
+             for i, im in enumerate(images)]
+    return float(np.quantile(areas, 0.9) * MM_PER_PIXEL ** 2)
+
+
+# Bump whenever the estimator OR its calibration changes; stale npz rerun.
+# v4: force comes from stages() + react_calib instead of the v1 MLP estimator
+#     times a single N-per-mm3 constant (that path scored rho 0.297 and mapped
+#     a true 0.16-8 N range onto 0.01-103 N).
+# v5: force comes from the calibration-free reconstruction.
+# v6: calibration-free contact threshold is recalibrated from dI=8 to dI=4
+#     so PushT light-contact frames are retained instead of zeroed.
+#
+# It lives HERE, with the function that writes the npz. It used to live in
+# `batch_worker`, which stamped it by re-reading and re-writing the whole
+# compressed file after `process_side` had already written it — so the stamp
+# was outside the writer, and `reprocess_react`, which calls `process_side`
+# directly, produced 72 files with no version at all. `export_force_columns`
+# reads a missing key as 0 and REFUSES anything below the minimum, so promoting
+# those would have made every episode unexportable.
+# v7: train-only gain field and continuous low-contact evidence ramp.
+# v8: measured 8-15 N tail, retaining the v7 low-score map and contact gate.
+PIPELINE_VERSION = 8
+
+
+def process_side(task: str, date: str, ep: str, side: str, *,
+                 out_dir=None,
+                 keep_top_depths: int = 3) -> dict:
+    """Estimate per-row normal force for one sensor of one episode."""
+    table = pq.read_table(str(STAGE_ROOT / task / "meta" / date / f"{ep}.parquet"))
+    inten = np.asarray(table[f"tactile_{side}_intensity"].to_numpy())
+    is_new = np.asarray(table[f"tactile_{side}_is_new"].to_numpy())
+    trim = int(np.asarray(table["source_h5_frame"].to_numpy())[0])
+    T = len(inten)
+
+    h5_path = DATA_ROOT / task / date / f"{ep}.h5"
+    ref_rows = _reference_rows(inten, is_new)
+
+    # The published row -> GelSight frame map, from the module that built the
+    # published rows. Timestamp-aligned recordings get a nearest-capture-time
+    # lookup; legacy ones get the tick index. Either way it is read, not
+    # re-derived, so force and the tactile columns cannot drift apart.
+    align = open_episode(h5_path, task).align[side]
+    idx_map = np.asarray(align.index_map, np.int64)
+    if len(idx_map) != T:
+        raise ValueError(
+            f"{task}/{date}/{ep}_{side}: the parquet has {T} rows but the "
+            f"tactile alignment has {len(idx_map)}. One of them was built from "
+            f"a different recording.")
+
+    # Force comes from the SAME calibration the rest of the project uses.
+    # What was here — a single N-per-mm3 constant times the v1 MLP volume —
+    # scored rho 0.297 on GlowTact `round` and mapped a true 0.16-8 N range
+    # onto 0.01-103 N. See react_calib for the held-out numbers.
+    from .react_calib import (CALIBRATION_NAME,
+                              F_MAX_N,
+                              FORCE_RECONSTRUCTION as _FORCE_RECON,
+                              fit as _fit_calib)
+    predict_force = _fit_calib(report=False)
+    scale_source = CALIBRATION_NAME
+
+    out = {k: np.zeros(T, np.float32) for k in FIELDS}
+    kept_depths: list[tuple[int, np.ndarray]] = []
+
+    with h5py.File(str(h5_path), "r") as f:
+        frames = f[f"gelsight/{side}/frames"]
+        n_frames = len(frames)
+
+        def src(row: int) -> int:
+            return min(int(idx_map[row]), n_frames - 1)
+
+        # flatfield: validated on cnc_Mini ground truth (held-out rho
+        # 0.34 -> 0.65 with edge filtering); normalizes the vignette the
+        # depth MLP was never trained under.
+        # Reconstruction is `stages()` — the same function the studies and the
+        # site use — not the retired v1 MLP estimator.
+        from .debug_gallery import stages
+        from .lut_calibration import crop
+
+        ref_images = np.stack([crop(image).astype(np.float32) for image in
+                               reference_stack(frames, idx_map, inten, is_new)])
+        ref = np.median(ref_images, 0)
+        noise_area = reference_noise_area(ref_images)
+
+        # Force from `react_calib.force_stages` (the calibration-free solve,
+        # 0.812 held-out rho against the LUT's 0.763 on the same presses and
+        # split); the exported vol/area/maxd stay in the LUT's MILLIMETRES,
+        # because those columns are read as geometry and the calibration-free
+        # depth has no millimetre scale. Two reconstructions, two purposes,
+        # both named in the metadata below.
+        from .react_calib import force_stages
+        # WHICH FRAME EACH NUMBER CAME FROM, recorded AT THE READ.
+        #
+        # Force and the tactile columns used to agree only because two modules
+        # evaluated `trim + row + LEGACY_SHIFT` and got the same answer, which
+        # held exactly as long as every recording was legacy. The first
+        # timestamp-aligned session broke it: the preprocess stopped adding the
+        # constant, this module did not, and the 2026-09-09 validation set
+        # shipped with force 13-15 frames ahead of its own tactile. Both now
+        # read one `index_map`, so there is no second evaluation to disagree.
+        #
+        # That arrangement failed three times in one session: the preview's
+        # force disc landed half a second from its own tile, the verifier
+        # hard-coded the shift inline and rendered frames it did not name, and
+        # the unit test asserted the wrong mapping while its docstring named
+        # the failure. Each was an index re-derived at the point of use.
+        #
+        # This is not a re-derivation. `f_idx` is the integer actually passed
+        # to `frames[...]`, captured on the line that reads it, and held
+        # across duplicate rows exactly as the estimate is. A formula cannot
+        # agree with it by accident, so
+        # `scripts/test_force_names_its_frame.py` can re-read the frame and
+        # reproduce the force to the bit.
+        src_idx = np.zeros(T, np.int32)
+        last = None
+        last_idx = -1
+        for row in range(T):
+            if is_new[row] or last is None:
+                last_idx = src(row)
+                img = crop(frames[last_idx]).astype(np.float32)
+                st_mm = stages(img, ref)
+                ft = st_mm["feats"]
+                last = (predict_force(force_stages(img, ref), noise_area_mm2=noise_area),
+                        ft["vol"], ft["area"], ft["maxd"])
+            src_idx[row] = last_idx
+            for key, value in zip(FIELDS, last):
+                out[key][row] = value
+        out["source_frame"] = src_idx
+
+        # re-run the strongest rows with the depth map kept, for figures
+        top = np.argsort(out["force_normal_n"])[::-1][:keep_top_depths]
+        for row in top:
+            st = stages(crop(frames[src(int(row))]).astype(np.float32), ref)
+            kept_depths.append((int(row), st["depth"].astype(np.float32)))
+
+    meta = {
+        "task": task, "date": date, "episode": ep, "side": side,
+        # `shift` is gone: there is no constant any more. The alignment is a
+        # per-row map, and `source_frame` in the npz carries it row by row.
+        "trim": trim, "tactile_timestamped": bool(align.timestamped),
+        # thresholds now live in stages()/calib_free: |dI| for the valid mask
+        # and depth>0.05 mm for the LUT geometry contact mask
+        "contact_threshold_mm": 0.05,
+        "valid_mask_dI": float(CF.VALID_DI),
+        "reference_noise_area_mm2": noise_area,
+        "force_calibration_max_n": F_MAX_N,
+        "force_calibration_ceiling_n": predict_force.force_ceiling_n,
+        "absolute_force_validated_on_react": False,
+        # which reconstruction produced which column
+        "force_reconstruction": _FORCE_RECON,
+        "geometry_reconstruction": "stages (LUT, millimetres)",
+        "reference_rows": ref_rows,
+        "force_calibration": scale_source,
+        "scale_source": scale_source,
+        "pipeline_version": np.int64(PIPELINE_VERSION),
+    }
+    # An explicit destination so a reprocess can be COMPARED against the
+    # published npz before replacing it. Without this the only way to try a
+    # pipeline change was to overwrite the released force channel and hope.
+    out_dir = Path(out_dir) if out_dir is not None else OUT_ROOT / task / date
+    out_dir.mkdir(parents=True, exist_ok=True)
+    np.savez_compressed(
+        out_dir / f"{ep}_{side}.npz",
+        **out, **{f"depth_row_{row}": d for row, d in kept_depths},
+        # Strings included ON PURPOSE. The previous filter dropped every
+        # str-valued field, which meant `force_calibration` — the identity of
+        # the map turning mm^3 into newtons — existed only in the log. An npz
+        # that cannot say which calibration produced its newtons is how a
+        # pixel-unit weight vector went on scoring mm-unit features for weeks.
+        **{k: (np.str_(v) if isinstance(v, str) else v)
+           for k, v in meta.items()},
+        )
+    meta["out"] = str(out_dir / f"{ep}_{side}.npz")
+    meta["force_max_n"] = float(out["force_normal_n"].max())
+    meta["force_p50_contact"] = float(np.percentile(
+        out["force_normal_n"][out["force_normal_n"] > 0.02], 50)
+        if (out["force_normal_n"] > 0.02).any() else 0.0)
+    return meta
+
+
+def process_episode(task: str, date: str, ep: str) -> list[dict]:
+    return [process_side(task, date, ep, side) for side in ("left", "right")]
